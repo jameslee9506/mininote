@@ -34,6 +34,7 @@ npm test               # Unit tests (Vitest)
 | Saving | Atomic saves 0.4 seconds after typing stops, or at least every 2 seconds while typing continues. External changes reload automatically; if there are unsaved edits, the disk version is kept as a conflict copy. Failed saves leave a recovery copy. |
 | Reading view | Toggle with `Mod+E`. Markdown is rendered with markdown-it and sanitized with DOMPurify. |
 | Search | Quick switcher (`Mod+O`) with fuzzy matching, including Hangul initial consonants; full-text search in Rust (`Mod+Shift+F`); and a command palette (`Mod+P`). |
+| Updates | Signed releases on GitHub. The app checks once at launch; when a newer version exists, an update icon appears that downloads it, installs it and restarts. Settings show the running version. |
 
 ## Keyboard shortcuts (`Mod` = ⌘ on macOS, Ctrl elsewhere)
 
@@ -57,5 +58,6 @@ npm test               # Unit tests (Vitest)
 
 - [Architecture](docs/ARCHITECTURE.md): structure, IPC contracts, autosave and sync protocols, and editor and live-preview design.
 - [Design system](docs/DESIGN.md): monochrome design tokens and spacing between blocks.
+- [Releasing](docs/releasing.md): versioning, the updater signing key, and the GitHub Releases pipeline behind in-app updates.
 - [Research](docs/research/): analyses of Obsidian, Zettlr, SilverBullet, MarkText, mdSilo, Otterly, and related projects; [functional requirements](docs/research/REQUIREMENTS.md); and [implementation techniques](docs/research/TECHNIQUES.md).
 - [Development conventions](CLAUDE.md): project rules and coding conventions.

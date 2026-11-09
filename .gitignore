@@ -24,3 +24,7 @@ dist
 
 # Local agent permissions
 .claude/settings.local.json
+
+# Release builds: the updater overlay written by scripts/prepare-release.mjs, and CI's manifest
+src-tauri/tauri.updater.conf.json
+/latest.json

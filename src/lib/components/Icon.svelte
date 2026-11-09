@@ -21,7 +21,9 @@
     | "lock"
     | "collapse"
     | "plus"
-    | "reset";
+    | "reset"
+    | "download"
+    | "restart";
 </script>
 
 <script lang="ts">
@@ -107,6 +109,14 @@
     <!-- A counter-clockwise arrow: back to the default. -->
     <path d="M2.5 8a5.5 5.5 0 1 0 5.5-5.5 6 6 0 0 0-4.12 1.68L2.5 5.5" />
     <path d="M2.5 2.5v3h3" />
+  {:else if name === "download"}
+    <!-- An arrow into a tray: an update to fetch. -->
+    <path d="M8 2.5v7.5M4.75 7 8 10.25 11.25 7" />
+    <path d="M3 11v1.5A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V11" />
+  {:else if name === "restart"}
+    <!-- A clockwise arrow, the mirror of reset: quit and come back. -->
+    <path d="M13.5 8a5.5 5.5 0 1 1-5.5-5.5 6 6 0 0 1 4.12 1.68L13.5 5.5" />
+    <path d="M13.5 2.5v3h-3" />
   {/if}
 </svg>
 

@@ -1,13 +1,15 @@
 <script lang="ts">
   // Settings (SET-02): one row per setting, label left and control right, no
-  // descriptions. Every change applies at once through settings.update. The last
-  // row opens the shortcut list in the same panel (SET-06).
+  // descriptions. Every change applies at once through settings.update. The shortcuts
+  // row opens the shortcut list in the same panel (SET-06); a quiet last row shows the
+  // app version.
   import { tick } from "svelte";
   import Icon from "./Icon.svelte";
   import Modal from "./Modal.svelte";
   import ShortcutSettings from "./ShortcutSettings.svelte";
   import { FONT_SIZE_MAX, FONT_SIZE_MIN, settings } from "../state/settings.svelte";
   import { ui } from "../state/ui.svelte";
+  import { updater } from "../state/updater.svelte";
   import { t, type MessageKey } from "../i18n";
   import type { Settings, ThemeMode } from "../types";
   import { validateName } from "../utils/names";
@@ -225,6 +227,13 @@
         <span class="label">{t("shortcuts")}</span>
         <span class="chevron"><Icon name="chevron-right" /></span>
       </button>
+
+      {#if updater.current !== ""}
+        <div class="row version">
+          <span class="label">{t("version")}</span>
+          <span class="version-value">{updater.current}</span>
+        </div>
+      {/if}
     </div>
   {/if}
 </Modal>
@@ -274,6 +283,18 @@
   .page:hover .chevron,
   .page:focus-visible .chevron {
     color: var(--c-text);
+  }
+
+  /* The version row: information, not a control, so it stays quiet. */
+  .version .label,
+  .version-value {
+    color: var(--c-text-muted);
+    font-size: var(--fs-ui-small);
+  }
+
+  .version-value {
+    flex: none;
+    font-variant-numeric: tabular-nums;
   }
 
   /* Shortcuts page header: back, then the page name. */

@@ -54,7 +54,7 @@ The current build covers every P0 requirement, plus these P1 items:
 | Editor | **CodeMirror 6** | Incremental Lezer parser and viewport-only rendering handle multi-MB notes. It is the same engine as Obsidian's live preview. |
 | Reading view | **markdown-it** + **DOMPurify** | Fast and extensible. Sanitizing is mandatory, because injected script could reach Tauri IPC. |
 | Settings | Own Rust commands (`settings_load` / `settings_save`) | Atomic JSON in the app-config dir. `tauri-plugin-store` writes non-atomically and silently drops unparsable files. |
-| Plugins | `single-instance`, `dialog`, `opener`, `window-state` | No `fs` plugin. Every file operation is a vault-scoped custom command. |
+| Plugins | `single-instance`, `process`, `updater`, `dialog`, `opener`, `window-state` | No `fs` plugin. Every file operation is a vault-scoped custom command. `updater` and `process` only replace the app bundle and restart (§6.7). |
 
 ## 2. Process model
 
@@ -89,7 +89,7 @@ src/
     ipc/commands.ts          typed wrappers for every Rust command (epoch injected)
     ipc/events.ts            vault:changed, app:flush-request
     utils/                   path · names · fuzzy · platform · keys · timing
-    state/                   settings · vault · editor · ui · commands (*.svelte.ts), tree.ts
+    state/                   settings · vault · editor · ui · commands · updater (*.svelte.ts), tree.ts
     editor/                  setup · theme · syntax · commands · complete · paste · search panel
                              · host.ts (bridge interface) · shared.ts · livePreview/*
     markdown/                render.ts (+ plugins/) · resolve.ts
@@ -97,7 +97,9 @@ src/
 src-tauri/src/
   lib.rs  error.rs  vault.rs  fs_ops.rs  watcher.rs  search.rs  store.rs
 docs/
-  ARCHITECTURE.md  DESIGN.md  research/ (OSS analyses, REQUIREMENTS.md, TECHNIQUES.md)
+  ARCHITECTURE.md  DESIGN.md  releasing.md  research/ (OSS analyses, REQUIREMENTS.md, TECHNIQUES.md)
+scripts/prepare-release.mjs  validates the versions and writes the updater overlay for release builds (§6.7)
+.github/workflows/release.yml  a version tag → draft GitHub release with installers, updater archives and latest.json
 ```
 
 ## 4. Paths, names, Unicode (PLAT-06, PLAT-07, TREE-07)
@@ -242,12 +244,13 @@ Every command marked "scoped" also takes `epoch: u64`, either as an argument or 
 
 - **Plugins, in this order:**
   1. `single-instance` (desktop only): unminimizes, shows and focuses `main`.
-  2. `dialog`
-  3. `opener`
-  4. `window-state`, restoring size, position and maximized only (restoring visibility would show the hidden window before the first paint, PLAT-03)
-  5. `mininote-navigation` (inline): the webview may only navigate within the app's own origin (`tauri://localhost`, `http(s)://tauri.localhost`, `about:blank`, and the dev server in dev builds), as defense in depth for READ-04 / PLAT-13
+  2. `process` and `updater` (desktop only): the restart and the signed app updates of §6.7.
+  3. `dialog`
+  4. `opener`
+  5. `window-state`, restoring size, position and maximized only (restoring visibility would show the hidden window before the first paint, PLAT-03)
+  6. `mininote-navigation` (inline): the webview may only navigate within the app's own origin (`tauri://localhost`, `http(s)://tauri.localhost`, `about:blank`, and the dev server in dev builds), as defense in depth for READ-04 / PLAT-13
 - **Exit flush.**
-  - On `RunEvent::ExitRequested { api, code, .. }`: if `exit_ready` is false and the `main` webview window exists, call `api.prevent_exit()` and emit `app:flush-request`.
+  - On `RunEvent::ExitRequested { api, code, .. }`: a restart request (`code == RESTART_EXIT_CODE`, §6.7) passes untouched, because Tauri ignores `prevent_exit` for it. Otherwise, if `exit_ready` is false and the `main` webview window exists, call `api.prevent_exit()` and emit `app:flush-request`.
   - At the same time, start (once, even when the request repeats) a 4000 ms fallback thread that sets `exit_ready` and calls `app.exit(code.unwrap_or(0))`. The frontend answers every request, with or without an open vault.
   - `app_exit_ready` sets `exit_ready` and calls `app.exit(0)`.
 - **macOS menu.** Tao never raises a preventable exit for the predefined Quit (Tauri #9198), so build the menu explicitly:
@@ -256,6 +259,13 @@ Every command marked "scoped" also takes `epoch: u64`, either as an argument or 
   - **Window menu:** Minimize, Zoom, Fullscreen.
 - Windows and Linux have no menu bar. Ctrl+Q there is a frontend command that flushes and then calls `app_exit_ready`.
 - The main window starts hidden (`visible: false`). The frontend shows it after the first paint.
+
+### 6.7 App updates (`tauri-plugin-updater`, `tauri-plugin-process`)
+
+- **Configuration.** The committed `tauri.conf.json` has an empty updater block (no endpoint, no key), so development and local builds check nothing. Release builds merge `src-tauri/tauri.updater.conf.json`, an ignored overlay that `scripts/prepare-release.mjs` writes after validating the public key, the versions (package.json, both lockfiles, tauri.conf.json, Cargo.toml) and the tag: `bundle.createUpdaterArtifacts`, the public signing key and the single endpoint `https://github.com/<owner>/<repo>/releases/latest/download/latest.json`. GitHub Releases hosts the manifest and the archives; the app needs no credentials. Pipeline and one-time setup: `docs/releasing.md`.
+- **Flow (frontend, `state/updater.svelte.ts`).** `start(flushBeforeExit)` at mount reads the running version and makes one background check (10 s timeout), repeated when the machine comes back online; development builds skip the check. A newer release shows the update button (§9). The click downloads (5 min timeout, whole-percent progress), runs the quit flush of §8.4, installs the signature-verified bundle, flushes again and calls `relaunch()`. Check failures are silent. An install failure toasts `errUpdate` once and keeps the button for a retry; after a successful install only the restart is retried (`restart` phase), never the install. The Tauri `Update` resource is closed after the install and when the store stops.
+- **Why the flush runs twice.** Neither step waits for the exit protocol of §6.6: on Windows the plugin launches the installer and exits the process inside `install()`, and Tauri ignores `prevent_exit` for a restart request, so `ExitRequested` with `RESTART_EXIT_CODE` is let through without a flush request.
+- **Scope.** Only the application bundle changes: the macOS `.app`, the Windows NSIS or MSI installer in passive mode (the installer relaunches the app), the Linux AppImage. A `.deb` or `.rpm` install has no AppImage to replace, and its check fails quietly. No vault file or setting is touched. No custom IPC command is involved; the plugins' own commands are allowed in `capabilities/default.json` (`updater:allow-check`, `allow-download`, `allow-install`, `process:allow-restart`).
 
 ## 7. Frontend state (`src/lib/state/*.svelte.ts`)
 
@@ -271,6 +281,7 @@ The stores are singleton classes with `$state` fields:
 | `editor` | The open file, view mode, history, autosave engine, external-change reconciliation, the EditorState cache (20 notes; dirty ones are pinned), virtual notes and recovery. Each note controller keeps the vault epoch it was created in (§5). Publishes `lineRequest` `{ path, line, seq }` for every line reveal, which the reading view follows (§11). `blur()` takes focus out of the editor before slow commands (§8.3); `busyUnder` and `unsavedAt` let the vault refuse operations that would race a write or displace unsaved text. Owns the single `EditorView` after `Editor.svelte` attaches it. Implements `EditorHost`. |
 | `ui` | Modal, context menu, confirm dialog, toasts, the search query (while it is set, the sidebar shows results instead of the tree), and focus requests. |
 | `commands` | Registry used by the global shortcut handler and the command palette. `keysOf(cmd)` gives the keys in effect (the user's, else the defaults); `paused` is set while the shortcut settings record a key (§9.1). |
+| `updater` | The update phase (`idle` → `checking` → `available` → `downloading` → `installing` → `restart` / `restarting`), the offered and the running version, and the download percentage. `start(beforeExit)` at mount, `install()` from the button (§6.7). The Tauri `Update` resource stays out of reactive state. |
 
 Calls go one way: `vault` → `editor` for moves, removals and external changes. `editor` → `vault` only for queries and for creating files.
 
@@ -349,6 +360,7 @@ Calls go one way: `vault` → `editor` for moves, removals and external changes.
   2. On failure or timeout, write a recovery copy for every dirty note (each capped at about 1 s).
   3. `settings.flush()`.
 - **Quit.** `onFlushRequest` runs the same steps, then calls `appExitReady()`.
+- **Update.** The updater runs the same steps before installing a new version and again before restarting into it (§6.7).
 - **Opening a note** checks `recoveryGet(path)`:
   - If the file still matches the copy's whole baseline (mtime, size and hash: every empty file has the same size and hash, so a new note at a deleted note's path never takes the old text), restore the recovery text as a dirty buffer, which saves normally.
   - If the file changed too, open from the file and write the recovery text as a conflict copy.
@@ -358,19 +370,20 @@ Calls go one way: `vault` → `editor` for moves, removals and external changes.
 
 ```
 App.svelte
-├─ Welcome.svelte            (no vault)  open-folder icon button + recent vault names
+├─ Welcome.svelte            (no vault)  open-folder icon button + recent vault names; UpdateButton in the top-right corner
 └─ layout (vault open)
    ├─ Sidebar.svelte         header (drag region; new note, new folder, collapse all) · SearchPanel · FileTree (hidden while a query is set) · footer (vault menu, gear)
    │   ├─ SearchPanel.svelte the search field, always shown at the top; grouped results while it holds a query
    │   └─ FileTree.svelte    flattened visible rows, virtualized, keyboard nav, DnD, new-folder draft row
    │       └─ TreeRow.svelte guide lines + kind icon + title; inline rename input, or the draft row's name input
    ├─ Resizer.svelte
-   └─ Main.svelte            top strip (drag region; sidebar toggle, always shown; nav, view and lock icons) + .doc-scroll
+   └─ Main.svelte            top strip (drag region; sidebar toggle, always shown; nav, view and lock icons; UpdateButton while a release waits) + .doc-scroll
        ├─ InlineTitle.svelte editable file name → rename on commit
        ├─ Editor.svelte      the single EditorView (always mounted while a vault is open)
        ├─ Reader.svelte      rendered HTML (reading view)
        └─ ImageView.svelte   image files (TREE-15)
-├─ QuickSwitcher · CommandPalette · SettingsModal (on Modal.svelte; its shortcuts page is ShortcutSettings.svelte)
+├─ QuickSwitcher · CommandPalette · SettingsModal (on Modal.svelte; its shortcuts page is ShortcutSettings.svelte; a last row shows the app version)
+├─ UpdateButton.svelte       the update control of §6.7: download tray → percentage → restart arrow
 ├─ ContextMenu · ConfirmDialog · Toasts
 └─ Icon.svelte               inline SVG icon set
 ```

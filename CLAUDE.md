@@ -17,6 +17,7 @@ npm test                   # vitest unit tests (pure logic only)
 (cd src-tauri && cargo check)   # Rust type-check (must be clean)
 npm run tauri dev          # run the app (the owner runs this, not agents)
 npm run tauri build        # release bundle
+npm run release:prepare    # validate the versions and write the updater overlay (docs/releasing.md)
 ```
 
 ## Owner's working rules
@@ -26,6 +27,13 @@ npm run tauri build        # release bundle
 - **No mobile builds.** Never run iOS/Android builds or simulators.
 - Do not use Claude Artifacts or the auto-memory feature. Document durable knowledge here or in `docs/`.
 - Commit messages are in English, with no `Co-Authored-By` lines.
+
+## Versioning and releases
+
+- Use stable `X.Y.Z` versions and matching `vX.Y.Z` tags; no prerelease or build suffixes. Nothing has been published yet: the first release must be installed by hand once, and every later one installs from inside the app.
+- Keep `package.json`, `package-lock.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` and `src-tauri/Cargo.lock` on the same version (`npm install --package-lock-only`, then `cargo check` in `src-tauri`), and commit the lockfiles with the bump. `npm run release:prepare` checks this.
+- Pass the checks above before pushing a release commit and its tag. The tag starts `.github/workflows/release.yml`, which creates a **draft** release; publish it only after every platform job is green.
+- Never move or reuse a published tag; bump the version instead. Keep the app identifier and the updater signing key stable, or installed apps stop trusting updates. Setup and details: `docs/releasing.md`.
 
 ## Conventions
 

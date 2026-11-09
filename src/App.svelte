@@ -21,6 +21,7 @@
   import { editor } from "./lib/state/editor.svelte";
   import { settings } from "./lib/state/settings.svelte";
   import { ui } from "./lib/state/ui.svelte";
+  import { updater } from "./lib/state/updater.svelte";
   import { vault } from "./lib/state/vault.svelte";
   import { matchShortcut } from "./lib/utils/keys";
   import { fileKindOf, titleOf } from "./lib/utils/names";
@@ -124,8 +125,11 @@
     ];
     // Commands carry no settings dependency; registering first keeps reload keys blocked from the start.
     registerAppCommands();
+    // The update check (ARCHITECTURE §6.7) runs beside startup; an install flushes like a quit.
+    const stopUpdater = updater.start(flushBeforeExit);
     void boot();
     return () => {
+      stopUpdater();
       for (const p of unlisten) p.then((off) => off()).catch(() => {});
     };
   });

@@ -1,7 +1,9 @@
 <script lang="ts">
   // No vault open (VAULT-01/02/05): one open-folder icon button and the names of the
   // recent vaults below it. A full path shows only to tell same-named vaults apart.
+  // The update button, when there is one, sits in the top-right corner (§6.7).
   import Icon from "./Icon.svelte";
+  import UpdateButton from "./UpdateButton.svelte";
   import { openFolderDialog, openVault, unavailableVaults } from "../appCommands";
   import { t } from "../i18n";
   import { settings } from "../state/settings.svelte";
@@ -48,6 +50,10 @@
   {#if isMac}
     <div class="drag" data-tauri-drag-region></div>
   {/if}
+  <!-- Where the main strip keeps it once a vault opens; a sibling of the drag region, so clicks never drag. -->
+  <div class="corner">
+    <UpdateButton />
+  </div>
   <div class="content">
     <button type="button" class="icon-btn" aria-label={t("openFolder")} onclick={() => once(openFolderDialog)}>
       <Icon name="folder" />
@@ -91,6 +97,13 @@
     left: 0;
     right: 0;
     height: var(--header-h);
+  }
+
+  /* Centered in the strip's height like the main strip's icon buttons (28px). */
+  .corner {
+    position: absolute;
+    top: calc((var(--header-h) - 28px) / 2);
+    right: 8px;
   }
 
   .content {

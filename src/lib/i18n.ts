@@ -53,6 +53,7 @@ const en = {
   attachmentFolder: "Folder",
   confirmDeleteSetting: "Confirm before deleting",
   shortcuts: "Shortcuts",
+  version: "Version",
 
   cmdNewNote: "New note",
   cmdNewFolder: "New folder",
@@ -96,6 +97,8 @@ const en = {
   errShortcutInvalid: "That key can’t be a shortcut.",
   errShortcutReserved: "{key} is reserved.",
   errShortcutTaken: "{key} is already used by “{name}”.",
+  errUpdate: "Couldn’t update to {version}. {message}",
+  errRestart: "Couldn’t restart. Quit and reopen mininote to finish updating.",
 
   ariaSearch: "Search",
   ariaClearSearch: "Clear search",
@@ -124,6 +127,11 @@ const en = {
   ariaRecordShortcut: "Press a shortcut",
   ariaRemoveShortcut: "Remove {key}",
   ariaResetShortcut: "Restore default",
+  ariaUpdate: "Update to {version}",
+  ariaUpdateDownloading: "Downloading {version}",
+  ariaUpdateInstalling: "Installing {version}",
+  ariaUpdateRestarting: "Restarting",
+  ariaUpdateRestart: "Restart to finish updating to {version}",
   removeFromRecent: "Remove from list",
   collapseAll: "Collapse all",
 } as const;

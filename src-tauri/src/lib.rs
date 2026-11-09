@@ -30,9 +30,14 @@ const MENU_QUIT: &str = "mininote-quit";
 pub fn run() {
     let builder = tauri::Builder::default();
     #[cfg(desktop)]
-    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-        focus_main(app)
-    }));
+    let builder = builder
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            focus_main(app)
+        }))
+        // App updates (ARCHITECTURE §6.7): the frontend checks, downloads, installs and
+        // restarts; release builds get the endpoint and public key from a config overlay.
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build());
     let builder = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -87,7 +92,10 @@ pub fn run() {
     };
     app.run(|app, event| match event {
         RunEvent::ExitRequested { api, code, .. } => {
-            if should_flush_first(app) {
+            // A restart (the updater, once the new version is installed) cannot be held
+            // back: Tauri ignores `prevent_exit` for it, so the frontend flushes before
+            // asking for it (§6.7). Every other exit waits for the flush.
+            if code != Some(tauri::RESTART_EXIT_CODE) && should_flush_first(app) {
                 api.prevent_exit();
                 request_flush(app, code.unwrap_or(0));
             }

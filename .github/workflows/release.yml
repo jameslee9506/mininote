@@ -1,0 +1,170 @@
+name: Release
+
+# A version tag builds every platform, uploads the installers, the signed updater
+# archives and latest.json to a draft release, and checks the manifest. Publish the
+# draft by hand once every job is green; see docs/releasing.md.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # ubuntu-22.04 keeps the AppImage's glibc requirement low; these packages build the Rust side there.
+  LINUX_PACKAGES: libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+
+jobs:
+  check:
+    name: Check
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+
+      # Fails fast on a missing key, a private repository or versions out of sync.
+      - name: Validate the release configuration
+        env:
+          TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          RELEASE_REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+        run: node scripts/prepare-release.mjs
+
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y $LINUX_PACKAGES
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --lib --locked
+
+  build:
+    name: Build ${{ matrix.name }}
+    needs: check
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      # tauri-action merges each platform into the release's latest.json by downloading,
+      # editing and re-uploading it, so two platforms must never upload at the same time.
+      max-parallel: 1
+      matrix:
+        include:
+          - name: macOS (Apple Silicon)
+            os: macos-latest
+            target: aarch64-apple-darwin
+            args: --target aarch64-apple-darwin
+          - name: macOS (Intel)
+            os: macos-latest
+            target: x86_64-apple-darwin
+            args: --target x86_64-apple-darwin
+          - name: Windows
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            args: ''
+          - name: Linux
+            os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            args: ''
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y $LINUX_PACKAGES
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Prepare the release configuration
+        env:
+          TAURI_UPDATER_PUBLIC_KEY: ${{ vars.TAURI_UPDATER_PUBLIC_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          RELEASE_REPOSITORY_PRIVATE: ${{ github.event.repository.private }}
+        run: node scripts/prepare-release.mjs
+
+      - run: npm ci
+
+      # Apple Developer ID signing and notarization can be added here; see docs/releasing.md.
+      - name: Build and upload
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: mininote v__VERSION__
+          releaseBody: 'Download the installer for your platform. Installed apps update from inside the app.'
+          releaseDraft: true
+          prerelease: false
+          uploadUpdaterJson: true
+          updaterJsonPreferNsis: true
+          args: ${{ matrix.args }} --config src-tauri/tauri.updater.conf.json
+
+  verify:
+    name: Verify the updater manifest
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # Drafts are not reachable through /releases/tags, so the release is found in the listing.
+      - name: Download latest.json from the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          asset_id=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq ".[] | select(.tag_name == \"$TAG\") | .assets[] | select(.name == \"latest.json\") | .id")
+          if [ -z "$asset_id" ]; then
+            echo "The release for $TAG has no latest.json."
+            exit 1
+          fi
+          gh api -H "Accept: application/octet-stream" "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" > latest.json
+
+      - name: Check the version and every platform
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFile } from 'node:fs/promises';
+          const manifest = JSON.parse(await readFile('latest.json', 'utf8'));
+          const { version } = JSON.parse(await readFile('package.json', 'utf8'));
+          if (manifest.version !== version) throw new Error(`latest.json says ${manifest.version}; the release is ${version}.`);
+          for (const target of ['darwin-aarch64', 'darwin-x86_64', 'windows-x86_64', 'linux-x86_64']) {
+            const platform = manifest.platforms?.[target];
+            if (!platform?.signature?.trim() || new URL(platform.url).protocol !== 'https:') {
+              throw new Error(`latest.json has no signed artifact for ${target}.`);
+            }
+          }
+          console.log('Every platform is in the draft release.');
+          NODE

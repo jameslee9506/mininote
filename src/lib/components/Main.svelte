@@ -5,6 +5,7 @@
   import ImageView from "./ImageView.svelte";
   import InlineTitle from "./InlineTitle.svelte";
   import Reader from "./Reader.svelte";
+  import UpdateButton from "./UpdateButton.svelte";
   import { t } from "../i18n";
   import { editor } from "../state/editor.svelte";
   import { settings } from "../state/settings.svelte";
@@ -98,6 +99,7 @@
         <Icon name="lock" />
       </span>
     {/if}
+    <UpdateButton />
     {#if isNote}
       <button
         type="button"
