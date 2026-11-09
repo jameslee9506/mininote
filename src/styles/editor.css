@@ -1,0 +1,520 @@
+/*
+ * Live-preview editor styling: the classes emitted by src/lib/editor/livePreview
+ * (ARCHITECTURE §10.2), the editor spacing of DESIGN §3.2 and the Markdown
+ * visuals of DESIGN §5. Tokens only.
+ *
+ * - Lines get padding, never margins: CodeMirror measures padding but not margins.
+ * - CodeMirror themes generate `.ͼN .cm-line`-style rules (two classes) that are
+ *   injected after this file, so line rules here use at least three classes.
+ *   Color rules that must win over syntax-highlighting spans nested inside a
+ *   mark also target the mark's descendants.
+ */
+
+/* ── Text flow ──────────────────────────────────────────────────── */
+
+.cm-editor .cm-scroller .cm-content {
+  /* Hangul wraps between words (eojeol), never inside one; long URLs still break. */
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+/* ── Lines ──────────────────────────────────────────────────────── */
+
+/* No base inset, so text aligns with the inline title. Quotes add one 16px step (2px bar
+ * + 14px gap) per level, code boxes their inner padding, and list lines their gutter: the
+ * reading view's 1.5em per level, less the measured prefix that hangs (LIVE-13), so an
+ * item's text sits where the reading view puts it whatever the source indentation. */
+.cm-editor .cm-content .cm-line {
+  --mn-list: max(0px, calc(var(--fs-content) * 1.5 * var(--mn-depth, 0) - var(--mn-hang, 0px)));
+  /* Where a code box or a rule starts: after the quote steps and the list gutter. */
+  --mn-box-x: calc(var(--mn-quote, 0) * 16px + var(--mn-list) + var(--mn-hang, 0px));
+  padding-left: calc(var(--mn-quote, 0) * 16px + var(--mn-pad-l, 0px) + var(--mn-list));
+  padding-right: var(--mn-pad-r, 0px);
+}
+
+/* Wrapped rows of a list line align with its text (LIVE-13). `hanging` leaves the first
+ * row alone, so tab stops stay where the source puts them. */
+.cm-editor .cm-content .cm-line.cm-hang {
+  text-indent: var(--mn-hang, 0px) hanging;
+}
+
+/* ── Blockquote: one bar per level, drawn on the line box ───────── */
+
+/* The bars start below any pair padding, at the gutter of the list items the quote sits
+ * in (the left edge outside lists). */
+.cm-editor .cm-content .cm-line.cm-quote {
+  color: var(--c-text-muted);
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--c-border-strong) 0 2px,
+    transparent 2px 16px
+  );
+  background-size: calc(var(--mn-quote, 1) * 16px) calc(100% - var(--mn-pad-t, 0px));
+  background-position: calc(var(--fs-content) * 1.5 * var(--mn-quote-list, 0)) var(--mn-pad-t, 0px);
+  background-repeat: no-repeat;
+}
+
+/* ── Headings: the size sits on the line, so caret and line box match ── */
+
+.cm-editor .cm-content .cm-line:is(.cm-h1, .cm-h2, .cm-h3, .cm-h4, .cm-h5, .cm-h6) {
+  font-weight: var(--fw-heading);
+  line-height: var(--lh-heading);
+  color: var(--c-text-strong);
+}
+
+.cm-editor .cm-content .cm-line.cm-h1 {
+  font-size: var(--fs-h1);
+  letter-spacing: -0.01em;
+}
+
+.cm-editor .cm-content .cm-line.cm-h2 {
+  font-size: var(--fs-h2);
+  letter-spacing: -0.01em;
+}
+
+.cm-editor .cm-content .cm-line.cm-h3 {
+  font-size: var(--fs-h3);
+}
+
+.cm-editor .cm-content .cm-line.cm-h4 {
+  font-size: var(--fs-h4);
+}
+
+.cm-editor .cm-content .cm-line.cm-h5 {
+  font-size: var(--fs-h5);
+}
+
+.cm-editor .cm-content .cm-line.cm-h6 {
+  font-size: var(--fs-h6);
+  color: var(--c-text-muted);
+}
+
+/* ── Spacing between blocks (DESIGN §3.2, LIVE-15) ──────────────────
+ * The reading view's pair gaps, from the tree only: data-blk / data-prev / data-ctx sit
+ * on a block's first line, or on a block widget (.cm-block). A blank source line between
+ * two blocks is --gap-blank tall, and the block below pads the rest of its pair gap. The
+ * gap rules follow markdown.css in the same order, all at one specificity (:where), so
+ * the later pair wins. */
+
+.cm-editor .cm-content .cm-line.cm-blank {
+  line-height: calc(var(--fs-content) * var(--gap-blank));
+}
+
+/* any + any */
+.cm-editor .cm-content :where(.cm-line, .cm-block):where([data-prev]) {
+  --mn-gap: var(--gap-block);
+  /* The gap, less what the blank lines above give, and half a text line around an hr. */
+  --mn-pad-t: calc(
+    var(--fs-content) * max(0, var(--mn-gap) - var(--mn-blank, 0) * var(--gap-blank) - var(--mn-half, 0))
+  );
+}
+
+/* any + heading */
+.cm-editor .cm-content :where(.cm-line, .cm-block):where([data-blk="h1"]) {
+  --mn-gap: var(--gap-before-h1);
+}
+
+.cm-editor .cm-content :where(.cm-line, .cm-block):where([data-blk="h2"]) {
+  --mn-gap: var(--gap-before-h2);
+}
+
+.cm-editor .cm-content :where(.cm-line, .cm-block):where([data-blk="h3"]) {
+  --mn-gap: var(--gap-before-h3);
+}
+
+.cm-editor .cm-content :where(.cm-line, .cm-block):where([data-blk="h4"], [data-blk="h5"], [data-blk="h6"]) {
+  --mn-gap: var(--gap-before-h4);
+}
+
+/* any + hr, hr + any: the rule sits on a text-high line, so half of it counts toward each gap. */
+.cm-editor .cm-content :where(.cm-line, .cm-block):where([data-blk="hr"], [data-prev="hr"]) {
+  --mn-gap: var(--gap-hr);
+  --mn-half: calc(var(--lh-content) / 2);
+}
+
+/* heading + any */
+.cm-editor
+  .cm-content
+  :where(.cm-line, .cm-block):where(
+    [data-prev="h1"],
+    [data-prev="h2"],
+    [data-prev="h3"],
+    [data-prev="h4"],
+    [data-prev="h5"],
+    [data-prev="h6"]
+  ) {
+  --mn-gap: var(--gap-after-heading);
+}
+
+/* heading + heading */
+.cm-editor
+  .cm-content
+  :where(.cm-line, .cm-block):where(
+    :is([data-blk="h1"], [data-blk="h2"], [data-blk="h3"], [data-blk="h4"], [data-blk="h5"], [data-blk="h6"]):is(
+      [data-prev="h1"],
+      [data-prev="h2"],
+      [data-prev="h3"],
+      [data-prev="h4"],
+      [data-prev="h5"],
+      [data-prev="h6"]
+    )
+  ) {
+  --mn-gap: var(--gap-heading-heading);
+}
+
+/* li + li: tight, loose, or holding blocks (data-ctx is the renderer's list class). */
+.cm-editor .cm-content :where(.cm-line, .cm-block):where([data-ctx="list"][data-blk="li"]) {
+  --mn-gap: var(--gap-item);
+}
+
+.cm-editor .cm-content :where(.cm-line, .cm-block):where([data-ctx="list-loose"][data-blk="li"]) {
+  --mn-gap: var(--gap-item-loose);
+}
+
+.cm-editor .cm-content :where(.cm-line, .cm-block):where([data-ctx="list-blocks"][data-blk="li"]) {
+  --mn-gap: var(--gap-block);
+}
+
+/* An item's text and its nested list. */
+.cm-editor
+  .cm-content
+  :where(.cm-line, .cm-block):where([data-ctx="li"][data-prev="p"]:is([data-blk="ul"], [data-blk="ol"])) {
+  --mn-gap: var(--gap-nested);
+}
+
+/* Padding, never a margin: CodeMirror measures padding. */
+.cm-editor .cm-content :where(.cm-line, .cm-block)[data-prev] {
+  padding-top: var(--mn-pad-t);
+}
+
+/* ── Code blocks: a box behind the lines (LIVE-08) ───────────────── */
+
+.cm-editor .cm-content .cm-line.cm-code {
+  --mn-pad-l: 16px;
+  --mn-pad-r: 16px;
+  position: relative;
+  font-family: var(--font-mono);
+  font-size: var(--fs-code);
+  line-height: 1.55;
+}
+
+/* The box starts after the quote steps and the list gutter, like the reading view's <pre>,
+ * and below any pair padding: behind the text, above the editor's own backdrop. */
+.cm-editor .cm-content .cm-line.cm-code::before {
+  content: "";
+  position: absolute;
+  top: var(--mn-pad-t, 0px);
+  right: 0;
+  bottom: 0;
+  left: var(--mn-box-x);
+  z-index: -1;
+  background-color: var(--c-bg-code);
+}
+
+.cm-editor .cm-content .cm-line.cm-code-first::before {
+  border-top-left-radius: var(--radius-m);
+  border-top-right-radius: var(--radius-m);
+}
+
+.cm-editor .cm-content .cm-line.cm-code-last::before {
+  border-bottom-left-radius: var(--radius-m);
+  border-bottom-right-radius: var(--radius-m);
+}
+
+/* Fence lines already pad a fenced box; indented code (and an unclosed fence's last line)
+ * gets a little inner padding instead, on top of any pair gap. Inner padding is not a gap. */
+.cm-editor .cm-content .cm-line.cm-code-first:not(.cm-fence) {
+  padding-top: calc(var(--mn-pad-t, 0px) + 6px);
+}
+
+.cm-editor .cm-content .cm-line.cm-code-last:not(.cm-fence) {
+  padding-bottom: 6px;
+}
+
+/* Fence text keeps its line height but is invisible until the block is revealed;
+ * the language shows as a faint label on the right. */
+.cm-editor .cm-content .cm-fence-text,
+.cm-editor .cm-content .cm-fence-text * {
+  color: transparent;
+}
+
+.cm-editor .cm-content .cm-line.cm-fence[data-lang]::after {
+  content: attr(data-lang);
+  position: absolute;
+  top: var(--mn-pad-t, 0px);
+  right: 16px;
+  color: var(--c-text-faint);
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* ── Horizontal rule: a 1px rule on a normal-height line (LIVE-09) ── */
+
+.cm-editor .cm-content .cm-line.cm-hr {
+  position: relative;
+}
+
+/* Centered on the text line, below any pair padding; it starts where a box would. */
+.cm-editor .cm-content .cm-line.cm-hr::after {
+  content: "";
+  position: absolute;
+  bottom: calc(var(--fs-content) * var(--lh-content) / 2);
+  left: var(--mn-box-x);
+  right: 0;
+  border-top: 1px solid var(--c-border);
+  pointer-events: none;
+}
+
+.cm-editor .cm-content .cm-hr-text,
+.cm-editor .cm-content .cm-hr-text * {
+  color: transparent;
+}
+
+/* ── Frontmatter: muted monospace, never styled as Markdown (LIVE-10) ── */
+
+.cm-editor .cm-content .cm-line.cm-fm {
+  color: var(--c-text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--fs-code);
+  line-height: 1.55;
+}
+
+/* The parser still sees an hr and a setext heading here; undo any highlighting. */
+.cm-editor .cm-content .cm-line.cm-fm * {
+  color: inherit;
+  font-size: inherit;
+  font-style: inherit;
+  font-weight: inherit;
+  text-decoration: none;
+}
+
+/* ── Block widgets: tables and images (LIVE-11, LIVE-12) ───────────
+ * Padding only: the height map measures the box. A widget sits where its block's first
+ * line would, after the quote steps (one 16px step and one bar per level) and the list
+ * gutter, with its pair gap above it (.cm-block takes the rules of a line). */
+
+.cm-table-widget,
+.cm-image-widget {
+  padding-left: calc(var(--mn-quote, 0) * 16px + var(--fs-content) * 1.5 * var(--mn-depth, 0));
+}
+
+.cm-widget-body {
+  min-width: 0;
+}
+
+.cm-editor .cm-content .cm-widget-quote {
+  color: var(--c-text-muted);
+  background-image: repeating-linear-gradient(
+    to right,
+    var(--c-border-strong) 0 2px,
+    transparent 2px 16px
+  );
+  background-size: calc(var(--mn-quote, 1) * 16px) calc(100% - var(--mn-pad-t, 0px));
+  background-position: calc(var(--fs-content) * 1.5 * var(--mn-quote-list, 0)) var(--mn-pad-t, 0px);
+  background-repeat: no-repeat;
+}
+
+/* ── Tables ─────────────────────────────────────────────────────── */
+
+/* Revealed source (LIVE-12): raw pipes in monospace. */
+.cm-editor .cm-content .cm-line.cm-table {
+  font-family: var(--font-mono);
+  font-size: var(--fs-code);
+  line-height: 1.55;
+}
+
+/* Rendered table (a block widget, framed as above): its body scrolls horizontally. */
+.cm-table-widget > .cm-widget-body {
+  overflow-x: auto;
+  white-space: normal;
+}
+
+.cm-table-widget table {
+  border-collapse: collapse;
+  overflow-wrap: normal;
+}
+
+.cm-table-widget :where(th, td) {
+  padding: 6px 12px;
+  border: 1px solid var(--c-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.cm-table-widget th {
+  font-weight: var(--fw-heading);
+  color: var(--c-text-strong);
+  background: var(--c-bg-code);
+}
+
+.cm-table-widget .cm-align-left {
+  text-align: left;
+}
+
+.cm-table-widget .cm-align-center {
+  text-align: center;
+}
+
+.cm-table-widget .cm-align-right {
+  text-align: right;
+}
+
+/* ── Images (LIVE-11) ───────────────────────────────────────────── */
+
+.cm-image-widget img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-s);
+}
+
+/* Broken or unresolvable image: a muted, text-free box (READ-05). */
+.cm-image-broken {
+  width: calc(var(--fs-content) * 8);
+  height: calc(var(--fs-content) * 5);
+  border-radius: var(--radius-s);
+  background: var(--c-bg-code);
+}
+
+/* ── Lists and tasks (LIVE-04, LIVE-05) ─────────────────────────── */
+
+/* The marker glyph stays (same width, so revealing never shifts text); a dot covers it. */
+.cm-editor .cm-content .cm-bullet,
+.cm-editor .cm-content .cm-bullet * {
+  color: transparent;
+}
+
+.cm-bullet {
+  position: relative;
+}
+
+.cm-bullet::after {
+  content: "•";
+  position: absolute;
+  /* Zero line height at 50% of the glyph box puts the dot on the text baseline. */
+  top: 50%;
+  left: 50%;
+  line-height: 0;
+  transform: translateX(-50%);
+  color: var(--c-text-faint);
+}
+
+.cm-editor .cm-content .cm-list-num,
+.cm-editor .cm-content .cm-list-num * {
+  color: var(--c-text-muted);
+}
+
+/* The widget is the box plus the gap that the hidden "- " used to take; the
+ * square itself is drawn by ::before, like the reading view's .task-box. */
+.cm-task {
+  display: inline-block;
+  position: relative;
+  width: calc(0.9333em + 0.5em);
+  height: 0.9333em;
+  vertical-align: middle;
+  text-indent: 0;
+  cursor: pointer;
+}
+
+.cm-task.cm-task-ordered {
+  width: calc(0.9333em + 0.15em);
+}
+
+.cm-task::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  box-sizing: border-box;
+  width: 0.9333em;
+  height: 0.9333em;
+  border: 1px solid var(--c-border-strong);
+  border-radius: calc(var(--radius-s) - 1px);
+  transition:
+    background-color var(--dur-fast),
+    border-color var(--dur-fast);
+}
+
+.cm-task:hover::before {
+  border-color: var(--c-text-muted);
+}
+
+.cm-task.cm-task-checked::before {
+  border-color: var(--c-text-muted);
+  background: var(--c-text-muted);
+}
+
+.cm-editor .cm-content .cm-task-done,
+.cm-editor .cm-content .cm-task-done * {
+  color: var(--c-text-muted);
+}
+
+.cm-task-done {
+  text-decoration-line: line-through;
+}
+
+/* ── Inline formatting (LIVE-02) ────────────────────────────────── */
+
+.cm-strong {
+  font-weight: var(--fw-strong);
+  color: var(--c-text-strong);
+}
+
+.cm-em {
+  font-style: italic;
+}
+
+.cm-strike {
+  color: var(--c-text-muted);
+  text-decoration-line: line-through;
+}
+
+.cm-highlight {
+  background-color: var(--c-bg-mark);
+}
+
+/* 0.88em rather than --fs-code, so code keeps its ratio inside headings. */
+.cm-inline-code {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  padding: 0.1em 0.35em;
+  border-radius: var(--radius-s);
+  background-color: var(--c-bg-code);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+/* ── Links (LIVE-06, LIVE-14): only rendered links carry these classes ── */
+
+.cm-link,
+.cm-wikilink {
+  color: var(--c-text);
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-decoration-color: var(--c-border-strong);
+  text-underline-offset: 2px;
+  cursor: pointer;
+  transition:
+    color var(--dur-fast),
+    text-decoration-color var(--dur-fast);
+}
+
+.cm-link:hover,
+.cm-wikilink:hover {
+  color: var(--c-text-strong);
+  text-decoration-color: var(--c-text-muted);
+}
+
+/* Applied only once the vault listing has loaded, so nothing flashes at startup. */
+.cm-wikilink.cm-unresolved {
+  text-decoration-style: dashed;
+  text-decoration-color: var(--c-text-muted);
+}
+
+/* ── Revealed syntax marks: faint (DESIGN §5) ───────────────────── */
+
+.cm-editor .cm-content .cm-syntax,
+.cm-editor .cm-content .cm-syntax * {
+  color: var(--c-text-faint);
+}

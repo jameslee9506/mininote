@@ -1,0 +1,42 @@
+[package]
+name = "mininote"
+version = "0.1.0"
+description = "Lightweight local markdown notes"
+authors = []
+edition = "2021"
+rust-version = "1.90"
+
+[lib]
+name = "mininote_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7", features = [] }
+
+[dependencies]
+tauri = { version = "2.12", features = ["protocol-asset"] }
+tauri-plugin-dialog = "2.8"
+tauri-plugin-opener = "2.7"
+tauri-plugin-window-state = "2.5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+notify = "8"
+notify-debouncer-full = "0.7"
+trash = "5"
+walkdir = "2"
+unicode-normalization = "0.1"
+dunce = "1"
+log = "0.4"
+percent-encoding = "2"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-single-instance = "2.5"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+# Unwind, not abort: a panic inside a command must not kill the process while
+# unsaved text waits in the webview (TECHNIQUES §0); spawn_blocking reports it.
+panic = "unwind"
+strip = true

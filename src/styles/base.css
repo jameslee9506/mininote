@@ -1,0 +1,208 @@
+/*
+ * Global base: reset, app frame, and a few shared primitives that components
+ * reuse (.icon-btn, .text-btn, .field, .menu-surface). Component-specific
+ * styling lives in each component's <style>. Tokens only (tokens.css).
+ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  background: var(--c-bg);
+  color: var(--c-text);
+  font-family: var(--font-text);
+  font-size: var(--fs-ui);
+  line-height: var(--lh-ui);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  /* App chrome is not selectable; documents opt back in. */
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+#app {
+  height: 100%;
+}
+
+/* Narrow windows: the content padding shrinks (PLAT-12; same breakpoint as Sidebar.svelte). */
+@media (max-width: 699px) {
+  :root {
+    --content-pad-x: 20px;
+  }
+}
+
+::selection {
+  background: var(--c-selection);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+  margin: 0;
+}
+
+button {
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: default;
+}
+
+/* Documents opt back in: inputs, the editor and the reading view (PLAT-13). */
+input,
+textarea,
+.cm-editor,
+.markdown {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.markdown {
+  cursor: auto;
+}
+
+img,
+svg {
+  display: block;
+}
+
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 1px solid var(--c-focus);
+  outline-offset: -1px;
+}
+
+/* ── Scrollbars ─────────────────────────────────────────────── */
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--c-scrollbar);
+  border: 3px solid transparent;
+  border-radius: 10px;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--c-scrollbar-hover);
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+/* ── Shared primitives ──────────────────────────────────────── */
+
+/* Square, label-less icon button: faint until hovered or focused. */
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-s);
+  color: var(--c-text-faint);
+  transition:
+    background-color var(--dur-fast),
+    color var(--dur-fast);
+}
+
+.icon-btn:hover,
+.icon-btn:focus-visible {
+  background: var(--c-bg-hover);
+  color: var(--c-text);
+}
+
+.icon-btn:active {
+  background: var(--c-bg-active);
+}
+
+.icon-btn:disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+/* Text buttons for dialogs. `.primary` is the single emphasized action. */
+.text-btn {
+  height: 28px;
+  padding: 0 12px;
+  border-radius: var(--radius-s);
+  border: 1px solid var(--c-border-strong);
+  color: var(--c-text);
+  font-size: var(--fs-ui);
+  transition: background-color var(--dur-fast);
+}
+
+.text-btn:hover {
+  background: var(--c-bg-hover);
+}
+
+.text-btn.primary {
+  background: var(--c-text-strong);
+  border-color: var(--c-text-strong);
+  color: var(--c-bg);
+}
+
+.text-btn.primary:hover {
+  opacity: 0.88;
+}
+
+/* Borderless text field (switcher, search, settings). */
+.field {
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-s);
+  background: var(--c-bg);
+  color: var(--c-text);
+}
+
+.field:focus {
+  border-color: var(--c-border-strong);
+}
+
+.field::placeholder {
+  color: var(--c-text-faint);
+}
+
+/* Floating surfaces: menus, modals, toasts, autocomplete. */
+.menu-surface {
+  background: var(--c-bg-elev);
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-m);
+  box-shadow: var(--shadow-elev);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}

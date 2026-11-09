@@ -1,0 +1,26 @@
+node_modules
+dist
+*.log
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea
+
+# Local environment and credentials
+.env
+.env.*
+!.env.example
+!.env.*.example
+.npmrc
+.netrc
+
+# Private signing keys and certificates
+*.key
+*.pem
+*.p8
+*.p12
+*.pfx
+*.keystore
+
+# Local agent permissions
+.claude/settings.local.json

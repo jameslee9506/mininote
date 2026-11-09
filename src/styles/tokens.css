@@ -1,0 +1,155 @@
+/*
+ * Design tokens — the single source of visual truth (see docs/DESIGN.md).
+ * Monotone: every color is a gray. Components must use these variables only.
+ * --fs-content, --content-max and --sidebar-width are overridden at runtime
+ * from user settings (set on :root by the app shell).
+ */
+
+:root {
+  color-scheme: light;
+
+  /* ── Color: light ─────────────────────────────────────────── */
+  --c-bg: #ffffff;              /* editor / reading surface */
+  --c-bg-alt: #f7f7f7;          /* sidebar */
+  --c-bg-elev: #ffffff;         /* modals, menus, popovers */
+  --c-bg-hover: rgba(0, 0, 0, 0.045);
+  --c-bg-active: rgba(0, 0, 0, 0.08);
+  --c-bg-code: #f4f4f4;         /* code blocks, inline code, table header */
+  --c-bg-mark: #e5e5e5;         /* ==highlight==, search hits */
+  --c-border: #e8e8e8;
+  --c-border-strong: #d2d2d2;
+  --c-text: #2b2b2b;            /* body text */
+  --c-text-strong: #111111;     /* headings, emphasis */
+  --c-text-muted: #747474;      /* secondary text, folder paths */
+  --c-text-faint: #a8a8a8;      /* markdown syntax marks, placeholders, idle icons */
+  --c-icon-tree: #9a9a9a;       /* tree row icons: a step past faint */
+  --c-selection: rgba(0, 0, 0, 0.1);
+  --c-caret: #111111;
+  --c-focus: rgba(0, 0, 0, 0.3);
+  --c-scrollbar: rgba(0, 0, 0, 0.14);
+  --c-scrollbar-hover: rgba(0, 0, 0, 0.26);
+  --shadow-elev: 0 10px 30px rgba(0, 0, 0, 0.1), 0 1px 3px rgba(0, 0, 0, 0.07);
+
+  /* ── Typography ───────────────────────────────────────────── */
+  --font-text: -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo",
+    "Malgun Gothic", "Noto Sans KR", "Noto Sans", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "D2Coding",
+    "Noto Sans Mono", "Liberation Mono", monospace;
+
+  --fs-content: 15px;           /* settings.fontSize */
+  --lh-content: 1.7;
+  --lh-heading: 1.3;
+  --fs-h1: calc(var(--fs-content) * 1.6);
+  --fs-h2: calc(var(--fs-content) * 1.36);
+  --fs-h3: calc(var(--fs-content) * 1.16);
+  --fs-h4: var(--fs-content);
+  --fs-h5: calc(var(--fs-content) * 0.94);
+  --fs-h6: calc(var(--fs-content) * 0.88);
+  --fs-code: calc(var(--fs-content) * 0.88);
+  --fw-heading: 600;
+  --fw-strong: 600;
+
+  --fs-ui: 13px;                /* sidebar, menus, modals */
+  --fs-tree-folder: 14px;       /* sidebar folder names */
+  --fs-ui-small: 12px;
+  --lh-ui: 1.4;
+
+  /* ── Flow spacing: gaps BETWEEN adjacent blocks ──────────────
+   * Unitless multipliers of --fs-content. Applied only through sibling-pair
+   * rules (`a + b`); no block ever owns a margin of its own. */
+  --gap-block: 1;               /* default: p+p, p+list, list+code, … */
+  --gap-before-h1: 2.2;
+  --gap-before-h2: 1.9;
+  --gap-before-h3: 1.6;
+  --gap-before-h4: 1.4;         /* also h5, h6 */
+  --gap-after-heading: 0.5;     /* heading + anything */
+  --gap-heading-heading: 0.8;   /* heading + heading */
+  --gap-hr: 1.6;                /* around <hr> */
+  --gap-item: 0.2;              /* li + li in tight lists */
+  --gap-item-loose: 0.6;        /* li + li in loose lists */
+  --gap-nested: 0.2;            /* li text + nested list */
+
+  /* Editor (live preview): the height of a blank source line between two blocks.
+   * It equals the smallest pair gap (--gap-after-heading), so one blank line never
+   * exceeds the gap it sits in; the block below pads the rest (DESIGN §3.2). */
+  --gap-blank: 0.5;
+
+  /* ── Layout ───────────────────────────────────────────────── */
+  --sidebar-width: 248px;       /* settings.sidebarWidth */
+  --header-h: 40px;             /* sidebar header + main top strip (macOS traffic lights live here) */
+  --content-max: 720px;         /* settings.lineWidth (or `none`) */
+  --content-pad-x: 48px;
+  --content-pad-top: 24px;
+  --content-pad-bottom: 40vh;   /* lets the last line scroll to mid-screen */
+  --inline-title-gap: 24px;
+  --row-h: 28px;                /* tree rows, menu items, result rows */
+  --tree-pad-x: 10px;           /* tree row side padding (plus depth × --indent on the left) */
+  --tree-icon-gap: 6px;         /* sidebar row icon to name */
+  --indent: 16px;               /* tree indentation per depth: one icon width */
+  --icon: 16px;
+  --radius-s: 4px;
+  --radius-m: 6px;
+  --radius-l: 8px;
+
+  /* ── Motion ───────────────────────────────────────────────── */
+  --dur-fast: 80ms;
+  --dur: 140ms;
+
+  /* ── Layers ───────────────────────────────────────────────── */
+  --z-sidebar: 10;
+  --z-popover: 100;
+  --z-modal: 200;
+  --z-menu: 300;
+}
+
+/* Dark values, used for explicit dark mode … */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --c-bg: #1d1d1d;
+  --c-bg-alt: #181818;
+  --c-bg-elev: #252525;
+  --c-bg-hover: rgba(255, 255, 255, 0.05);
+  --c-bg-active: rgba(255, 255, 255, 0.09);
+  --c-bg-code: #262626;
+  --c-bg-mark: #3a3a3a;
+  --c-border: #2c2c2c;
+  --c-border-strong: #434343;
+  --c-text: #d4d4d4;
+  --c-text-strong: #f0f0f0;
+  --c-text-muted: #8e8e8e;
+  --c-text-faint: #5f5f5f;
+  --c-icon-tree: #6c6c6c;
+  --c-selection: rgba(255, 255, 255, 0.13);
+  --c-caret: #f0f0f0;
+  --c-focus: rgba(255, 255, 255, 0.32);
+  --c-scrollbar: rgba(255, 255, 255, 0.14);
+  --c-scrollbar-hover: rgba(255, 255, 255, 0.26);
+  --shadow-elev: 0 10px 30px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+/* … and for "system" mode when the OS prefers dark (same values as above). */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --c-bg: #1d1d1d;
+    --c-bg-alt: #181818;
+    --c-bg-elev: #252525;
+    --c-bg-hover: rgba(255, 255, 255, 0.05);
+    --c-bg-active: rgba(255, 255, 255, 0.09);
+    --c-bg-code: #262626;
+    --c-bg-mark: #3a3a3a;
+    --c-border: #2c2c2c;
+    --c-border-strong: #434343;
+    --c-text: #d4d4d4;
+    --c-text-strong: #f0f0f0;
+    --c-text-muted: #8e8e8e;
+    --c-text-faint: #5f5f5f;
+    --c-icon-tree: #6c6c6c;
+    --c-selection: rgba(255, 255, 255, 0.13);
+    --c-caret: #f0f0f0;
+    --c-focus: rgba(255, 255, 255, 0.32);
+    --c-scrollbar: rgba(255, 255, 255, 0.14);
+    --c-scrollbar-hover: rgba(255, 255, 255, 0.26);
+    --shadow-elev: 0 10px 30px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.4);
+  }
+}

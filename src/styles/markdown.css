@@ -1,0 +1,422 @@
+/*
+ * Reading view: rendered Markdown inside `<article class="markdown">`.
+ * Typography follows DESIGN.md §2 and §5. Vertical rhythm is the between-blocks
+ * spacing system of DESIGN.md §3.1. Tokens only (tokens.css).
+ *
+ * Spacing, in four rules:
+ *   1. Every element inside .markdown has margin 0. Nothing ever sets margin-bottom.
+ *   2. Flow containers are .markdown itself and the block containers inside it:
+ *      blockquote, li, details, .callout-body, .footnotes. Only their direct
+ *      children take part in flow. The renderer makes those children blocks:
+ *      tight-list items keep their <p>, tables sit in a .table-wrap. It also
+ *      marks lists `loose` and `has-blocks`, so CSS never needs :has().
+ *   3. A gap is the margin-top of the second element of an adjacent pair:
+ *      CONTAINER > :where(A + B). Every pair rule has the specificity of one
+ *      class, so source order decides: general pairs first, specific pairs last.
+ *   4. Gaps are unitless multiples of --fs-content, so a heading's own font size
+ *      never scales the space above it.
+ */
+
+.markdown {
+  font-family: var(--font-text);
+  font-size: var(--fs-content);
+  line-height: var(--lh-content);
+  color: var(--c-text);
+  /* Korean prose breaks between words, not syllables; overlong tokens still wrap (READ-02). */
+  word-break: keep-all;
+  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
+  /* Raw HTML can borrow the app's class names. Layout containment makes the article the
+   * containing block of fixed and absolute elements and a stacking context, so they stay
+   * inside it, under the app's own UI (READ-04). Unlike paint containment it clips
+   * nothing: wide list markers still show in the left gutter. */
+  contain: layout;
+}
+
+/* ── 1. Reset ─────────────────────────────────────────────────── */
+
+.markdown :where(*) {
+  margin: 0;
+}
+
+/* ── 2–3. Pair rules (order matters) ──────────────────────────── */
+
+/* any + any */
+.markdown > :where(* + *),
+.markdown :where(blockquote, li, details, .callout-body, .footnotes) > :where(* + *) {
+  margin-top: calc(var(--fs-content) * var(--gap-block));
+}
+
+/* any + heading */
+.markdown > :where(* + h1),
+.markdown :where(blockquote, li, details, .callout-body, .footnotes) > :where(* + h1) {
+  margin-top: calc(var(--fs-content) * var(--gap-before-h1));
+}
+
+.markdown > :where(* + h2),
+.markdown :where(blockquote, li, details, .callout-body, .footnotes) > :where(* + h2) {
+  margin-top: calc(var(--fs-content) * var(--gap-before-h2));
+}
+
+.markdown > :where(* + h3),
+.markdown :where(blockquote, li, details, .callout-body, .footnotes) > :where(* + h3) {
+  margin-top: calc(var(--fs-content) * var(--gap-before-h3));
+}
+
+.markdown > :where(* + h4, * + h5, * + h6),
+.markdown :where(blockquote, li, details, .callout-body, .footnotes) > :where(* + h4, * + h5, * + h6) {
+  margin-top: calc(var(--fs-content) * var(--gap-before-h4));
+}
+
+/* any + hr, hr + any */
+.markdown > :where(* + hr, hr + *),
+.markdown :where(blockquote, li, details, .callout-body, .footnotes) > :where(* + hr, hr + *) {
+  margin-top: calc(var(--fs-content) * var(--gap-hr));
+}
+
+/* heading + any */
+.markdown > :where(:is(h1, h2, h3, h4, h5, h6) + *),
+.markdown :where(blockquote, li, details, .callout-body, .footnotes) > :where(:is(h1, h2, h3, h4, h5, h6) + *) {
+  margin-top: calc(var(--fs-content) * var(--gap-after-heading));
+}
+
+/* heading + heading */
+.markdown > :where(:is(h1, h2, h3, h4, h5, h6) + :is(h1, h2, h3, h4, h5, h6)),
+.markdown
+  :where(blockquote, li, details, .callout-body, .footnotes)
+  > :where(:is(h1, h2, h3, h4, h5, h6) + :is(h1, h2, h3, h4, h5, h6)) {
+  margin-top: calc(var(--fs-content) * var(--gap-heading-heading));
+}
+
+/* Lists: items pair up inside their ul/ol; tightness comes from the renderer's `loose` class. */
+.markdown :where(ul, ol) > :where(li + li) {
+  margin-top: calc(var(--fs-content) * var(--gap-item));
+}
+
+.markdown :where(ul.loose, ol.loose) > :where(li + li) {
+  margin-top: calc(var(--fs-content) * var(--gap-item-loose));
+}
+
+/* Items holding a code block, table, quote, rule, heading or HTML block (renderer class
+ * `has-blocks`): the next item gets the block gap, so such a block has equal space above
+ * and below. */
+.markdown :where(ul.has-blocks, ol.has-blocks) > :where(li + li) {
+  margin-top: calc(var(--fs-content) * var(--gap-block));
+}
+
+/* An item's text and its nested list. */
+.markdown :where(li) > :where(p + ul, p + ol) {
+  margin-top: calc(var(--fs-content) * var(--gap-nested));
+}
+
+/* ── Headings ─────────────────────────────────────────────────── */
+
+.markdown :where(h1, h2, h3, h4, h5, h6) {
+  font-weight: var(--fw-heading);
+  line-height: var(--lh-heading);
+  color: var(--c-text-strong);
+}
+
+/* Breathing room above a block scrolled into view: an #anchor's heading, or the block of a
+ * source line (`data-line`) from a search hit or a heading link (NAV-05). */
+.markdown :where(h1, h2, h3, h4, h5, h6, pre, [data-line]) {
+  scroll-margin-top: calc(var(--fs-content) * var(--gap-block));
+}
+
+.markdown h1 {
+  font-size: var(--fs-h1);
+  letter-spacing: -0.01em;
+}
+
+.markdown h2 {
+  font-size: var(--fs-h2);
+  letter-spacing: -0.01em;
+}
+
+.markdown h3 {
+  font-size: var(--fs-h3);
+}
+
+.markdown h4 {
+  font-size: var(--fs-h4);
+}
+
+.markdown h5 {
+  font-size: var(--fs-h5);
+}
+
+.markdown h6 {
+  font-size: var(--fs-h6);
+  color: var(--c-text-muted);
+}
+
+/* ── Inline ───────────────────────────────────────────────────── */
+
+.markdown :where(strong, b) {
+  font-weight: var(--fw-strong);
+  color: var(--c-text-strong);
+}
+
+.markdown :where(s, del) {
+  color: var(--c-text-muted);
+}
+
+.markdown mark {
+  background: var(--c-bg-mark);
+  color: inherit;
+}
+
+.markdown :where(sup, sub) {
+  line-height: 0;
+}
+
+.markdown a[href],
+.markdown a.internal-link {
+  color: var(--c-text);
+  text-decoration-line: underline;
+  text-decoration-thickness: 1px;
+  text-decoration-color: var(--c-border-strong);
+  text-underline-offset: 2px;
+  cursor: pointer;
+  transition:
+    color var(--dur-fast),
+    text-decoration-color var(--dur-fast);
+}
+
+.markdown a[href]:hover,
+.markdown a.internal-link:hover {
+  color: var(--c-text-strong);
+  text-decoration-color: var(--c-text-muted);
+}
+
+/* A link to a note that does not exist yet (LINK-05). */
+.markdown a.is-unresolved {
+  text-decoration-style: dashed;
+  text-decoration-color: var(--c-text-muted);
+}
+
+.markdown code {
+  font-family: var(--font-mono);
+  font-size: var(--fs-code);
+  padding: 0.1em 0.35em;
+  border-radius: var(--radius-s);
+  background: var(--c-bg-code);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+/* --fs-code is ×0.88 of the body size; inside a heading, keep that ratio to the heading. */
+.markdown :where(h1, h2, h3, h4, h5, h6) code {
+  font-size: 0.88em;
+}
+
+.markdown kbd {
+  font-family: var(--font-mono);
+  font-size: var(--fs-code);
+  padding: 0.05em 0.35em;
+  border: 1px solid var(--c-border-strong);
+  border-radius: var(--radius-s);
+}
+
+/* ── Blocks ───────────────────────────────────────────────────── */
+
+/* Like the editor's box: one code line of padding above and below (its fence lines), and
+ * long lines wrap as they do there (lineWrapping is global in the editor). */
+.markdown pre {
+  position: relative;
+  font-family: var(--font-mono);
+  font-size: var(--fs-code);
+  line-height: 1.55;
+  padding: calc(var(--fs-code) * 1.55) 16px;
+  border-radius: var(--radius-m);
+  background: var(--c-bg-code);
+  white-space: pre-wrap;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+  tab-size: 4;
+}
+
+.markdown pre code {
+  font-size: inherit;
+  padding: 0;
+  border-radius: 0;
+  background: none;
+}
+
+/* The language, as the editor's fence line shows it: faint, top right, on the padding line. */
+.markdown pre > code[data-lang]::after {
+  content: attr(data-lang);
+  position: absolute;
+  top: 0;
+  right: 16px;
+  line-height: calc(var(--fs-code) * 1.55);
+  color: var(--c-text-faint);
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Frontmatter: muted monospace lines, like the editor's `fm` lines (no box). */
+.markdown pre.frontmatter {
+  padding: 0;
+  border-radius: 0;
+  background: none;
+  color: var(--c-text-muted);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+
+.markdown blockquote {
+  padding-left: 14px;
+  border-left: 2px solid var(--c-border-strong);
+  color: var(--c-text-muted);
+}
+
+/* No margin of its own: --gap-hr comes from flow. */
+.markdown hr {
+  height: 0;
+  border: 0;
+  border-top: 1px solid var(--c-border);
+}
+
+.markdown dd {
+  padding-left: 1.5em;
+}
+
+/* ── Lists and tasks ──────────────────────────────────────────── */
+
+.markdown :where(ul, ol) {
+  padding-left: 1.5em;
+}
+
+/* Every bullet level is the editor's "•" glyph followed by one space, as "- " renders there
+ * (the UA would switch to circle and square); disc is the fallback for engines without
+ * marker content. */
+.markdown ul {
+  list-style-type: disc;
+}
+
+.markdown ul > li::marker {
+  content: "• ";
+  color: var(--c-text-faint);
+}
+
+.markdown ol > li::marker {
+  color: var(--c-text-muted);
+}
+
+.markdown li.task-list-item {
+  position: relative;
+  list-style-type: none;
+}
+
+/* An empty task ("- [ ]") still gets a line for its box. */
+.markdown li.task-list-item > p:first-child {
+  min-height: calc(1em * var(--lh-content));
+}
+
+/* 14px at the 15px base, on the item's first line, where the editor's box sits: the box plus
+ * a 0.5em gap before the text (editor.css .cm-task). */
+.markdown .task-box {
+  position: absolute;
+  left: calc(-1 * (0.9333em + 0.5em));
+  top: calc((1em * var(--lh-content) - 0.9333em) / 2);
+  width: 0.9333em;
+  height: 0.9333em;
+  border: 1px solid var(--c-border-strong);
+  border-radius: calc(var(--radius-s) - 1px);
+  transition:
+    background-color var(--dur-fast),
+    border-color var(--dur-fast);
+}
+
+.markdown .task-box:hover {
+  border-color: var(--c-text-muted);
+}
+
+.markdown .task-box[aria-checked="true"] {
+  border-color: var(--c-text-muted);
+  background: var(--c-text-muted);
+}
+
+.markdown li.is-checked > p:first-child {
+  color: var(--c-text-muted);
+  text-decoration-line: line-through;
+}
+
+/* ── Tables ───────────────────────────────────────────────────── */
+
+.markdown .table-wrap {
+  overflow-x: auto;
+}
+
+.markdown table {
+  border-collapse: collapse;
+  /* Columns grow to their longest word, and the wrapper scrolls instead of squeezing them. */
+  overflow-wrap: normal;
+}
+
+/* A raw-HTML table has no .table-wrap, so it scrolls by itself (READ-06). Its rows sit in an
+ * anonymous table box, which inherits border-collapse. */
+.markdown > table,
+.markdown :not(.table-wrap) > table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.markdown :where(th, td) {
+  padding: 6px 12px;
+  border: 1px solid var(--c-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown th {
+  font-weight: var(--fw-heading);
+  color: var(--c-text-strong);
+  background: var(--c-bg-code);
+}
+
+.markdown .align-left {
+  text-align: left;
+}
+
+.markdown .align-center {
+  text-align: center;
+}
+
+.markdown .align-right {
+  text-align: right;
+}
+
+/* ── Images ───────────────────────────────────────────────────── */
+
+.markdown img {
+  /* base.css makes images blocks app-wide; in running text they are inline. */
+  display: inline;
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius-s);
+}
+
+.markdown video {
+  max-width: 100%;
+}
+
+/* Broken image: a muted, text-free box (READ-05). */
+.markdown img.is-broken {
+  display: inline-block;
+  width: calc(var(--fs-content) * 8);
+  height: calc(var(--fs-content) * 5);
+  vertical-align: middle;
+  background: var(--c-bg-code);
+}
+
+/* Alone in its paragraph. */
+.markdown img.standalone {
+  display: block;
+}
