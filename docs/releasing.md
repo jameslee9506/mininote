@@ -11,7 +11,17 @@ secrets listed below live. Ordinary local builds use the empty updater configura
 `src-tauri/tauri.conf.json` and never check for updates. Release builds merge the generated, ignored
 overlay `src-tauri/tauri.updater.conf.json` into it (`tauri build --config …`).
 
+The setup below was completed on 2026-11-09. The updater signing key lives outside the checkout at
+`~/.tauri/mininote.key`, its public half next to it as `~/.tauri/mininote.key.pub`, and its password
+in the macOS login keychain under the service `mininote-tauri-updater-key`
+(`security find-generic-password -s mininote-tauri-updater-key -w`). The repository's Actions
+variable and secrets hold copies of all three. Back up the two files and the password: installed
+apps verify every update against this key, so it can never be replaced without stranding them.
+
 ## One-time setup
+
+Already done; the steps stay here for reference and for moving to another machine, where the key
+and password are restored from the backup, never generated again.
 
 1. The repository must be **public** with Actions enabled: updates download without
    authentication, and the preparation script refuses to run a release from a private repository.
