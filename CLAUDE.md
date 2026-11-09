@@ -1,0 +1,60 @@
+# mininote
+
+mininote is a lightweight local Markdown notes app, Obsidian-like: a folder ("vault") of `.md` files with sub-folders, live-preview editing, and autosave.
+
+**Stack:** Tauri 2 (Rust) + Svelte 5 (runes) + TypeScript + Vite + CodeMirror 6 + markdown-it + DOMPurify. Targets Windows, macOS, and Linux.
+
+Read these docs before changing anything non-trivial:
+- `docs/ARCHITECTURE.md`: process model, IPC contract, autosave protocol, editor/live-preview design, and shortcuts.
+- `docs/DESIGN.md`: the monotone design system and the **between-blocks spacing system**.
+- `docs/research/`: open-source analyses, `REQUIREMENTS.md` (functional spec with IDs), and `TECHNIQUES.md`.
+
+## Commands
+
+```bash
+npm run check              # svelte-check + TypeScript (must be clean)
+npm test                   # vitest unit tests (pure logic only)
+(cd src-tauri && cargo check)   # Rust type-check (must be clean)
+npm run tauri dev          # run the app (the owner runs this, not agents)
+npm run tauri build        # release bundle
+```
+
+## Owner's working rules
+
+- **Minimal verification.** Do not launch the app to verify. If the code is syntactically and logically sound, that is enough.
+- **Tests stay small.** Write unit tests only where they really pay off, for pure logic: utils, link resolution, parsers, render plugins. Do not write integration or E2E tests.
+- **No mobile builds.** Never run iOS/Android builds or simulators.
+- Do not use Claude Artifacts or the auto-memory feature. Document durable knowledge here or in `docs/`.
+- Commit messages are in English, with no `Co-Authored-By` lines.
+
+## Conventions
+
+- **Svelte 5 runes only.** Use `$state`, `$derived`, `$effect`, `$props`, `onclick={...}`, and snippets. Never use `export let`, `$:`, `on:click`, slots, or `writable` stores. Runes outside components need a `.svelte.ts` file.
+- **Stores** live in `src/lib/state/*.svelte.ts` and are singleton classes.
+  - Use `$state.raw` for big collections, and replace them rather than mutating.
+  - Never put CodeMirror objects in `$state`.
+  - Write methods as arrow-function fields.
+- **Contracts.**
+  - `src/lib/types.ts` mirrors the Rust DTOs.
+  - `src/lib/ipc/*` mirrors the Rust command and event names.
+  - `src/lib/editor/host.ts` is the only bridge from CodeMirror extensions to app state; editor modules never import stores.
+  - Lezer node names (`WikiLink`, `WikiLinkMark`, `WikiLinkTarget`, `WikiLinkAlias`, `WikiEmbed`, `Highlight`, `HighlightMark`) are defined in `src/lib/editor/syntax.ts`.
+  - Command ids (`src/lib/appCommands.ts`) and `EDITOR_SHORTCUTS` ids (`src/lib/editor/commands.ts`) are persisted: the user's shortcuts are stored under them. Never rename one.
+- **Paths.**
+  - A `VaultPath` is vault-relative, `/`-separated, and byte-identical to the backend listing. Never normalize it for I/O.
+  - For display and matching, use `nfc()` and `key()` from `utils/path.ts`. Comparisons are case- and NFC-insensitive.
+- **IME.** Every custom key handler returns early on `isComposing(e)` (`e.isComposing || e.keyCode === 229`). Korean input must never trigger Enter, Escape, Tab, or arrow actions mid-composition.
+- **UI text.**
+  - Every string goes through `t()` in `src/lib/i18n.ts` (English).
+  - Keep documentation and comments in English. Use Unicode escapes for Hangul fixtures and character tables so Unicode and IME coverage stays intact.
+  - Show no visible labels unless essential. Icons carry `aria-label`, not `title`.
+  - Report errors only, through `ui.notify`.
+- **CSS.**
+  - Use only the variables in `src/styles/tokens.css`, and only grays.
+  - Inside rendered Markdown, blocks have **no margins**. Vertical space comes only from sibling-pair rules (`CONTAINER > :where(A + B)`).
+  - Inside CodeMirror lines, use padding, never margins.
+- **Rust.**
+  - Every filesystem command is `async` and runs `spawn_blocking`.
+  - Every path goes through `vault::resolve` (no escaping the root).
+  - Errors are `{ kind, message }`.
+- **Dependencies.** Keep the dependency footprint small, and ask before adding new ones.
