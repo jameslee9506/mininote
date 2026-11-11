@@ -5,6 +5,7 @@
  */
 import type { Text } from "@codemirror/state";
 import type { SyntaxNode } from "@lezer/common";
+import type { FrontmatterRange } from "./frontmatter";
 import { blockKind, type BlockKind } from "./model";
 
 /** Children of a container that are not blocks. */
@@ -105,4 +106,115 @@ export function listContext(doc: Text, list: SyntaxNode): FlowContext {
     prev = item;
   }
   return blocks ? "list-blocks" : loose ? "list-loose" : "list";
+}
+
+// ── Blocks, blank lines and pairs (DESIGN §3.2) ───────────────────────────
+
+/** A block as its container's flow sees it, in line numbers. */
+export interface FlowBlock {
+  kind: BlockKind;
+  /** Its first line. */
+  first: number;
+  /** The line its content ends on (a quote's trailing `>` lines excluded). */
+  end: number;
+  /** Its last line, trailing quote marks included. */
+  last: number;
+}
+
+/**
+ * The gap a blank line right below a block already shows, as a kind: a blank line is
+ * a body line, so it sits where a paragraph typed on it would sit (`gap(block, p)`).
+ * - `h` after a heading, `hr` after a rule, `block` after any other block.
+ * - null where typed text would join the block instead: a paragraph's next line, a
+ *   table's next row, an HTML block's next line.
+ */
+export type Lead = "h" | "hr" | "block";
+
+export function leadOf(kind: BlockKind): Lead | null {
+  if (kind === "p" || kind === "table" || kind === "html") return null;
+  if (kind === "hr") return "hr";
+  return /^h[1-6]$/.test(kind) ? "h" : "block";
+}
+
+/**
+ * True for the containers whose blank lines stay in them when text is typed: the
+ * document, and a quote (its blank lines carry `>`). A blank line between list items
+ * or inside an item belongs to whatever its own indentation says once it has text.
+ */
+export function carriesLead(container: SyntaxNode): boolean {
+  return container.type.isTop || container.name === "Blockquote";
+}
+
+/** The pair a block's first line (or the widget standing in for it) shows: `data-blk`, `data-prev`, `--mn-blank`, `data-lead`. */
+export interface Pair {
+  readonly blk: BlockKind;
+  readonly prev: BlockKind;
+  /** Lines strictly between the two blocks: blank, or holding only quote marks. */
+  readonly blank: number;
+  /** The gap the first of those lines already shows, or null. */
+  readonly lead: Lead | null;
+}
+
+export function samePair(a: Pair | null, b: Pair | null): boolean {
+  return (
+    a === b || (a !== null && b !== null && a.blk === b.blk && a.prev === b.prev && a.blank === b.blank && a.lead === b.lead)
+  );
+}
+
+/**
+ * `node` as a block of its container, or null when it lies inside the frontmatter
+ * (`fm`, for top-level nodes only). Lezer reads the frontmatter as blocks of its own,
+ * and text right after a `...` fence as more of its last paragraph: a block that
+ * runs past the closing fence counts as a paragraph from its first non-blank line
+ * after the fence (LIVE-10).
+ */
+export function flowBlock(doc: Text, node: SyntaxNode, fm: FrontmatterRange | null): FlowBlock | null {
+  const end = doc.lineAt(contentEnd(node)).number;
+  const last = doc.lineAt(node.to).number;
+  if (fm && node.from < fm.to) {
+    if (node.to <= fm.to) return null;
+    let first = doc.lineAt(fm.to).number + 1;
+    while (first < last && doc.line(first).text.trim() === "") first++;
+    return { kind: "p", first, end, last };
+  }
+  return { kind: kindOf(node), first: doc.lineAt(node.from).number, end, last };
+}
+
+/**
+ * The block before `node` in its container; `node` null stands for the container's
+ * end. At the top level the frontmatter stands in for a first block.
+ */
+export function blockBefore(
+  doc: Text,
+  container: SyntaxNode,
+  node: SyntaxNode | null,
+  fm: FrontmatterRange | null,
+): FlowBlock | null {
+  for (let p = node ? prevBlock(node) : lastBlock(container); p; p = prevBlock(p)) {
+    const block = flowBlock(doc, p, fm);
+    if (block) return block;
+  }
+  if (!fm) return null;
+  const line = doc.lineAt(fm.to).number;
+  return { kind: "fm", first: 1, end: line, last: line };
+}
+
+/**
+ * The pair of `cur` with the block before it. The blank lines between them count
+ * from the upper block's content; the first one below that block shows its lead
+ * when the container carries leads.
+ */
+export function pairWith(prev: FlowBlock, cur: FlowBlock, leads: boolean): Pair {
+  const lead = leads && cur.first > prev.last + 1 ? leadOf(prev.kind) : null;
+  return { blk: cur.kind, prev: prev.kind, blank: Math.max(0, cur.first - prev.end - 1), lead };
+}
+
+/** The pair of block `node` in its container, or null for a first block (and inside the frontmatter). */
+export function pairOf(doc: Text, node: SyntaxNode, fm: FrontmatterRange | null): Pair | null {
+  const container = node.parent;
+  if (!container) return null;
+  const scoped = container.type.isTop ? fm : null;
+  const cur = flowBlock(doc, node, scoped);
+  const prev = cur && blockBefore(doc, container, node, scoped);
+  return cur && prev ? pairWith(prev, cur, carriesLead(container)) : null;
 }

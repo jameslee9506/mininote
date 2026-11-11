@@ -1,8 +1,8 @@
 /**
  * Frontmatter detection (LIVE-10): line 1 is exactly `---` (trailing blanks
  * allowed) and the block ends at the next `---` or `...` line. Without a
- * closing fence there is no frontmatter. Lezer would read the block as an hr
- * plus a setext heading, so every live-preview builder skips this range.
+ * closing fence there is no frontmatter. Lezer would read the block as rules
+ * around a paragraph, so every live-preview builder skips this range.
  */
 import type { Text } from "@codemirror/state";
 

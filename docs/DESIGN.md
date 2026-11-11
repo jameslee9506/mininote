@@ -21,6 +21,7 @@ The UI should feel like a sheet of paper with a quiet gray margin. Every rule be
 | Text | `--c-text-strong` > `--c-text` > `--c-text-muted` > `--c-text-faint`; `--c-icon-tree` sits between the last two, for the tree's row icons |
 | Interaction | `--c-selection`, `--c-caret`, `--c-focus`, `--shadow-elev` |
 | Type | `--font-text`, `--font-mono`, `--fs-content` (15px, user setting), `--lh-content` 1.7, `--fs-h1…h6`, `--fs-code`, `--fs-ui` 13px, `--fs-tree-folder` 14px, `--fs-ui-small` 12px |
+| Markdown components | `--md-list-indent`, `--md-quote-bar`, `--md-quote-step`, `--md-code-lh`, `--md-code-pad-x`, `--md-code-pad-y`, `--md-task-size`, `--md-task-gap`, `--md-cell-pad`: every measure both views draw (§5) |
 | Layout | `--sidebar-width`, `--header-h` 40px, `--content-max`, `--content-pad-x`, `--inline-title-gap` 24px, `--row-h` 28px, `--tree-pad-x` 10px, `--tree-icon-gap` 6px, `--indent` 16px, `--icon` 16px, radii |
 
 Dark mode swaps the same variable names, either through `:root[data-theme="dark"]` or through `prefers-color-scheme` when the theme is "system". Nothing else needs to know about themes; CodeMirror's theme also reads the variables.
@@ -87,13 +88,14 @@ Order inside the stylesheet: default, then before-headings, then hr, then after-
 
 ### 3.2 Editor (live preview: `src/styles/editor.css`)
 
-The editor is line-based, and its blank source lines are real, editable text. It still follows the pair model of §3.1, so a note reads the same in both views:
+The editor is line-based, and its blank source lines are real, editable text. It still follows the pair model of §3.1, so two blocks with no blank line between them sit exactly as far apart as in the reading view:
 
 - The live-preview plugin tags the first line of every block that has a block before it in its flow container (the document, a list item, a quote, or a list for its items) with `data-blk` (its type: `h1`…`h6`, `p`, `ul`, `ol`, `li`, `quote`, `code`, `table`, `hr`, `html`), `data-prev` (the previous block's type, or `fm` after frontmatter), `data-ctx` inside a container (`li`, `quote`, or `list`, `list-loose`, `list-blocks`: the renderer's list classes) and, as `--mn-blank`, the number of blank lines above it. Block widgets (images, tables) carry the same attributes.
-- Every blank source line between two blocks is `--gap-blank` (0.5) tall, the smallest pair gap. Trailing blank lines keep their full height, so typing at the end of a note feels normal.
-- `editor.css` resolves the pair gap with the rules of §3.1, in the same order, and gives the block's first line `padding-top: gap − blank lines × --gap-blank`, never below 0 and never as a margin (CodeMirror measures padding, not margins). One blank line between two paragraphs therefore shows exactly `--gap-block`; after a heading, exactly `--gap-after-heading`; every extra blank line adds `--gap-blank`.
+- **A blank line is a body line.** It is as tall as a line of body text, its caret is a body caret, and it is never styled or shrunk. This is the one deliberate difference from the reading view, which drops blank lines: in the editor each one is a line the user can see and put the caret on.
+- **A blank line stands where a paragraph would.** In the document and in a quote, the blank line right below a block carries that block's pair with a paragraph (the plugin tags it `data-blk="p"`): `--gap-after-heading` below a heading, `--gap-block` below a list, a quote or a code block. Text typed on it is that paragraph, so typing never moves the line; the layout changes only on structural keys such as Enter. There is no such gap below a paragraph, a table or an HTML block, where typed text joins the block, nor between list items or inside one, where a blank line belongs to whatever its own indentation says once it has text.
+- `editor.css` resolves the pair gap with the rules of §3.1, in the same order, and gives the block's first line `padding-top: gap − blank lines × --lh-content − the first blank line's gap` (`data-lead`), never below 0 and never as a margin (CodeMirror measures padding, not margins). A gap is therefore never smaller than in the reading view, and every further blank line adds exactly one body line.
 - An hr line is a text line with the rule drawn across its middle, so half a text line (`--lh-content / 2`) counts toward the gap on each side of it.
-- Code boxes, quote bars and widgets start below the pair padding. Padding inside a box is internal and does not count as a gap.
+- Code boxes and widgets start below the pair padding, and so does the bar of a quote that starts on the line. The bars of quotes that began earlier run through it, as the reading view's border runs through the gaps inside a quote. Padding inside a box is internal and does not count as a gap.
 
 **Gutters.** List lines get the reading view's 1.5em gutter per level: the measured width of the line's prefix (indentation, marker, task box, hidden quote marks) hangs for wrapped rows, and padding fills the rest, so the text sits at 1.5em × depth whatever the source indentation, and `10.` lands its text where `9.` does. The later lines of an item sit in the same gutter; verbatim blocks (code, HTML) give up only the item's content indent. Quote bars and code boxes nested in an item start at that gutter.
 
@@ -120,14 +122,18 @@ The editor is line-based, and its blank source lines are real, editable text. It
 
 ## 5. Markdown visuals (shared by reading view and live preview)
 
+A construct is one component with one design, drawn twice: by `markdown.css` on rendered HTML and by `editor.css` on CodeMirror lines. Both take every shared measure from the `--md-*` tokens in `tokens.css` (list indent, quote bar and step, code line height and padding, checkbox size and gap, table cell padding), so the two views cannot drift apart. A change to a component's look goes into its token, never into one stylesheet. Each component also sets the size of the caret inside it: a heading's line carries the heading's font, a code line the code font, a blank line the body font.
+
+Both views also read the same Markdown (ARCHITECTURE §10.1, §11): the same block dialect, so a line is a heading, a quote line or a list item in one view exactly when it is in the other. What stays different is what editing needs: blank lines are visible lines (§3.2), raw HTML is shown as written, and the syntax of the construct under the caret is revealed.
+
 | Element | Treatment |
 |---|---|
 | Headings | Weight 600, `--c-text-strong`, `letter-spacing: -0.01em` for h1/h2. No underline rules under h1/h2. |
 | Links | `--c-text`, underline 1px `--c-border-strong` at 2px offset, darken on hover. Unresolved wikilinks use a dashed underline in `--c-text-muted`. |
 | Inline code | `--c-bg-code` background, `--radius-s`, 0.1em 0.35em padding, `--fs-code` mono. |
-| Code block | `--c-bg-code`, `--radius-m`, one code line (`--fs-code` × 1.55, the editor's fence lines) of padding above and below and 16px at the sides, `--fs-code`, line height 1.55, long lines wrap, no syntax colors. The language shows as a faint label at the top right. |
-| Blockquote | 2px `--c-border-strong` left border, 14px left padding, `--c-text-muted`. |
-| Lists | 1.5em indent per level. Bullets are the `•` glyph in `--c-text-faint`, one space before the text. Ordered numbers in `--c-text-muted`, ending one space before the text. Tasks show a 14px square checkbox (1px `--c-border-strong`, radius 3px) 0.5em before the text. When checked, the box is filled `--c-text-muted` and the text becomes `--c-text-muted` with strike-through. |
+| Code block | `--c-bg-code`, `--radius-m`, one code line (`--md-code-pad-y`: `--fs-code` × 1.55, the editor's fence lines) of padding above and below and 16px at the sides, for fenced and indented code alike, `--fs-code`, line height 1.55, long lines wrap, no syntax colors. The language shows as a faint label at the top right. |
+| Blockquote | 2px `--c-border-strong` left bar, text 16px in per level, `--c-text-muted`. The bar is unbroken from the quote's first line to its last. |
+| Lists | 1.5em indent per level. Bullets are the `•` glyph in `--c-text-faint`, one space before the text. Ordered numbers in `--c-text-muted`, ending one space before the text. Tasks show a 14px square checkbox (1px `--c-border-strong`, radius 3px) in place of the bullet or number, centered on the item's first line, 0.5em before the text. When checked, the box is filled `--c-text-muted` and the text becomes `--c-text-muted` with strike-through. |
 | hr | 1px `--c-border`, no margin of its own (it gets `--gap-hr` from flow). |
 | Table | Collapsed 1px `--c-border` borders, cells padded 6px 12px and top-aligned, header `--c-bg-code` at weight 600 in `--c-text-strong`, scrolls horizontally inside `.table-wrap`. |
 | Image | `max-width: 100%`, `--radius-s`, block-level when alone in a paragraph. |

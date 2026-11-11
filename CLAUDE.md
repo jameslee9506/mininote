@@ -48,11 +48,12 @@ npm run release:prepare    # validate the versions and write the updater overlay
   - `src/lib/ipc/*` mirrors the Rust command and event names.
   - `src/lib/editor/host.ts` is the only bridge from CodeMirror extensions to app state; editor modules never import stores.
   - Lezer node names (`WikiLink`, `WikiLinkMark`, `WikiLinkTarget`, `WikiLinkAlias`, `WikiEmbed`, `Highlight`, `HighlightMark`) are defined in `src/lib/editor/syntax.ts`.
+  - The block dialect (no setext headings, no lazy continuation lines) has two halves that must agree: `Dialect` in `src/lib/editor/syntax.ts` and `src/lib/markdown/plugins/dialect.ts`. Change both, and their tests, together.
   - Command ids (`src/lib/appCommands.ts`) and `EDITOR_SHORTCUTS` ids (`src/lib/editor/commands.ts`) are persisted: the user's shortcuts are stored under them. Never rename one.
 - **Paths.**
   - A `VaultPath` is vault-relative, `/`-separated, and byte-identical to the backend listing. Never normalize it for I/O.
   - For display and matching, use `nfc()` and `key()` from `utils/path.ts`. Comparisons are case- and NFC-insensitive.
-- **IME.** Every custom key handler returns early on `isComposing(e)` (`e.isComposing || e.keyCode === 229`). Korean input must never trigger Enter, Escape, Tab, or arrow actions mid-composition.
+- **IME.** Every custom key handler returns early on `isComposing(e)` (`e.isComposing || e.keyCode === 229`). Korean input must never trigger Enter, Escape, Tab, or arrow actions mid-composition. Inside the editor, `src/lib/editor/ime.ts` keeps every `keyCode` 229 keydown away from CodeMirror's keymaps: WKWebView composes Hangul without composition events, so CodeMirror's own guard does not see it.
 - **UI text.**
   - Every string goes through `t()` in `src/lib/i18n.ts` (English).
   - Keep documentation and comments in English. Use Unicode escapes for Hangul fixtures and character tables so Unicode and IME coverage stays intact.
@@ -60,6 +61,8 @@ npm run release:prepare    # validate the versions and write the updater overlay
   - Report errors only, through `ui.notify`.
 - **CSS.**
   - Use only the variables in `src/styles/tokens.css`, and only grays.
+  - A Markdown construct looks the same in the reading view (`markdown.css`) and the editor (`editor.css`): both take its measures from the `--md-*` tokens. Change the token, never one stylesheet.
+  - In the editor a blank line is a body line. Never shrink or restyle it; block gaps are padding on a block's first line (`livePreview/flow.ts`, DESIGN §3.2).
   - Inside rendered Markdown, blocks have **no margins**. Vertical space comes only from sibling-pair rules (`CONTAINER > :where(A + B)`).
   - Inside CodeMirror lines, use padding, never margins.
 - **Rust.**

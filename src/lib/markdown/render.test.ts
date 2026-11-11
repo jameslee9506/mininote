@@ -249,6 +249,42 @@ describe("links and text", () => {
   });
 });
 
+describe("block dialect (shared with the editor, editor/syntax.test.ts)", () => {
+  it("has no setext headings: a line under text never changes it", () => {
+    expect(render("\uAC00\n-")).toBe("<p data-line=\"0\">\uAC00<br>\n-</p>\n");
+    expect(render("\uAC00\n=")).toBe("<p data-line=\"0\">\uAC00<br>\n=</p>\n");
+    expect(render("\uAC00\n===")).not.toContain("<h1");
+    expect(render("\uAC00\n---")).toBe("<p data-line=\"0\">\uAC00</p>\n<hr data-line=\"1\">\n");
+    expect(render("\uAC00\n- \uB098")).toContain("<ul>");
+  });
+
+  it("ends a quote at the first line without its mark", () => {
+    expect(render("> a\nb")).toBe('<blockquote data-line="0">\n<p data-line="0">a</p>\n</blockquote>\n<p data-line="1">b</p>\n');
+    expect(render("> a\n> b\nc")).toContain("<p data-line=\"0\">a<br>\nb</p>\n</blockquote>\n<p data-line=\"2\">c</p>");
+    // An indented line is no lazy line either: it starts a code block.
+    expect(render("> a\n    b")).toContain("</blockquote>\n<pre");
+    expect(render("> - a\n> b")).toContain("</ul>\n<p data-line=\"1\">b</p>\n</blockquote>");
+  });
+
+  it("ends a list item at the first line indented less than its text", () => {
+    expect(render("- a\nb")).toContain("</ul>\n<p data-line=\"1\">b</p>");
+    expect(render("1. a\n  b")).toContain("</ol>\n<p data-line=\"1\">b</p>");
+    expect(render("- a\n  b")).toContain("<p data-line=\"0\">a<br>\nb</p>");
+    // Out of the nested item, still in the outer one; then out of both.
+    expect(render("- a\n  - b\n  c")).toContain("</ul>\n<p data-line=\"2\">c</p>\n</li>");
+    expect(render("- a\n  - b\n c")).toContain("</li>\n</ul>\n<p data-line=\"2\">c</p>");
+    expect(render("- > q\n  b")).toContain("</blockquote>\n<p data-line=\"1\">b</p>\n</li>");
+  });
+
+  it("keeps tasks and tables whole when the next line is outside them", () => {
+    expect(render("- [ ] a\nb")).toContain('class="task-list-item"');
+    expect(render("- [ ] a\nb")).toContain("</ul>\n<p data-line=\"1\">b</p>");
+    expect(render("| a | b |\n| - | - |\n| 1 | 2 |")).toContain("<td>1</td>");
+    // A row without the item's indentation is no row of the item's table.
+    expect(render("- | a | b |\n  | - | - |\n| c | d |")).toContain("</ul>\n<p data-line=\"2\">| c | d |</p>");
+  });
+});
+
 describe("anchorKey", () => {
   it("matches headings, slugs and wikilink subpaths alike (the editor's loose rule)", () => {
     expect(anchorKey("Meeting Notes!")).toBe("meeting-notes");

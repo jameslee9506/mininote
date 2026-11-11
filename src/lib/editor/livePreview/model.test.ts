@@ -41,7 +41,6 @@ describe("frontmatterRange", () => {
 describe("blockKind", () => {
   it("maps block nodes to DESIGN §3.2 kinds", () => {
     expect(blockKind("ATXHeading2")).toBe("h2");
-    expect(blockKind("SetextHeading1")).toBe("h1");
     expect(blockKind("FencedCode")).toBe("code");
     expect(blockKind("CodeBlock")).toBe("code");
     expect(blockKind("HTMLBlock")).toBe("html");

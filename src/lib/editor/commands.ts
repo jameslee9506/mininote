@@ -476,7 +476,7 @@ function quoteDepth(node: SyntaxNode): number {
   return depth;
 }
 
-/** Length of the first `depth` blockquote markers of a line (fewer on lazy lines). */
+/** Length of the first `depth` blockquote markers of a line (fewer when it holds fewer). */
 function quotePrefixLength(text: string, depth: number): number {
   let i = 0;
   for (let d = 0; d < depth; d++) {
@@ -754,11 +754,11 @@ function inTable(tree: Tree, pos: number): boolean {
 
 /**
  * Enter where lang-markdown continues an item wrongly (EDIT-03): on a later line
- * of the item (after Shift+Enter, or a lazy line) it adds no marker, and when a tab
- * follows the marker or the task box it drops the separator or the box. Here the
- * new item copies the markup of the item's first line, and following ordered items
- * are renumbered. Lines without text before the caret, and table rows (the next
- * row goes below), stay with lang-markdown.
+ * of the item (after Shift+Enter) it adds no marker, and when a tab follows the
+ * marker or the task box it drops the separator or the box. Here the new item
+ * copies the markup of the item's first line, and following ordered items are
+ * renumbered. Lines without text before the caret, and table rows (the next row
+ * goes below), stay with lang-markdown.
  */
 const continueItem: StateCommand = ({ state, dispatch }) => {
   const sel = state.selection;
@@ -814,6 +814,28 @@ const splitBeforeMarker: StateCommand = ({ state, dispatch }) => {
   return true;
 };
 
+/** A line that holds nothing but quote marks and blanks. */
+const EMPTY_QUOTE_LINE = /^[ \t>]*>[ \t]*$/;
+
+/**
+ * Enter on an empty quote line leaves the quote (EDIT-03), as Enter on an empty item
+ * leaves a list: the line's innermost ">" goes away and the caret stays on the line,
+ * one level out (the outer quotes and an item's indentation remain). lang-markdown
+ * waits for two empty quote lines in a row.
+ */
+const exitEmptyQuote: StateCommand = ({ state, dispatch }) => {
+  const sel = state.selection;
+  if (state.readOnly || sel.ranges.length !== 1 || !sel.main.empty) return false;
+  const pos = sel.main.head;
+  const line = state.doc.lineAt(pos);
+  if (!EMPTY_QUOTE_LINE.test(line.text)) return false;
+  const from = line.from + line.text.lastIndexOf(">");
+  // The caret sits after the mark, and the innermost container there is the quote (not code).
+  if (pos <= from || markupContext(treeUpTo(state, line.to), pos) !== "quote") return false;
+  dispatch(state.update({ changes: { from, to: line.to }, selection: { anchor: from }, scrollIntoView: true, userEvent: "input" }));
+  return true;
+};
+
 /** Enter: continue list and quote markup (lang-markdown), parsing up to the caret first on fresh large notes. */
 export const continueMarkup: Command = (view) => {
   const head = view.state.selection.main.head;
@@ -822,6 +844,7 @@ export const continueMarkup: Command = (view) => {
     splitBeforeMarker(view) ||
     dropEmptyMiddleItem(view) ||
     exitEmptyTabItem(view) ||
+    exitEmptyQuote(view) ||
     continueItem(view) ||
     continueListMarkup(view)
   );

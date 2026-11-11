@@ -343,13 +343,14 @@ Live-preview rendering is specified separately, in §4 (LIVE).
   - On an empty item, Enter outdents one level. At the top level it removes the marker, which leaves the list.
   - Enter never turns a tight list into a loose one.
 - **Shift+Enter** inserts a line break inside the item, with continuation indentation and no marker.
-- **Blockquotes.** Enter continues `> `. Two empty quote lines in a row leave the quote.
+- **Blockquotes.** Enter continues `> `. Enter on an empty quote line leaves the quote, the way Enter on an empty item leaves a list: the line's innermost `>` goes away and the caret stays on that line, which is now body text (one level out in a nested quote; an enclosing item's indentation stays). This also holds between two quote lines, where it splits the quote. Shift+Enter adds another quote line instead.
+- **Leaving needs no blank line.** A line typed right below a list or a quote, without their markup, is outside them (READ-01's dialect), in both views.
 - **Backspace** right after list or quote markup removes one level of it. A list marker first turns into spaces, then goes away.
 - **Edge cases.**
   - Inside fenced code, Enter is a plain newline.
   - If the text after the caret already starts with a marker, no second marker is added.
   - Nothing list-related happens on the Enter that commits a Hangul syllable.
-- **Decision.** Use lang-markdown's commands, configured so that Enter on an empty second item leaves the list (as OB and SB do). By default lang-markdown inserts a blank line instead.
+- **Decision.** Use lang-markdown's commands, configured so that Enter on an empty second item leaves the list (as OB and SB do). By default lang-markdown inserts a blank line instead. Quotes get a step of their own: lang-markdown leaves a quote only after two empty quote lines in a row.
 - **Sources.** CM §12, OB §4.5, SB §4.3, MT §3.5, OT §4.2.
 
 #### EDIT-04 · Indent and outdent · P0
@@ -449,6 +450,7 @@ Live-preview rendering is specified separately, in §4 (LIVE).
   4. List continuation and completion acceptance never act on the Enter that commits a syllable.
   5. [critic] A key that commits a syllable (Enter, Tab, Esc, an arrow) acts at most once. It either acts or needs a second press; it never acts twice, never drops the syllable, and Tab never moves focus out of the editor or an input.
   6. [critic] Mod-chords that arrive flagged as composing are ignored, so the user presses them again. Switching notes or moving focus mid-composition can drop the syllable.
+  7. A keydown the input method handled (`keyCode` 229) never reaches CodeMirror's keymaps either. WKWebView fires no composition events for Hangul (a syllable arrives as `insertText`, then `insertReplacementText` per jamo), so CodeMirror's own composition guard does not cover it. Backspace on a syllable in progress takes off one jamo, which is the IME's edit; the keymap must not delete the rest of the syllable on top of it. Once the syllable is committed, Backspace removes it whole.
 - **Acceptance.** Checked by hand before each release: macOS (WKWebView), Windows (WebView2) and Linux (WebKitGTK with fcitx or ibus).
 - **Sources.** OB §4.8, SB §4.5, MT §3.9, CM §10, OT §4.2, MS §3.3 (missing), ZT §4.6.
 
@@ -532,19 +534,20 @@ Live-preview rendering is specified separately, in §4 (LIVE).
   - The whole line gets the heading size and weight (DESIGN.md type scale), so the line box and the caret match the heading.
   - A heading with no text keeps its `#` visible.
   - A closing `#` sequence is hidden too. No hidden range ever crosses the end of the line.
-  - Setext headings are styled; their underline line is muted, not hidden.
+  - There are no setext headings (READ-01's dialect): text never becomes a heading because of the line typed below it, such as the `-` that starts a list.
 - **Sources.** OB §4.3, SB §4.2, CM §4.2 (crash bug), ZT §4.2.
 
 #### LIVE-04 · List markers · P0
 - **Behavior.**
   - `-`, `*` and `+` bullets show as `•` at exactly the marker's width, so revealing a marker never moves the text. A marker reveals when the selection touches it.
   - Ordered numbers stay visible and muted.
-  - Task items hide their bullet (LIVE-05).
+  - The dot ends where the marker glyph ends, one blank before the text, where the reading view's marker puts it.
+  - Task items hide their marker, bullet or number (LIVE-05).
 - **Sources.** OB §4.3, CM §6.1, SB §4.2, ZT §4.2.
 
 #### LIVE-05 · Task checkboxes · P0
 - **Behavior.**
-  - In a bullet or ordered list item, `[ ]`, `[x]` and `[X]` render as a custom-drawn 14 px gray checkbox.
+  - In a bullet or ordered list item, `[ ]`, `[x]` and `[X]` render as a custom-drawn 14 px gray checkbox. It stands for the marker, the box and the blank after it, so the box sits in the gutter, centered on the line, with the same gap before the text as in the reading view, where a task item shows no bullet or number either.
   - Clicking it changes exactly one character (`x` ↔ space) as a normal, undoable edit, and leaves the selection and focus where they were.
   - Checked items show muted, struck-through text.
   - The raw `[ ]` reveals when the selection touches it.
@@ -570,7 +573,8 @@ Live-preview rendering is specified separately, in §4 (LIVE).
 
 #### LIVE-07 · Blockquotes · P0
 - **Behavior.**
-  - Every quote line, including lazy continuation lines, gets a left bar on the line box (so wrapped rows keep it) and muted text.
+  - Every line of a quote gets a left bar on the line box (so wrapped rows keep it) and muted text. A line without `>` is not in the quote (READ-01's dialect).
+  - The bars run through the gaps between a quote's blocks, as the reading view's border does, and begin below the gap above the quote.
   - `> ` is hidden on each line the selection is not on. Reveal works per line, not per block.
   - Nested quotes show one bar per level.
 - **Decision.** Reveal per line (CM's recommendation) instead of per block (ixora). Long quotes then do not jump when the caret enters them.
@@ -592,14 +596,14 @@ Live-preview rendering is specified separately, in §4 (LIVE).
 - **Behavior.**
   - A `---`, `***` or `___` line hides its text and draws a 1 px rule on the line box, which keeps its normal height.
   - It reveals when the selection is on the line.
-  - A setext underline and frontmatter fences are never treated as rules.
+  - Frontmatter fences are never treated as rules. `---` right under a line of text is a rule: there are no setext headings.
 - **Sources.** SB §4.2, OB §4.3, ZT §4.2.
 
 #### LIVE-10 · Frontmatter · P0
 - **Behavior.**
   - Frontmatter starts at line 1 with a line that is exactly `---` (trailing spaces allowed) and ends at the next line that is `---` or `...`. Without a closing fence, it is not frontmatter.
   - Its lines show muted, in monospace.
-  - Nothing inside is treated as Markdown: no horizontal rule, setext heading, emphasis or link rendering.
+  - Nothing inside is treated as Markdown: no horizontal rule, emphasis or link rendering.
 - **Out of scope.** A properties editor.
 - **Sources.** CM §3, §11; ZT §4.1; SB §4.1; OB §4.1, §8.1.
 
@@ -649,12 +653,15 @@ Live-preview rendering is specified separately, in §4 (LIVE).
 #### LIVE-15 · Spacing between blocks in the editor · P0
 - **Behavior.**
   - The editor follows the reading view's pair gaps (READ-03): between two blocks of a flow container (the document, a list item, a quote, a list for its items) the space is the same `--gap-*` token in both views.
-  - A blank source line between two blocks is `--gap-blank` tall (the smallest pair gap) and stays editable; trailing blank lines keep their normal height. The first line of the block below pads the rest of the pair gap, so one blank line between paragraphs shows exactly `--gap-block`, and a heading directly followed by text shows `--gap-after-heading` with or without a blank line. Extra blank lines add `--gap-blank` each.
+  - A blank source line is a body line: as tall as one, with a body-sized caret, never shrunk. This is the one place where the editor shows more space than the reading view, which drops blank lines.
+  - Two blocks with no blank line between them show exactly their pair gap.
+  - In the document and in a quote, the blank line right below a block stands where a paragraph typed on it would stand: it carries that block's gap with a paragraph (`--gap-after-heading` below a heading, `--gap-block` below a list, a quote or a code block). Typing on a blank line therefore never moves that line. Below a paragraph, a table or an HTML block there is no such gap, because typed text joins the block.
+  - The block after the blank lines pads only what is left of its pair gap once those lines (and that first line's gap) are counted, so a gap is never smaller than in the reading view and every further blank line adds one body line.
   - The space is padding, computed from the syntax tree only, never from the selection, so moving the caret never reflows the text.
   - No `.cm-line` and no widget root has a vertical margin.
   - Code boxes, quote bars and block widgets start below the pair padding. Inner padding does not count as a gap. An hr line is a text line with the rule across its middle; half of it counts toward each gap.
 - **Edge cases.**
-  - CodeMirror must never use a line whose height differs from body text (headings, code, frontmatter, padded block starts, whitespace in a shrunk blank line) to estimate line height (TECHNIQUES §1.7).
+  - CodeMirror must never use a line whose height differs from body text (headings, code, frontmatter, padded block starts, whitespace in a padded blank line) to estimate line height (TECHNIQUES §1.7).
   - A list's items are spaced as the renderer spaces them: tight, loose (a blank line between items or between two blocks of an item), or holding blocks (`has-blocks`), decided per list from the tree.
   - A block widget's pair is read from the tree when the decorations are composed, so an edit above it never leaves its gap stale.
 - **Sources.** DESIGN.md §3.2, CM §14, OT §4.6, OB §8.3, ZT §8.
@@ -1014,7 +1021,10 @@ Replace across files is out of scope.
 - **Behavior.** Mod+E toggles the current note between editing and reading. The reading view renders the same text with markdown-it:
   - CommonMark plus GFM tables, strikethrough, task lists and autolinks;
   - `breaks: true`, so a single newline is a line break, matching Obsidian's default and the editor;
-  - wikilinks, `==highlight==`, and frontmatter as a muted monospace block, fences included.
+  - wikilinks, `==highlight==`, and frontmatter as a muted monospace block, fences included;
+  - the app's block dialect, which the editor's parser follows too, so both views read the same blocks. What a line is never depends on a line typed after it, and a line belongs to a quote or a list item only through its own markup:
+    - no setext headings: `---` under a line of text is a rule, and `-` or `=` there is text;
+    - no lazy continuation: a line without `>` ends the quote, and a line indented less than a list item's text ends the item, with or without a blank line.
 
   It re-renders only while visible. Link clicks follow LINK-01 to LINK-05. Keeping the first visible line when switching modes is P1.
 - **Sources.** OB §4.2, §8.1; MT §3.11; ARCHITECTURE.md §11.

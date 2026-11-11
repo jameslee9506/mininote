@@ -28,6 +28,7 @@ import { External, invalidateResolutions, refreshEffect } from "./shared";
 import { markdownExtensions } from "./syntax";
 import { editingKeymap, editorShortcuts, listTabKeymap, markupEnterKeymap } from "./commands";
 import { completionBindings, wikiCompletion } from "./complete";
+import { imeKeys } from "./ime";
 import { pasteAndDrop } from "./paste";
 import { findKeymap, findPanel } from "./searchPanel";
 import { editorTheme, highlightRetags, liveHighlight, sourceHighlight } from "./theme";
@@ -263,6 +264,7 @@ const compositionWatcher = EditorView.domEventObservers({
 });
 
 const staticExtensions: Extension = [
+  imeKeys,
   plainHtmlTyping,
   markdownSupport,
   closeBracketsConfig,

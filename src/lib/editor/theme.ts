@@ -7,9 +7,9 @@
  *   runs at Prec.high), so any color set here beats live preview's own marks.
  * - Live mode therefore gets `liveHighlight`: weights, italics, muted strike,
  *   and faint *revealed* marks only. Source mode gets the fuller `sourceHighlight`.
- * - `highlightRetags` moves list markers, code fences and setext underlines to
- *   `sourceMarkTag`, which only source mode colors, so live preview's
- *   transparent-glyph tricks (bullets, fences) keep working.
+ * - `highlightRetags` moves list markers and code fences to `sourceMarkTag`,
+ *   which only source mode colors, so live preview's transparent-glyph tricks
+ *   (bullets, fences) keep working.
  */
 import { EditorView } from "@codemirror/view";
 import { HighlightStyle } from "@codemirror/language";
@@ -30,7 +30,6 @@ export const highlightRetags: MarkdownConfig = {
     styleTags({
       ListMark: sourceMarkTag,
       "FencedCode/CodeMark FencedCode/CodeInfo": sourceMarkTag,
-      "SetextHeading1/HeaderMark SetextHeading2/HeaderMark": sourceMarkTag,
       "WikiLink/... WikiEmbed/...": wikiLinkTag,
     }),
   ],
@@ -59,7 +58,7 @@ export const liveHighlight = HighlightStyle.define([
   { tag: tags.monospace, fontFamily: "var(--font-mono)" },
   { tag: tags.comment, color: FAINT },
   { tag: tags.processingInstruction, color: FAINT, textDecorationLine: "none" },
-  // Inherit, so a setext underline takes live preview's color instead of the heading's.
+  // Inherit, so a marker or a fence takes live preview's color, never one from its block.
   { tag: sourceMarkTag, color: "inherit", fontWeight: "inherit" },
 ]);
 

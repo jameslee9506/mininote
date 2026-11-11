@@ -29,8 +29,6 @@ const KINDS: Record<string, BlockKind> = {
   ATXHeading4: "h4",
   ATXHeading5: "h5",
   ATXHeading6: "h6",
-  SetextHeading1: "h1",
-  SetextHeading2: "h2",
   Paragraph: "p",
   LinkReference: "p",
   BulletList: "ul",

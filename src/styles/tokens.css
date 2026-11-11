@@ -69,10 +69,19 @@
   --gap-item-loose: 0.6;        /* li + li in loose lists */
   --gap-nested: 0.2;            /* li text + nested list */
 
-  /* Editor (live preview): the height of a blank source line between two blocks.
-   * It equals the smallest pair gap (--gap-after-heading), so one blank line never
-   * exceeds the gap it sits in; the block below pads the rest (DESIGN §3.2). */
-  --gap-blank: 0.5;
+  /* ── Markdown components ──────────────────────────────────────
+   * One set of measures for the reading view (markdown.css) and live preview
+   * (editor.css): a component looks the same in both because both draw it from
+   * these (DESIGN §5). */
+  --md-list-indent: 1.5;        /* gutter per list level, × --fs-content */
+  --md-quote-bar: 2px;          /* blockquote bar */
+  --md-quote-step: 16px;        /* bar + gap per quote level: where a quote's text starts */
+  --md-code-lh: 1.55;           /* code blocks, frontmatter, raw table source */
+  --md-code-pad-x: 16px;        /* code box, left and right */
+  --md-code-pad-y: calc(var(--fs-code) * var(--md-code-lh)); /* code box, top and bottom: one code line */
+  --md-task-size: 0.9333em;     /* checkbox: 14px at the 15px base */
+  --md-task-gap: 0.5em;         /* checkbox to text */
+  --md-cell-pad: 6px 12px;      /* table cells */
 
   /* ── Layout ───────────────────────────────────────────────── */
   --sidebar-width: 248px;       /* settings.sidebarWidth */

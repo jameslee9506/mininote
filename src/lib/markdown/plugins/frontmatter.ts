@@ -34,7 +34,7 @@ function frontmatter(state: StateBlock, startLine: number, endLine: number, sile
 }
 
 export function frontmatterPlugin(md: MarkdownIt): void {
-  // First block rule, so `---` is never read as a thematic break or setext underline.
+  // First block rule, so `---` is never read as a thematic break.
   md.block.ruler.before("table", "frontmatter", frontmatter);
   md.renderer.rules.frontmatter = (tokens, idx) =>
     `<pre class="frontmatter"><code>${md.utils.escapeHtml(tokens[idx].content)}</code></pre>\n`;

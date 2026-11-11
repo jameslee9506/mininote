@@ -30,9 +30,9 @@ import { parseWikiInner } from "../../markdown/resolve";
 import type { FrontmatterRange } from "./frontmatter";
 import { linkUrl, unresolvedTest, wikiInner } from "./links";
 import { endsInside, isImageTarget, linkDestination } from "./model";
-import { blankLinesBetween, enclosing, kindOf, prevBlock } from "./flow";
+import { enclosing, pairOf } from "./flow";
 import { fmField, freezeField, mapSelection, reportOnce, revealSelection } from "./state";
-import { ImageWidget, NO_INSET, TableWidget, type Inset, type Pair } from "./widgets";
+import { ImageWidget, NO_INSET, NOTHING_ABOVE, TableWidget, type Above, type Inset } from "./widgets";
 
 interface ImageRegion {
   kind: "image";
@@ -165,8 +165,8 @@ function scanIn(state: EditorState, cursor: TreeCursor, from: number, to: number
   const doc = state.doc;
   const fm = state.field(fmField, false) ?? null;
   // Nothing inside the frontmatter is Markdown (LIVE-10). A block that runs past its
-  // closing fence (Lezer reads text right after `...` as lazy continuation) is
-  // scanned for what follows the fence.
+  // closing fence (Lezer reads text right after `...` as more of the same paragraph)
+  // is scanned for what follows the fence.
   const after = fm ? fm.to : 0;
   const visit = (inset: Inset): void => {
     if (fm && cursor.to <= fm.to) return;
@@ -329,22 +329,22 @@ function imageUrl(host: EditorHost, region: ImageRegion): string | null {
 type Drawn = Pick<Blocks, "revealed" | "links" | "urls" | "deco">;
 
 /**
- * The pair a widget stands in for (DESIGN §3.2): the block before `block` and the blank
- * lines between them. Read from the current tree at compose time, so an edit above never
- * leaves a widget's gap stale. Lezer reads the frontmatter as blocks of its own (an hr and
- * a setext heading); a block before its closing fence counts as the frontmatter (LIVE-10).
+ * How a widget joins the flow above it (DESIGN §3.2), read from the current tree at
+ * compose time, so an edit above never leaves its gap stale. The widget replaces its
+ * first line, so it shows the gap that line would: `block`'s own pair, or, for the first
+ * block of quotes that start on that line, the pair of the outermost such quote. Those
+ * quotes' bars begin below the gap.
  */
-function blockPair(doc: Text, fm: FrontmatterRange | null, block: SyntaxNode): Pair | null {
-  const blk = kindOf(block);
-  const prev = prevBlock(block);
-  if (prev && !(fm && prev.to <= fm.to)) {
-    const crossing = fm !== null && prev.from < fm.to;
-    return { blk, prev: crossing ? "p" : kindOf(prev), blank: blankLinesBetween(doc, prev, block) };
+function flowAbove(doc: Text, fm: FrontmatterRange | null, block: SyntaxNode): Above {
+  const line = doc.lineAt(block.from).number;
+  let fresh = 0;
+  for (let node: SyntaxNode = block; ; ) {
+    const pair = pairOf(doc, node, fm);
+    const parent = node.parent;
+    if (pair || !parent || parent.name !== "Blockquote" || doc.lineAt(parent.from).number !== line) return { pair, fresh };
+    fresh++;
+    node = parent;
   }
-  if (fm && block.parent?.type.isTop && block.from > fm.to) {
-    return { blk, prev: "fm", blank: Math.max(0, doc.lineAt(block.from).number - doc.lineAt(fm.to).number - 1) };
-  }
-  return null;
 }
 
 /** The paragraph an image line opens; an image on a later line of its paragraph gets no gap of its own. */
@@ -379,7 +379,7 @@ function compose(
       else url = imageUrl(host, r);
       urls.set(key, url);
       const block = revealed[i] ? null : imageBlock(doc, tree, r);
-      const widget = new ImageWidget(url, r.alt, r.inset, block ? blockPair(doc, fm, block) : null);
+      const widget = new ImageWidget(url, r.alt, r.inset, block ? flowAbove(doc, fm, block) : NOTHING_ABOVE);
       // Revealed: the source line shows and the image stays below it, so nothing jumps.
       out.push(
         revealed[i]
@@ -392,7 +392,7 @@ function compose(
       let sig = links.get(r.source) ?? prevLinks.get(r.source);
       if (sig === undefined) sig = unresolvedIn(node, r.source, r.from, (unresolved ??= unresolvedTest(host)));
       links.set(r.source, sig);
-      const widget = new TableWidget(r.source, r.from, node, sig, host, r.inset, blockPair(doc, fm, node));
+      const widget = new TableWidget(r.source, r.from, node, sig, host, r.inset, flowAbove(doc, fm, node));
       out.push(Decoration.replace({ widget, block: true }).range(r.from, r.to));
     }
   });

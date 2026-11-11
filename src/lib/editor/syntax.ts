@@ -1,12 +1,13 @@
 /**
- * Lezer markdown extensions: [[wikilinks]] / ![[embeds]] and ==highlight==.
+ * Lezer markdown extensions: [[wikilinks]] / ![[embeds]], ==highlight== and the
+ * app's block dialect (no setext headings, no lazy continuation lines).
  * Node names are a CONTRACT used by live preview, completion and commands:
  *   WikiLink, WikiEmbed            — whole construct (embed includes the leading "!")
  *   WikiLinkMark                   — "[[", "![[", "|", "]]"
  *   WikiLinkTarget, WikiLinkAlias  — the parts around "|"  (target may contain "#heading")
  *   Highlight, HighlightMark       — "==text==" and its "==" marks
  */
-import type { DelimiterType, InlineContext, MarkdownConfig } from "@lezer/markdown";
+import type { DelimiterType, InlineContext, LeafBlockParser, MarkdownConfig } from "@lezer/markdown";
 import { Tag, tags } from "@lezer/highlight";
 
 /** Highlighting tags so source mode can style these constructs too. */
@@ -102,5 +103,38 @@ export const Highlight: MarkdownConfig = {
   ],
 };
 
-/** Extensions to pass to `markdown({ extensions })` (GFM comes from `markdownLanguage`). */
-export const markdownExtensions: MarkdownConfig[] = [WikiLink, Highlight];
+/**
+ * Ends a paragraph at a lazy line: one that does not continue every open quote and list
+ * item. `depth` counts the containers a line continues; Lezer's own setext parser reads
+ * it the same way. The paragraph is finished as a blank line would finish it (a task, a
+ * table, a link reference or a plain paragraph), and the line starts a block further out.
+ */
+const lazyLineParser: LeafBlockParser = {
+  nextLine(cx, line, leaf) {
+    if ((line as unknown as { depth: number }).depth >= cx.depth) return false;
+    for (const parser of leaf.parsers) if (parser !== lazyLineParser && parser.finish(cx, leaf)) return true;
+    const end = leaf.start + leaf.content.length;
+    cx.addLeafElement(leaf, cx.elt("Paragraph", leaf.start, end, cx.parser.parseInline(leaf.content, leaf.start)));
+    return true;
+  },
+  finish: () => false,
+};
+
+/**
+ * The block dialect both views read (the reading view's half is markdown/plugins/dialect.ts;
+ * keep them in sync). What a line is never depends on a line typed after it, and a line
+ * belongs to a quote or a list item only through its own markup:
+ * - No setext headings. A "-" or "=" typed under a line of text would turn that text into
+ *   a heading while a list or a rule is being written. "---" under text is a rule.
+ * - No lazy continuation. A line without ">" is outside the quote, and a line indented
+ *   less than a list item's text is outside the item, so leaving a quote or a list needs
+ *   no blank line (EDIT-03).
+ */
+export const Dialect: MarkdownConfig = {
+  remove: ["SetextHeading"],
+  // First among the leaf parsers: a lazy line ends the block before any of them reads it.
+  parseBlock: [{ name: "LazyLine", before: "LinkReference", leaf: () => lazyLineParser }],
+};
+
+/** Extensions to pass to `markdown({ extensions })`, after GFM. */
+export const markdownExtensions: MarkdownConfig[] = [WikiLink, Highlight, Dialect];

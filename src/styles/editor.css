@@ -1,7 +1,8 @@
 /*
  * Live-preview editor styling: the classes emitted by src/lib/editor/livePreview
  * (ARCHITECTURE §10.2), the editor spacing of DESIGN §3.2 and the Markdown
- * visuals of DESIGN §5. Tokens only.
+ * visuals of DESIGN §5. Tokens only; every measure the reading view draws too is
+ * a --md-* token, shared with markdown.css, so a component is the same in both.
  *
  * - Lines get padding, never margins: CodeMirror measures padding but not margins.
  * - CodeMirror themes generate `.ͼN .cm-line`-style rules (two classes) that are
@@ -16,19 +17,26 @@
   /* Hangul wraps between words (eojeol), never inside one; long URLs still break. */
   word-break: keep-all;
   overflow-wrap: anywhere;
+  /* A blank at a wrap point hangs, as in the reading view, so both views break a paragraph
+   * at the same words. (CodeMirror's default, break-spaces, makes that blank take room and
+   * moves the word before it to the next row.) */
+  white-space: pre-wrap;
 }
 
 /* ── Lines ──────────────────────────────────────────────────────── */
 
-/* No base inset, so text aligns with the inline title. Quotes add one 16px step (2px bar
- * + 14px gap) per level, code boxes their inner padding, and list lines their gutter: the
- * reading view's 1.5em per level, less the measured prefix that hangs (LIVE-13), so an
- * item's text sits where the reading view puts it whatever the source indentation. */
+/* No base inset, so text aligns with the inline title. Quotes add one step (bar + gap) per
+ * level, code boxes their inner padding, and list lines their gutter: the reading view's
+ * indent per level, less the measured prefix that hangs (LIVE-13), so an item's text sits
+ * where the reading view puts it whatever the source indentation. */
 .cm-editor .cm-content .cm-line {
-  --mn-list: max(0px, calc(var(--fs-content) * 1.5 * var(--mn-depth, 0) - var(--mn-hang, 0px)));
+  --mn-list: max(
+    0px,
+    calc(var(--fs-content) * var(--md-list-indent) * var(--mn-depth, 0) - var(--mn-hang, 0px))
+  );
   /* Where a code box or a rule starts: after the quote steps and the list gutter. */
-  --mn-box-x: calc(var(--mn-quote, 0) * 16px + var(--mn-list) + var(--mn-hang, 0px));
-  padding-left: calc(var(--mn-quote, 0) * 16px + var(--mn-pad-l, 0px) + var(--mn-list));
+  --mn-box-x: calc(var(--mn-quote, 0) * var(--md-quote-step) + var(--mn-list) + var(--mn-hang, 0px));
+  padding-left: calc(var(--mn-quote, 0) * var(--md-quote-step) + var(--mn-pad-l, 0px) + var(--mn-list));
   padding-right: var(--mn-pad-r, 0px);
 }
 
@@ -38,19 +46,28 @@
   text-indent: var(--mn-hang, 0px) hanging;
 }
 
-/* ── Blockquote: one bar per level, drawn on the line box ───────── */
-
-/* The bars start below any pair padding, at the gutter of the list items the quote sits
- * in (the left edge outside lists). */
-.cm-editor .cm-content .cm-line.cm-quote {
-  color: var(--c-text-muted);
-  background-image: repeating-linear-gradient(
+/* ── Blockquote: one bar per level, drawn on the line box ─────────
+ * Also on a block widget inside a quote (.cm-widget-quote). The bars sit at the gutter of
+ * the list items the quote is in (the left edge outside lists). Two layers: the quotes
+ * that began on an earlier line run through the line's pair padding, as the reading view's
+ * border runs through the gaps inside a quote; the --mn-quote-new innermost quotes begin on
+ * this line, below the padding, which is the gap above them. */
+.cm-editor .cm-content :is(.cm-line.cm-quote, .cm-widget-quote) {
+  --mn-bars: repeating-linear-gradient(
     to right,
-    var(--c-border-strong) 0 2px,
-    transparent 2px 16px
+    var(--c-border-strong) 0 var(--md-quote-bar),
+    transparent var(--md-quote-bar) var(--md-quote-step)
   );
-  background-size: calc(var(--mn-quote, 1) * 16px) calc(100% - var(--mn-pad-t, 0px));
-  background-position: calc(var(--fs-content) * 1.5 * var(--mn-quote-list, 0)) var(--mn-pad-t, 0px);
+  --mn-bars-x: calc(var(--fs-content) * var(--md-list-indent) * var(--mn-quote-list, 0));
+  --mn-bars-old: calc((var(--mn-quote, 1) - var(--mn-quote-new, 0)) * var(--md-quote-step));
+  color: var(--c-text-muted);
+  background-image: var(--mn-bars), var(--mn-bars);
+  background-size:
+    var(--mn-bars-old) 100%,
+    calc(var(--mn-quote-new, 0) * var(--md-quote-step)) calc(100% - var(--mn-pad-t, 0px));
+  background-position:
+    var(--mn-bars-x) 0,
+    calc(var(--mn-bars-x) + var(--mn-bars-old)) var(--mn-pad-t, 0px);
   background-repeat: no-repeat;
 }
 
@@ -91,22 +108,37 @@
 
 /* ── Spacing between blocks (DESIGN §3.2, LIVE-15) ──────────────────
  * The reading view's pair gaps, from the tree only: data-blk / data-prev / data-ctx sit
- * on a block's first line, or on a block widget (.cm-block). A blank source line between
- * two blocks is --gap-blank tall, and the block below pads the rest of its pair gap. The
- * gap rules follow markdown.css in the same order, all at one specificity (:where), so
- * the later pair wins. */
-
-.cm-editor .cm-content .cm-line.cm-blank {
-  line-height: calc(var(--fs-content) * var(--gap-blank));
-}
+ * on a block's first line, or on a block widget (.cm-block). A blank source line is a
+ * body line, as tall as one and never styled: the one right below a block carries that
+ * block's pair with a paragraph (it is tagged as one), and the block after the blank lines
+ * pads only what is left of its gap. The gap rules follow markdown.css in the same order,
+ * all at one specificity (:where), so the later pair wins. */
 
 /* any + any */
 .cm-editor .cm-content :where(.cm-line, .cm-block):where([data-prev]) {
   --mn-gap: var(--gap-block);
-  /* The gap, less what the blank lines above give, and half a text line around an hr. */
+  /* The gap, less what is above it already: the blank lines (--mn-blank body lines), the
+   * lead the first of them shows (data-lead), and half a text line around an hr. */
   --mn-pad-t: calc(
-    var(--fs-content) * max(0, var(--mn-gap) - var(--mn-blank, 0) * var(--gap-blank) - var(--mn-half, 0))
+    var(--fs-content) *
+      max(
+        0,
+        var(--mn-gap) - var(--mn-blank, 0) * var(--lh-content) - var(--mn-lead, 0) - var(--mn-half, 0)
+      )
   );
+}
+
+/* The lead: what the blank line below the upper block shows, its pair with a paragraph. */
+.cm-editor .cm-content :where(.cm-line, .cm-block):where([data-lead="block"]) {
+  --mn-lead: var(--gap-block);
+}
+
+.cm-editor .cm-content :where(.cm-line, .cm-block):where([data-lead="h"]) {
+  --mn-lead: var(--gap-after-heading);
+}
+
+.cm-editor .cm-content :where(.cm-line, .cm-block):where([data-lead="hr"]) {
+  --mn-lead: calc(var(--gap-hr) - var(--lh-content) / 2);
 }
 
 /* any + heading */
@@ -190,12 +222,12 @@
 /* ── Code blocks: a box behind the lines (LIVE-08) ───────────────── */
 
 .cm-editor .cm-content .cm-line.cm-code {
-  --mn-pad-l: 16px;
-  --mn-pad-r: 16px;
+  --mn-pad-l: var(--md-code-pad-x);
+  --mn-pad-r: var(--md-code-pad-x);
   position: relative;
   font-family: var(--font-mono);
   font-size: var(--fs-code);
-  line-height: 1.55;
+  line-height: var(--md-code-lh);
 }
 
 /* The box starts after the quote steps and the list gutter, like the reading view's <pre>,
@@ -221,14 +253,15 @@
   border-bottom-right-radius: var(--radius-m);
 }
 
-/* Fence lines already pad a fenced box; indented code (and an unclosed fence's last line)
- * gets a little inner padding instead, on top of any pair gap. Inner padding is not a gap. */
+/* The box pads one code line above and below, as the reading view's <pre> does. A fenced
+ * box has its fence lines there; indented code (and an unclosed fence's last line) pads
+ * instead, on top of any pair gap. Inner padding is not a gap. */
 .cm-editor .cm-content .cm-line.cm-code-first:not(.cm-fence) {
-  padding-top: calc(var(--mn-pad-t, 0px) + 6px);
+  padding-top: calc(var(--mn-pad-t, 0px) + var(--md-code-pad-y));
 }
 
 .cm-editor .cm-content .cm-line.cm-code-last:not(.cm-fence) {
-  padding-bottom: 6px;
+  padding-bottom: var(--md-code-pad-y);
 }
 
 /* Fence text keeps its line height but is invisible until the block is revealed;
@@ -242,7 +275,7 @@
   content: attr(data-lang);
   position: absolute;
   top: var(--mn-pad-t, 0px);
-  right: 16px;
+  right: var(--md-code-pad-x);
   color: var(--c-text-faint);
   pointer-events: none;
   user-select: none;
@@ -277,10 +310,10 @@
   color: var(--c-text-muted);
   font-family: var(--font-mono);
   font-size: var(--fs-code);
-  line-height: 1.55;
+  line-height: var(--md-code-lh);
 }
 
-/* The parser still sees an hr and a setext heading here; undo any highlighting. */
+/* The parser still reads rules, lists and emphasis here; undo any highlighting. */
 .cm-editor .cm-content .cm-line.cm-fm * {
   color: inherit;
   font-size: inherit;
@@ -291,28 +324,19 @@
 
 /* ── Block widgets: tables and images (LIVE-11, LIVE-12) ───────────
  * Padding only: the height map measures the box. A widget sits where its block's first
- * line would, after the quote steps (one 16px step and one bar per level) and the list
- * gutter, with its pair gap above it (.cm-block takes the rules of a line). */
+ * line would, after the quote steps (one step and one bar per level, drawn by the quote
+ * rule above) and the list gutter, with its pair gap above it (.cm-block takes the rules
+ * of a line). */
 
 .cm-table-widget,
 .cm-image-widget {
-  padding-left: calc(var(--mn-quote, 0) * 16px + var(--fs-content) * 1.5 * var(--mn-depth, 0));
+  padding-left: calc(
+    var(--mn-quote, 0) * var(--md-quote-step) + var(--fs-content) * var(--md-list-indent) * var(--mn-depth, 0)
+  );
 }
 
 .cm-widget-body {
   min-width: 0;
-}
-
-.cm-editor .cm-content .cm-widget-quote {
-  color: var(--c-text-muted);
-  background-image: repeating-linear-gradient(
-    to right,
-    var(--c-border-strong) 0 2px,
-    transparent 2px 16px
-  );
-  background-size: calc(var(--mn-quote, 1) * 16px) calc(100% - var(--mn-pad-t, 0px));
-  background-position: calc(var(--fs-content) * 1.5 * var(--mn-quote-list, 0)) var(--mn-pad-t, 0px);
-  background-repeat: no-repeat;
 }
 
 /* ── Tables ─────────────────────────────────────────────────────── */
@@ -321,7 +345,7 @@
 .cm-editor .cm-content .cm-line.cm-table {
   font-family: var(--font-mono);
   font-size: var(--fs-code);
-  line-height: 1.55;
+  line-height: var(--md-code-lh);
 }
 
 /* Rendered table (a block widget, framed as above): its body scrolls horizontally. */
@@ -336,7 +360,7 @@
 }
 
 .cm-table-widget :where(th, td) {
-  padding: 6px 12px;
+  padding: var(--md-cell-pad);
   border: 1px solid var(--c-border);
   text-align: left;
   vertical-align: top;
@@ -379,7 +403,9 @@
 
 /* ── Lists and tasks (LIVE-04, LIVE-05) ─────────────────────────── */
 
-/* The marker glyph stays (same width, so revealing never shifts text); a dot covers it. */
+/* The marker glyph stays (same width, so revealing never shifts text); a dot covers it. The
+ * dot ends where the glyph ends, one blank before the text: where the reading view's "• "
+ * marker puts it. */
 .cm-editor .cm-content .cm-bullet,
 .cm-editor .cm-content .cm-bullet * {
   color: transparent;
@@ -394,9 +420,8 @@
   position: absolute;
   /* Zero line height at 50% of the glyph box puts the dot on the text baseline. */
   top: 50%;
-  left: 50%;
+  right: 0;
   line-height: 0;
-  transform: translateX(-50%);
   color: var(--c-text-faint);
 }
 
@@ -405,30 +430,27 @@
   color: var(--c-text-muted);
 }
 
-/* The widget is the box plus the gap that the hidden "- " used to take; the
- * square itself is drawn by ::before, like the reading view's .task-box. */
+/* The widget stands for the marker, the box and the blank after it: one text line high and
+ * as wide as the box plus its gap, so the text starts right after it. The square is drawn
+ * by ::before, centered on the line like the reading view's .task-box. */
 .cm-task {
   display: inline-block;
   position: relative;
-  width: calc(0.9333em + 0.5em);
-  height: 0.9333em;
-  vertical-align: middle;
+  width: calc(var(--md-task-size) + var(--md-task-gap));
+  height: calc(1em * var(--lh-content));
+  vertical-align: top;
   text-indent: 0;
   cursor: pointer;
-}
-
-.cm-task.cm-task-ordered {
-  width: calc(0.9333em + 0.15em);
 }
 
 .cm-task::before {
   content: "";
   position: absolute;
-  top: 0;
+  top: calc((1em * var(--lh-content) - var(--md-task-size)) / 2);
   left: 0;
   box-sizing: border-box;
-  width: 0.9333em;
-  height: 0.9333em;
+  width: var(--md-task-size);
+  height: var(--md-task-size);
   border: 1px solid var(--c-border-strong);
   border-radius: calc(var(--radius-s) - 1px);
   transition:

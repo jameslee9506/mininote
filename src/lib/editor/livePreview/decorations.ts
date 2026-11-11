@@ -12,14 +12,18 @@ import type { EditorHost } from "../host";
 import { parseWikiInner } from "../../markdown/resolve";
 import {
   blockAtOrAfter,
-  contentEnd,
+  blockBefore,
+  carriesLead,
   enclosing,
-  kindOf,
+  flowBlock,
+  leadOf,
   listContext,
   listDepth,
   nextBlock,
-  prevBlock,
+  pairWith,
+  type FlowBlock,
   type FlowContext,
+  type Pair,
 } from "./flow";
 import type { FrontmatterRange } from "./frontmatter";
 import { linkUrl, unresolvedTest, wikiInner } from "./links";
@@ -68,13 +72,9 @@ const HEADING_LINES = [1, 2, 3, 4, 5, 6].map((n) => Decoration.line({ class: `cm
 const HR_LINE = Decoration.line({ class: "cm-hr" });
 const TABLE_LINE = Decoration.line({ class: "cm-table" });
 const FM_LINE = Decoration.line({ class: "cm-fm", attributes: { spellcheck: "false" } });
-/** A blank source line between two blocks: `--gap-blank` tall (DESIGN §3.2). */
-const BLANK_LINE = Decoration.line({ class: "cm-blank" });
 
-/** Checkbox replacements by [checked][ordered]; widgets are immutable, so they are shared. */
-const CHECKBOXES = [false, true].map((checked) =>
-  [false, true].map((ordered) => Decoration.replace({ widget: new CheckboxWidget(checked, ordered) })),
-);
+/** Checkbox replacements by [checked]; widgets are immutable, so they are shared. */
+const CHECKBOXES = [false, true].map((checked) => Decoration.replace({ widget: new CheckboxWidget(checked) }));
 
 function cached<K>(cache: Map<K, Decoration>, key: K, make: () => Decoration): Decoration {
   let deco = cache.get(key);
@@ -91,22 +91,31 @@ const quoteCache = new Map<string, Decoration>();
 const hangCache = new Map<string, Decoration>();
 const codeCache = new Map<string, Decoration>();
 
-/** A block's first line: its kind, the block before it, the container, and the blank lines above it. */
-function pairLine(kind: BlockKind, prev: BlockKind, ctx: FlowContext | null, blank: number): Decoration {
-  return cached(pairCache, `${kind}|${prev}|${ctx ?? ""}|${blank}`, () => {
-    const attributes: Record<string, string> = { "data-blk": kind, "data-prev": prev };
+/**
+ * A block's first line (or the blank line that stands where a paragraph would): its kind,
+ * the block before it, the container, the blank lines above it and the lead the first of
+ * them shows.
+ */
+function pairLine(pair: Pair, ctx: FlowContext | null): Decoration {
+  return cached(pairCache, `${pair.blk}|${pair.prev}|${ctx ?? ""}|${pair.blank}|${pair.lead ?? ""}`, () => {
+    const attributes: Record<string, string> = { "data-blk": pair.blk, "data-prev": pair.prev };
     if (ctx) attributes["data-ctx"] = ctx;
-    if (blank > 0) attributes.style = `--mn-blank: ${blank}`;
+    if (pair.lead) attributes["data-lead"] = pair.lead;
+    if (pair.blank > 0) attributes.style = `--mn-blank: ${pair.blank}`;
     return Decoration.line({ attributes });
   });
 }
 
-/** A quote line: `depth` bars, drawn at the gutter of the `list` levels the innermost quote sits in. */
-function quoteLine(depth: number, list: number): Decoration {
-  return cached(quoteCache, `${depth}|${list}`, () =>
+/**
+ * A quote line: `depth` bars, drawn at the gutter of the `list` levels the innermost quote
+ * sits in. The innermost `fresh` quotes start on this line: their bars begin below the
+ * line's pair padding, while the outer ones run through it.
+ */
+function quoteLine(depth: number, list: number, fresh: number): Decoration {
+  return cached(quoteCache, `${depth}|${list}|${fresh}`, () =>
     Decoration.line({
       class: "cm-quote",
-      attributes: { style: `--mn-quote: ${depth}; --mn-quote-list: ${list}` },
+      attributes: { style: `--mn-quote: ${depth}; --mn-quote-list: ${list}; --mn-quote-new: ${fresh}` },
     }),
   );
 }
@@ -135,7 +144,6 @@ const ATX_LEVEL: Record<string, number> = {
   ATXHeading5: 5,
   ATXHeading6: 6,
 };
-const SETEXT_LEVEL: Record<string, number> = { SetextHeading1: 1, SetextHeading2: 2 };
 /** Blocks whose first line is plain text and now padded: it needs the sampling guard (TECHNIQUES §1.7). */
 const GUARDED = new Set<BlockKind>(["p", "quote", "html"]);
 /** Blocks set in the code font: a list prefix on their lines measures differently. */
@@ -174,10 +182,12 @@ const RAW = new Set([
 const ELEMENT_MARKS = new Set(["EmphasisMark", "StrikethroughMark", "HighlightMark", "CodeMark"]);
 /**
  * Blocks that can run past the frontmatter's closing fence: Lezer reads a line right
- * after a `...` fence as lazy continuation of the YAML's last paragraph (LIVE-10).
+ * after a `...` fence as more of the YAML's last paragraph (LIVE-10).
  */
 const FM_CROSSING = new Set(["Paragraph", "Task", "BulletList", "OrderedList", "ListItem", "Blockquote"]);
 const TASK_TEXT = /^\[[ xX]\][ \t]*$/;
+/** A line between two blocks: nothing on it, or only the marks of the quotes it is in. */
+const BLANK_LINE = /^[ \t>]*$/;
 const QUOTE_PREFIX = /^(?:[ \t]*>[ ]?)+/;
 
 function isBlank(ch: string): boolean {
@@ -223,9 +233,12 @@ class Builder {
   private readonly tree: Tree;
   private readonly sel: readonly SelectionRange[];
   private readonly fm: FrontmatterRange | null;
-  /** Per quote line start: the quote depth, summed over nested Blockquote nodes, and the innermost quote's list depth. */
-  private readonly quotes = new Map<number, { depth: number; list: number }>();
-  /** Line starts that carry a pair tag or are a blank line between blocks (one decoration each). */
+  /**
+   * Per quote line start: the quote depth, summed over nested Blockquote nodes, the innermost
+   * quote's list depth, and how many of those quotes start on the line.
+   */
+  private readonly quotes = new Map<number, { depth: number; list: number; fresh: number }>();
+  /** Line starts that carry a pair tag (one decoration each). */
   private readonly flowLines = new Set<number>();
   /** Line starts whose content carries the sampling guard. */
   private readonly guarded = new Set<number>();
@@ -251,7 +264,7 @@ class Builder {
       this.flow(this.tree.topNode, null);
       this.tree.iterate({ from: range.from, to: range.to, enter: (n) => this.enter(n) });
     }
-    for (const [lineFrom, q] of this.quotes) this.out.push(quoteLine(q.depth, q.list).range(lineFrom));
+    for (const [lineFrom, q] of this.quotes) this.out.push(quoteLine(q.depth, q.list, q.fresh).range(lineFrom));
     return Decoration.set(this.out, true);
   }
 
@@ -336,11 +349,6 @@ class Builder {
       this.atxHeading(n.node, atx);
       return true;
     }
-    const setext = SETEXT_LEVEL[name];
-    if (setext) {
-      this.setextHeading(n.node, setext);
-      return true;
-    }
     if (INLINE.has(name)) {
       this.inline(n.node, touches(this.sel, n.from, n.to));
       return false;
@@ -348,9 +356,11 @@ class Builder {
     switch (name) {
       case "Blockquote": {
         const list = listDepth(n.node);
+        const start = n.from;
         this.eachLine(n.from, n.to, (line) => {
           const q = this.quotes.get(line.from);
-          this.quotes.set(line.from, { depth: (q?.depth ?? 0) + 1, list });
+          const fresh = (q?.fresh ?? 0) + (start >= line.from ? 1 : 0);
+          this.quotes.set(line.from, { depth: (q?.depth ?? 0) + 1, list, fresh });
         });
         this.flow(n.node, "quote");
         return true;
@@ -407,59 +417,48 @@ class Builder {
 
   /**
    * Pair spacing for the block children of `container` (DESIGN §3.2, LIVE-15): every child
-   * but the first gets `data-blk`, `data-prev`, the container's `data-ctx` and the number of
-   * blank lines above it on its first line, and those blank lines (the document's leading
-   * ones too) get `cm-blank`. From the tree only, never the selection, so a caret move
-   * reflows nothing. At the top level the frontmatter stands in for a first block (LIVE-10);
-   * a block that runs past its closing fence counts as a paragraph from its first non-blank
-   * line after the fence.
+   * but the first gets its pair on its first line (`data-blk`, `data-prev`, the container's
+   * `data-ctx`, the blank lines above it). A blank line is a body line: in the document and
+   * in a quote, the one right below a block is tagged as the paragraph it would become, so
+   * typing on it moves nothing, and the block after the blank lines pads only what is left
+   * of its gap. From the tree only, never the selection, so a caret move reflows nothing.
+   * At the top level the frontmatter stands in for a first block (LIVE-10).
    */
   private flow(container: SyntaxNode, ctx: FlowContext | null): void {
     const doc = this.doc;
     const top = container.type.isTop;
     const fm = top ? this.fm : null;
-    const visibleFirst = doc.lineAt(this.from).number;
-    const visibleLast = doc.lineAt(this.to).number;
+    const leads = carriesLead(container);
+    /** The container's last line: the blank lines up to it follow its last block. */
+    const lastLine = top ? doc.lines : doc.lineAt(container.to).number;
     let node = blockAtOrAfter(container, this.from);
-    let prev = node ? prevBlock(node) : null;
-    for (; node && node.from <= this.to; prev = node, node = nextBlock(node)) {
-      let first = doc.lineAt(node.from);
-      let kind = kindOf(node);
-      let prevKind: BlockKind | null = null;
-      /** A position on the previous block's last content line, or -1 at the document start. */
-      let prevEnd = -1;
-      if (fm && node.from < fm.to) {
-        if (node.to <= fm.to) continue;
-        first = doc.lineAt(fm.to + 1);
-        while (first.to < node.to && first.text.trim() === "") first = doc.line(first.number + 1);
-        kind = "p";
-        prevKind = "fm";
-        prevEnd = fm.to;
-      } else if (prev && !(fm && prev.to <= fm.to)) {
-        prevKind = fm && prev.from < fm.to ? "p" : kindOf(prev);
-        prevEnd = contentEnd(prev);
-      } else if (fm) {
-        prevKind = "fm";
-        prevEnd = fm.to;
-      } else if (!top) {
-        continue;
+    let cur: FlowBlock | null = null;
+    // Blocks inside the frontmatter are not blocks of the document.
+    while (node && !(cur = flowBlock(doc, node, fm))) node = nextBlock(node);
+    let prev = blockBefore(doc, container, node, fm);
+    for (;;) {
+      if (prev) {
+        const below = prev.last + 1;
+        const lead = leads && below < (cur ? cur.first : lastLine + 1) ? leadOf(prev.kind) : null;
+        // Blank, or quote marks only: past a partial parse the line below may still hold text.
+        if (lead && BLANK_LINE.test(doc.line(below).text)) {
+          this.tag(doc.line(below), { blk: "p", prev: prev.kind, blank: 0, lead: null }, ctx);
+        }
+        if (cur) this.tag(doc.line(cur.first), pairWith(prev, cur, leads), ctx);
       }
-      const firstBlank = prevEnd < 0 ? 1 : doc.lineAt(prevEnd).number + 1;
-      const end = Math.min(first.number, visibleLast + 1);
-      for (let n = Math.max(firstBlank, visibleFirst); n < end; n++) this.blank(doc.line(n));
-      if (prevKind === null || !this.inRange(first.from) || this.flowLines.has(first.from)) continue;
-      this.flowLines.add(first.from);
-      this.out.push(pairLine(kind, prevKind, ctx, first.number - firstBlank).range(first.from));
-      if (GUARDED.has(kind)) this.guard(first);
+      if (!node || !cur || node.from > this.to) break;
+      prev = cur;
+      node = nextBlock(node);
+      cur = node ? flowBlock(doc, node, fm) : null;
     }
   }
 
-  /** A blank line between two blocks. Whitespace in it is text CodeMirror could sample, so it is guarded. */
-  private blank(line: Line): void {
-    if (this.flowLines.has(line.from)) return;
+  /** Puts a pair on a visible line, once. A padded line of plain text (or of blanks) must not be sampled. */
+  private tag(line: Line, pair: Pair, ctx: FlowContext | null): void {
+    if (!this.inRange(line.from) || this.flowLines.has(line.from)) return;
     this.flowLines.add(line.from);
-    this.out.push(BLANK_LINE.range(line.from));
-    if (line.length > 0) this.guard(line);
+    this.out.push(pairLine(pair, ctx).range(line.from));
+    if (GUARDED.has(pair.blk) && line.length > 0) this.guard(line);
   }
 
   private atxHeading(node: SyntaxNode, level: number): void {
@@ -487,18 +486,6 @@ class Builder {
       while (start > end && isBlank(this.doc.sliceString(start - 1, start))) start--;
       this.hide(start, close.to);
     }
-  }
-
-  /** Setext headings are styled, never hidden; the underline stays visible, faint. */
-  private setextHeading(node: SyntaxNode, level: number): void {
-    const last = node.lastChild;
-    const underline = last && last.name === "HeaderMark" ? last : null;
-    const textEnd = underline ? this.doc.lineAt(underline.from).from - 1 : node.to;
-    this.eachLine(node.from, textEnd, (line) => {
-      this.out.push(HEADING_LINES[level - 1].range(line.from));
-      this.guard(line);
-    });
-    if (underline && this.inRange(underline.from)) this.mark(SYNTAX, underline.from, underline.to);
   }
 
   /** `>` plus one space, hidden per line (LIVE-07); the bar is drawn on the line box. */
@@ -531,10 +518,12 @@ class Builder {
           this.mark(bullet ? SYNTAX : LIST_NUMBER, mark.from, mark.to);
           this.mark(SYNTAX, task.from, task.to);
         } else {
-          // The bullet and its space give way to the box; an ordered number stays.
-          if (bullet) this.hide(mark.from, task.from);
-          else this.mark(LIST_NUMBER, mark.from, mark.to);
-          this.out.push(CHECKBOXES[checked ? 1 : 0][bullet ? 0 : 1].range(task.from, task.to));
+          // The marker and its space give way to the box: a task item shows no bullet or number,
+          // as in the reading view. The box also takes the blank after it, so the gap before
+          // the text is the box's own (--md-task-gap) in both views.
+          this.hide(mark.from, task.from);
+          const boxEnd = task.to < line.to && isBlank(doc.sliceString(task.to, task.to + 1)) ? task.to + 1 : task.to;
+          this.out.push(CHECKBOXES[checked ? 1 : 0].range(task.from, boxEnd));
           hangKey = "r";
         }
         if (checked) this.mark(TASK_DONE, task.textFrom, task.textTo);
@@ -570,7 +559,7 @@ class Builder {
     let font = "";
     let verbatim = false;
     for (let n: SyntaxNode | null = inner; n && n.from >= item.from && n.name !== "ListItem"; n = n.parent) {
-      const level = ATX_LEVEL[n.name] ?? SETEXT_LEVEL[n.name];
+      const level = ATX_LEVEL[n.name];
       if (level) font = `h${level}`;
       else if (MONO.has(n.name)) font = "c";
       if (VERBATIM.has(n.name)) verbatim = true;

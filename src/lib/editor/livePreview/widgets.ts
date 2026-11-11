@@ -13,7 +13,8 @@ import { t } from "../../i18n";
 import { parseWikiInner } from "../../markdown/resolve";
 import { hasMod } from "../../utils/platform";
 import { eventElement, followLink, followOnRelease, linkAt, linkUrl, unresolvedTest } from "./links";
-import { hashString, tableAlignments, type Align, type BlockKind } from "./model";
+import { samePair, type Pair } from "./flow";
+import { hashString, tableAlignments, type Align } from "./model";
 import { reportOnce } from "./state";
 
 /** Drag-and-drop over a widget must still reach the editor's drop handling. */
@@ -23,16 +24,12 @@ function isDragEvent(e: Event): boolean {
 
 /** `[ ]` / `[x]` drawn as a CSS checkbox (LIVE-05). Toggling happens in the plugin's mousedown handler. */
 export class CheckboxWidget extends WidgetType {
-  constructor(
-    readonly checked: boolean,
-    /** In an ordered item the number stays visible, so the box needs less room after it. */
-    readonly ordered: boolean,
-  ) {
+  constructor(readonly checked: boolean) {
     super();
   }
 
   override eq(other: CheckboxWidget): boolean {
-    return other.checked === this.checked && other.ordered === this.ordered;
+    return other.checked === this.checked;
   }
 
   toDOM(): HTMLElement {
@@ -49,7 +46,7 @@ export class CheckboxWidget extends WidgetType {
   }
 
   private paint(box: HTMLElement): void {
-    box.className = `cm-task${this.checked ? " cm-task-checked" : ""}${this.ordered ? " cm-task-ordered" : ""}`;
+    box.className = this.checked ? "cm-task cm-task-checked" : "cm-task";
     box.setAttribute("aria-checked", this.checked ? "true" : "false");
   }
 
@@ -102,47 +99,53 @@ function placeCaret(view: EditorView, pos: number): void {
  * inset, as its source line would show it (editor.css).
  */
 export interface Inset {
-  /** Quote depth: one 16px step and one bar per level, as on quote lines. */
+  /** Quote depth: one step and one bar per level, as on quote lines. */
   readonly quote: number;
   /** The list depth the innermost quote sits in: its bars are drawn at that gutter. */
   readonly quoteList: number;
-  /** List depth: the widget starts at the reading view's gutter, 1.5em per level. */
+  /** List depth: the widget starts at the reading view's gutter, one indent per level. */
   readonly depth: number;
 }
 
 export const NO_INSET: Inset = { quote: 0, quoteList: 0, depth: 0 };
 
-/** The block pair a widget stands in for (DESIGN §3.2): the block before it and the blank lines between. */
-export interface Pair {
-  readonly blk: BlockKind;
-  readonly prev: BlockKind;
-  readonly blank: number;
+/** How a widget joins the flow above it (DESIGN §3.2), read from the tree when it is drawn. */
+export interface Above {
+  /** The gap above the widget, or null when it has none. */
+  readonly pair: Pair | null;
+  /** How many of its quotes start on its first line: their bars begin below the gap. */
+  readonly fresh: number;
 }
+
+export const NOTHING_ABOVE: Above = { pair: null, fresh: 0 };
 
 function sameInset(a: Inset, b: Inset): boolean {
   return a.quote === b.quote && a.quoteList === b.quoteList && a.depth === b.depth;
 }
 
-function samePair(a: Pair | null, b: Pair | null): boolean {
-  return a === b || (a !== null && b !== null && a.blk === b.blk && a.prev === b.prev && a.blank === b.blank);
+function sameAbove(a: Above, b: Above): boolean {
+  return a.fresh === b.fresh && samePair(a.pair, b.pair);
 }
 
 /**
  * A block widget's box, laid out as its block's first line would be (editor.css): the
  * quote steps and list gutter as padding, and the pair attributes for the gap above it.
  */
-function frame(className: string, inset: Inset, pair: Pair | null): { wrap: HTMLElement; body: HTMLElement } {
+function frame(className: string, inset: Inset, above: Above): { wrap: HTMLElement; body: HTMLElement } {
   const wrap = document.createElement("div");
   wrap.className = `cm-block ${className}`;
   if (inset.quote > 0) {
     wrap.classList.add("cm-widget-quote");
     wrap.style.setProperty("--mn-quote", String(inset.quote));
     wrap.style.setProperty("--mn-quote-list", String(inset.quoteList));
+    wrap.style.setProperty("--mn-quote-new", String(Math.min(above.fresh, inset.quote)));
   }
   if (inset.depth > 0) wrap.style.setProperty("--mn-depth", String(inset.depth));
+  const { pair } = above;
   if (pair) {
     wrap.dataset.blk = pair.blk;
     wrap.dataset.prev = pair.prev;
+    if (pair.lead) wrap.dataset.lead = pair.lead;
     if (pair.blank > 0) wrap.style.setProperty("--mn-blank", String(pair.blank));
   }
   const body = document.createElement("div");
@@ -165,15 +168,15 @@ export class ImageWidget extends WidgetType {
     readonly url: string | null,
     readonly alt: string,
     readonly inset: Inset,
-    /** The gap above the image; null below a revealed source line. */
-    readonly pair: Pair | null,
+    /** The flow above the image; no gap below a revealed source line. */
+    readonly above: Above,
   ) {
     super();
   }
 
   override eq(other: ImageWidget): boolean {
     return (
-      other.url === this.url && other.alt === this.alt && sameInset(other.inset, this.inset) && samePair(other.pair, this.pair)
+      other.url === this.url && other.alt === this.alt && sameInset(other.inset, this.inset) && sameAbove(other.above, this.above)
     );
   }
 
@@ -182,7 +185,7 @@ export class ImageWidget extends WidgetType {
   }
 
   toDOM(view: EditorView): HTMLElement {
-    const { wrap, body } = frame("cm-image-widget", this.inset, this.pair);
+    const { wrap, body } = frame("cm-image-widget", this.inset, this.above);
     wrap.addEventListener("mousedown", (e) => {
       if (e.button !== 0) return;
       e.preventDefault();
@@ -244,7 +247,7 @@ export class TableWidget extends WidgetType {
     readonly unresolved: string,
     readonly host: EditorHost,
     readonly inset: Inset,
-    readonly pair: Pair | null,
+    readonly above: Above,
   ) {
     super();
   }
@@ -254,7 +257,7 @@ export class TableWidget extends WidgetType {
       other.source === this.source &&
       other.unresolved === this.unresolved &&
       sameInset(other.inset, this.inset) &&
-      samePair(other.pair, this.pair)
+      sameAbove(other.above, this.above)
     );
   }
 
@@ -273,7 +276,7 @@ export class TableWidget extends WidgetType {
   }
 
   toDOM(view: EditorView): HTMLElement {
-    const { wrap, body } = frame("cm-table-widget", this.inset, this.pair);
+    const { wrap, body } = frame("cm-table-widget", this.inset, this.above);
     try {
       body.append(renderTable(this.node, this.source, this.base, this.host));
     } catch (err) {

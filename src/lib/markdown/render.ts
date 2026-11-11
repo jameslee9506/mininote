@@ -9,6 +9,7 @@ import MarkdownIt, { type StateCore, type Token } from "markdown-it";
 import DOMPurify, { type Config, type DOMPurify as Purifier } from "dompurify";
 import type { VaultPath } from "../types";
 import { envFor } from "./plugins/context";
+import { dialectPlugin } from "./plugins/dialect";
 import { fencePlugin } from "./plugins/fences";
 import { frontmatterPlugin } from "./plugins/frontmatter";
 import { BROKEN_IMAGE_SRC, imagePlugin } from "./plugins/images";
@@ -158,7 +159,8 @@ md.linkify
     },
   });
 md.core.ruler.after("linkify", "linkify_after_marks", linkifyAfterMarks);
-md.use(frontmatterPlugin)
+md.use(dialectPlugin)
+  .use(frontmatterPlugin)
   .use(wikilinkPlugin)
   .use(markPlugin)
   .use(taskPlugin)

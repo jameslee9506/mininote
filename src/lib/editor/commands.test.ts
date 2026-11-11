@@ -155,11 +155,15 @@ describe("Enter in lists", () => {
   // continueMarkup only reads `state` and calls `dispatch` on these small, fully parsed docs.
   const enter: StateCommand = (target) => continueMarkup(target as unknown as EditorView);
 
-  it("starts a new item after a soft-broken or lazy line", () => {
+  it("starts a new item after a soft-broken line", () => {
     expect(run(enter, "- a\n  b|")).toBe("- a\n  b\n- |");
     expect(run(enter, "- [x] a\n      b|")).toBe("- [x] a\n      b\n- [ ] |");
     expect(run(enter, "> 1. a\n>    b|\n> 2. c")).toBe("> 1. a\n>    b\n> 2. |\n> 3. c");
-    expect(run(enter, "- a\nb|")).toBe("- a\nb\n- |");
+  });
+
+  it("leaves text below a list or a quote alone: a line without their markup is outside them", () => {
+    expect(run(enter, "- a\nb|")).toBeNull();
+    expect(run(enter, "> a\nb|")).toBeNull();
   });
 
   it("keeps a tab after the marker or the task box", () => {
@@ -173,6 +177,31 @@ describe("Enter in lists", () => {
     expect(run(enter, "- a\n- |\n- c")).toBe("- a|\n- c");
     expect(run(enter, "1. a\n2. |\n3. c")).toBe("1. a|\n2. c");
     expect(run(enter, "- a\n- |")).toBe("- a\n|");
+  });
+});
+
+describe("Enter in quotes", () => {
+  const enter: StateCommand = (target) => continueMarkup(target as unknown as EditorView);
+
+  it("continues the quote, and leaves it on an empty quote line", () => {
+    expect(run(enter, "> a|")).toBe("> a\n> |");
+    expect(run(enter, "> a\n> |")).toBe("> a\n|");
+    expect(run(enter, "> |")).toBe("|");
+    expect(run(enter, "> a\n>|")).toBe("> a\n|");
+    // Between two quote lines too: the quote splits and the caret's line is body.
+    expect(run(enter, "> a\n> |\n> b")).toBe("> a\n|\n> b");
+  });
+
+  it("leaves one level at a time and keeps what encloses the quote", () => {
+    expect(run(enter, "> > a\n> > |")).toBe("> > a\n> |");
+    expect(run(enter, "- > a\n  > |")).toBe("- > a\n  |");
+    // An empty item inside a quote leaves the list first.
+    expect(run(enter, "> - a\n> - |")).toBe("> - a\n> |");
+  });
+
+  it("only acts on a quote line with the caret after its mark", () => {
+    expect(run(enter, "```\n> |\n```")).toBeNull();
+    expect(run(enter, "|> ")).toBeNull();
   });
 });
 

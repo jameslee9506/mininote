@@ -33,8 +33,6 @@ const FRONTMATTER_OPEN = /^---[ \t]*$/;
 const FRONTMATTER_CLOSE = /^(---|\.\.\.)[ \t]*$/;
 const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 const ATX = /^ {0,3}#{1,6}(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$/;
-const SETEXT_UNDERLINE = /^ {0,3}(=+|-+)[ \t]*$/;
-const NOT_SETEXT_TEXT = /^ {0,3}(?:[-*+>#]|\d{1,9}[.)])(?:[ \t]|$)/;
 
 function norm(s: string): string {
   return s
@@ -50,7 +48,8 @@ const slug = (s: string) => norm(s).replace(/ /g, "-");
 /**
  * 0-based line of the first heading in `text` (LF) matching `subpath`, or null.
  * The whole subpath is tried first ("C# notes"), then its last "#" part, for
- * nested subpaths ("A#B"). Fenced code and frontmatter are skipped.
+ * nested subpaths ("A#B"). Fenced code and frontmatter are skipped. Headings are
+ * ATX headings: the app's dialect has no setext ones (editor/syntax.ts).
  */
 export function findHeadingLine(text: string, subpath: string): number | null {
   const whole = norm(subpath);
@@ -87,17 +86,10 @@ function scan(text: string, wantNorm: string, wantSlug: string): number | null {
       fence = f[1];
       continue;
     }
-    let heading: string | null = null;
     const atx = ATX.exec(line);
-    if (atx) heading = atx[1] ?? "";
-    else if (
-      i + 1 < lines.length &&
-      line.trim() !== "" &&
-      !NOT_SETEXT_TEXT.test(line) &&
-      SETEXT_UNDERLINE.test(lines[i + 1])
-    )
-      heading = line;
-    if (heading !== null && (norm(heading) === wantNorm || slug(heading) === wantSlug)) return i;
+    if (!atx) continue;
+    const heading = atx[1] ?? "";
+    if (norm(heading) === wantNorm || slug(heading) === wantSlug) return i;
   }
   return null;
 }

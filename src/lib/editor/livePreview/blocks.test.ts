@@ -27,6 +27,9 @@ const language: Extension = [
 ];
 const extensions: Extension = [language, blockPreview(host)];
 
+/** A widget without a gap of its own, as `fields` prints it. */
+const NO_GAP = JSON.stringify({ pair: null, fresh: 0 });
+
 /** Each block-widget field's widgets: range plus everything their eq() compares. */
 function fields(state: EditorState): string[][] {
   const sets = state.facet(EditorView.decorations).filter((s): s is DecorationSet => typeof s !== "function");
@@ -35,7 +38,7 @@ function fields(state: EditorState): string[][] {
     for (let it = set.iter(); it.value; it.next()) {
       const w = it.value.spec.widget;
       const shown =
-        w instanceof TableWidget ? [w.source, w.unresolved, w.inset, w.pair] : [w.url, w.alt, w.inset, w.pair];
+        w instanceof TableWidget ? [w.source, w.unresolved, w.inset, w.above] : [w.url, w.alt, w.inset, w.above];
       rows.push(`${it.from}-${it.to} ${JSON.stringify(shown)}`);
     }
     return rows;
@@ -108,29 +111,42 @@ describe("block widget regions", () => {
         "  | x | [[Missing]] |\n  |---|---|\n  | 1 | 2 |",
         "Missing",
         { quote: 0, quoteList: 0, depth: 1 },
-        { blk: "table", prev: "p", blank: 1 },
+        { pair: { blk: "table", prev: "p", blank: 1, lead: null }, fresh: 0 },
       ])}`,
-      // The quote's first block: no pair of its own.
-      `52-64 ${JSON.stringify(["asset://localhost/q.png", "", { quote: 1, quoteList: 0, depth: 0 }, null])}`,
-      `70-84 ${JSON.stringify(["asset://localhost/r.png", "", { quote: 1, quoteList: 1, depth: 1 }, null])}`,
+      // The first block of a quote that starts on its line shows the quote's gap; the quote's bar begins below it.
+      `52-64 ${JSON.stringify([
+        "asset://localhost/q.png",
+        "",
+        { quote: 1, quoteList: 0, depth: 0 },
+        { pair: { blk: "quote", prev: "ul", blank: 1, lead: "block" }, fresh: 1 },
+      ])}`,
+      // In an item, the quote is a block of that item: its pair with the item's text.
+      `70-84 ${JSON.stringify([
+        "asset://localhost/r.png",
+        "",
+        { quote: 1, quoteList: 1, depth: 1 },
+        { pair: { blk: "quote", prev: "p", blank: 0, lead: null }, fresh: 1 },
+      ])}`,
     ]);
   });
 
   it("read a widget's pair from the current tree: the block above, the blank lines between, the frontmatter", () => {
     const doc = "---\nt: 1\n---\n\n![](a.png)\n# H\n\n\n| a |\n|---|\n\n![](b.png)\ntext\n![](c.png)";
     const [image, table, below, later] = fields(EditorState.create({ doc, extensions }))[0];
-    expect(image).toContain(JSON.stringify({ blk: "p", prev: "fm", blank: 1 }));
-    expect(table).toContain(JSON.stringify({ blk: "table", prev: "h1", blank: 2 }));
-    expect(below).toContain(JSON.stringify({ blk: "p", prev: "table", blank: 1 }));
+    // The blank line below the frontmatter and the heading already shows their gap with a paragraph.
+    expect(image).toContain(JSON.stringify({ blk: "p", prev: "fm", blank: 1, lead: "block" }));
+    expect(table).toContain(JSON.stringify({ blk: "table", prev: "h1", blank: 2, lead: "h" }));
+    // Text typed below a table would be its next row: no lead.
+    expect(below).toContain(JSON.stringify({ blk: "p", prev: "table", blank: 1, lead: null }));
     // An image on a later line of its paragraph has no gap of its own.
-    expect(later).toContain(",null]");
+    expect(later).toContain(NO_GAP);
     // Turning the heading into a paragraph changes the table's pair without touching the table.
     let state = EditorState.create({ doc, extensions });
     state = state.update({ changes: { from: doc.indexOf("# H"), to: doc.indexOf("# H") + 2, insert: "" } }).state;
-    expect(fields(state)[0][1]).toContain(JSON.stringify({ blk: "table", prev: "p", blank: 2 }));
+    expect(fields(state)[0][1]).toContain(JSON.stringify({ blk: "table", prev: "p", blank: 2, lead: null }));
     // A revealed image (a caret on its line, editor focused) carries none: the source line above it does.
     state = state.update({ effects: setFocus.of(true), selection: { anchor: state.doc.toString().indexOf("![](a.png)") } }).state;
-    expect(fields(state)[0][0]).toContain(",null]");
+    expect(fields(state)[0][0]).toContain(NO_GAP);
   });
 
   it("re-resolve images once the host shows another note (a state is built before its note shows)", () => {
@@ -173,8 +189,8 @@ describe("block widget regions", () => {
       { at: "![](a.png)", insert: "```\n  " },
       { at: "```", remove: 3 },
     ]);
-    // Edits inside a quote (in a list item) keep the container's inset; a quote that
-    // stops taking a lazy line gives its image back to the top level.
+    // Edits inside a quote (in a list item) keep the container's inset; a line without
+    // ">" is outside the quote, whatever the line above becomes.
     replay("- a\n  > b\n  > ![](q.png)\n\n> c\n> ![](r.png)\n\nend", [
       { at: "b\n", insert: "x" },
       { at: "c\n", insert: "x" },

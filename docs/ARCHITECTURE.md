@@ -39,10 +39,11 @@ The current build covers every P0 requirement, plus these P1 items:
 | Attachments | Default `attachments/` at the vault root (`attachmentLocation: "folder"`). |
 | Tree contents | Images are listed (muted). Other non-Markdown files are hidden. |
 | Reading view | P0 (Mod+E). |
-| Editor spacing | DESIGN.md §3.2: the reading view's pair gaps and gutters; a blank line between blocks shrinks to the smallest gap. |
+| Editor spacing | DESIGN.md §3.2: the reading view's pair gaps and gutters; a blank line is a body line, and the one right below a block stands where a paragraph typed on it would. |
+| Markdown dialect | One block dialect in both views (§10.1, §11): no setext headings and no lazy continuation lines. |
 | Editing defaults | Indent with a tab character. Spellcheck off by default. |
 | Back/forward keys | Mod-Alt-←/→ everywhere, Mod-[ / Mod-] on macOS, Alt-←/→ on Windows/Linux, mouse buttons 3/4. These override CodeMirror's defaults. |
-| IME | No extra time window after `compositionend`. `isComposing(e)` (`isComposing \|\| keyCode === 229`) covers WebKit's late Enter. |
+| IME | No extra time window after `compositionend`. `isComposing(e)` (`isComposing \|\| keyCode === 229`) covers WebKit's late Enter. A keydown with `keyCode` 229 never reaches the editor's keymaps (§10.1). |
 | New-note base name | `t("untitled")`: "Untitled". |
 
 ## 1. Stack and why
@@ -91,7 +92,7 @@ src/
     utils/                   path · names · fuzzy · platform · keys · timing
     state/                   settings · vault · editor · ui · commands · updater (*.svelte.ts), tree.ts
     editor/                  setup · theme · syntax · commands · complete · paste · search panel
-                             · host.ts (bridge interface) · shared.ts · livePreview/*
+                             · ime.ts · host.ts (bridge interface) · shared.ts · livePreview/*
     markdown/                render.ts (+ plugins/) · resolve.ts
     components/              Svelte components (§9)
 src-tauri/src/
@@ -447,17 +448,21 @@ These are the defaults. Settings → Shortcuts rebinds every global command and 
 
 `setup.ts › createEditorState(doc, host, opts)` builds the state:
 - **Language:** `markdown({ base: commonmarkLanguage, extensions: [GFM, ...markdownExtensions], addKeymap: false, codeLanguages: [] })`. `commonmarkLanguage`, not `markdownLanguage`: the latter enables `~sub~`, `^sup^` and `:emoji:`, which can misinterpret tildes used to write ranges in Korean text.
+- **Block dialect** (`syntax.ts › Dialect`, last in `markdownExtensions`; the reading view's half is `markdown/plugins/dialect.ts`, §11, and the two must stay in sync). What a line is never depends on a line typed after it, and a line belongs to a quote or a list item only through its own markup:
+  - *No setext headings.* A `-` or `=` under a line of text is text, and `---` there is a rule. Otherwise the `-` that starts a list would turn the line above into a heading while it is typed.
+  - *No lazy continuation.* A line without `>` is outside the quote, and a line indented less than a list item's text is outside the item, so text typed right below a quote or a list is a paragraph of its own and leaving them needs no blank line.
 - **Keymap, in precedence order:**
   1. `editorShortcuts(host)`, a `Prec.high` keydown handler for the rebindable editing commands (`EDITOR_SHORTCUTS`). It matches with `utils/keys.ts`, like the global shortcuts, and reads the user's keys through `host.shortcutKeys` at every press; a command that declines (Mod-Enter off a link) falls through. Then `editingKeymap(host)`: ↑ on the first row moves to the inline title
   2. the completion keymap
   3. the closeBrackets keymap (for `(` and `[` only, EDIT-06)
-  4. markdown Enter = `insertNewlineContinueMarkupCommand({ nonTightLists: false })`, after own steps (EDIT-03): Enter in front of a marker breaks the line without a second marker; an empty top-level item between two others is removed, so the list stays tight; an empty item with a tab after its marker or box outdents (nested) or leaves the list (top level), as lang-markdown does with spaces; on a later line of an item (after Shift-Enter, or a lazy line), or in an item with a tab after its marker or box, the next marker is copied from the item's first line and following ordered items are renumbered. Shift-Enter inserts a soft break inside a list item or quote
+  4. markdown Enter = `insertNewlineContinueMarkupCommand({ nonTightLists: false })`, after own steps (EDIT-03): Enter in front of a marker breaks the line without a second marker; an empty top-level item between two others is removed, so the list stays tight; an empty item with a tab after its marker or box outdents (nested) or leaves the list (top level), as lang-markdown does with spaces; an empty quote line loses its innermost `>`, which leaves the quote the way an empty item leaves a list (lang-markdown waits for two empty quote lines); on a later line of an item (after Shift-Enter), or in an item with a tab after its marker or box, the next marker is copied from the item's first line and following ordered items are renumbered. Shift-Enter inserts a soft break inside a list item or quote
   5. markdown Backspace = `deleteMarkupBackward`
   6. `defaultKeymap` without indentLess / indentMore (Mod-[ / Mod-]), indentSelection (Mod-Alt-\, which is AltGr+\ on Windows layouts), the comment toggles and toggleTabFocusMode
   7. `historyKeymap`
   8. list Tab / Shift-Tab (EDIT-04: indent or outdent the item with its subtree; elsewhere insert a tab / `indentLess`), instead of `indentWithTab`. Tab pads the tab with spaces when the previous sibling's text starts further right (`100. `), so the item nests
   9. the custom minimal search panel's keymap
 - **Other extensions:**
+  - `imeKeys` (`ime.ts`): a keydown with `keyCode` 229 was handled by the input method, which has already made its edit, so it is stopped on the editor's root in the capture phase and no keymap sees it. CodeMirror's own guard only covers keys between composition events, and WKWebView fires none for Hangul; without this, Backspace on a syllable in progress removed one jamo (the IME) and then the rest of the syllable (the keymap). EDIT-11;
   - `history`, `drawSelection`, `dropCursor`, `EditorView.lineWrapping`;
   - `indentUnit.of("\t")`, `tabSize 4`;
   - `allowMultipleSelections`, plus `clickAddsSelectionRange` set to Alt-click;
@@ -472,7 +477,7 @@ These are the defaults. Settings → Shortcuts rebinds every global command and 
   - `replaceDocMinimal(view, text)`.
 - **`EditorHost`** (`host.ts`) is the only bridge to app state.
 - **Lezer node names** are fixed in `syntax.ts`: `WikiLink`, `WikiEmbed`, `WikiLinkMark`, `WikiLinkTarget`, `WikiLinkAlias`, `Highlight`, `HighlightMark`.
-- **Line-height sampling** (TECHNIQUES §1.7). Any line whose height differs from body text carries a mark decoration over its content: heading text, code lines, frontmatter, table source lines, padded block starts, and whitespace in a shrunk blank line. This keeps CodeMirror from sampling it for height estimates.
+- **Line-height sampling** (TECHNIQUES §1.7). Any line whose height differs from body text carries a mark decoration over its content: heading text, code lines, frontmatter, table source lines, padded block starts, and whitespace in a padded blank line. This keeps CodeMirror from sampling it for height estimates.
 
 ### 10.2 Live preview (`editor/livePreview/`, LIVE-01…16)
 
@@ -481,11 +486,11 @@ These are the defaults. Settings → Shortcuts rebinds every global command and 
   - Line constructs (heading, quote, list marker, task box, hr, escapes) reveal per line.
   - Fenced code reveals per block.
   - Block widgets (images, tables) reveal only when a caret or a selection **end** lies inside them, or a selection lies within them (Shift+Home on a revealed image line), unless that selection covers the whole document.
-- **ViewPlugin, over visible ranges only.** It produces mark-hiding replaces, line classes, the checkbox widget, the flow attributes of DESIGN §3.2 (`data-blk`, `data-prev`, `data-ctx` and `--mn-blank` on a block's first line, `cm-blank` on the blank lines between blocks, `--mn-hang` and `--mn-depth` gutters on list lines; `livePreview/flow.ts` holds the pure container and pair helpers) and link marks.
+- **ViewPlugin, over visible ranges only.** It produces mark-hiding replaces, line classes, the checkbox widget, the flow attributes of DESIGN §3.2 and link marks. The flow attributes are `data-blk`, `data-prev`, `data-ctx`, `--mn-blank` and `data-lead` on a block's first line, the same pair on the blank line right below a block (tagged as the paragraph it would become), `--mn-hang` and `--mn-depth` gutters on list lines, and `--mn-quote`, `--mn-quote-list` and `--mn-quote-new` on quote lines. `livePreview/flow.ts` holds the pure container, pair and lead helpers; blank lines get no class and keep a body line's height.
 - **Arrow keys into widgets** (`navigation.ts`). CodeMirror's vertical motion skips a block widget that replaces lines, so ↑ and ↓ (and their Shift variants, at `Prec.high`) check whether the move would leave the line toward such a widget and then put the caret on its nearest source line, which reveals it.
-- **StateField** builds the image and table **block widgets** (only static decorations shape the height map). It caches regions from the block structure (top-level blocks plus the blocks inside lists and quotes, so nested images and tables render) and derives decorations from that cache plus the selection. A widget's first line may hold only indentation and quote markers: an image or table on a list marker's line stays source. A widget carries its inset (quote depth, list depth) and, read from the current tree when the decorations are composed, the pair attributes of the block it stands for.
+- **StateField** builds the image and table **block widgets** (only static decorations shape the height map). It caches regions from the block structure (top-level blocks plus the blocks inside lists and quotes, so nested images and tables render) and derives decorations from that cache plus the selection. A widget's first line may hold only indentation and quote markers: an image or table on a list marker's line stays source. A widget carries its inset (quote depth, list depth) and, read from the current tree when the decorations are composed, the pair attributes of the line it replaces: its block's, or those of the quote that starts on that line.
 - **Link destinations** are the first `URL` after the label's closing `]` (`links.ts › linkUrl`), never a bare URL inside the label (`[www.x.com](https://x.com)`). Reference links have none and stay plain text, except a bare URL in their label. Clicks, Mod-Enter, decorations and table cells all use this rule.
-- **Frontmatter.** A block that runs past the closing fence (Lezer reads text right after `...` as a lazy continuation) is walked, not decorated, so what follows the fence renders.
+- **Frontmatter.** A block that runs past the closing fence (Lezer reads text right after `...` as more of the same paragraph) is walked, not decorated, so what follows the fence renders.
 - **Hold rules: decorations are *mapped*, not rebuilt, in these cases:**
   - during IME composition (rebuild once at `compositionend`);
   - while the primary button is down over the content (released at `mouseup` or `dragend`, a task later so CodeMirror's own mouseup handling goes first; immediately on any doc change or window blur). A drag therefore never selects text that moves under the pointer.
@@ -503,10 +508,11 @@ These are the defaults. Settings → Shortcuts rebinds every global command and 
 | Construct | Not revealed | Revealed |
 |---|---|---|
 | Emphasis, strong, strike, highlight, inline code | Marks hidden, text styled (`cm-em`, `cm-strong`, `cm-strike`, `cm-highlight`, `cm-inline-code`) | Raw marks in `--c-text-faint` |
-| ATX heading | `#…` and its space hidden. `cm-hN` line class sets the size (em of `--fs-content`). An empty heading keeps its `#` | Marks shown |
-| Bullet `- * +` | Same-width bullet: the mark hides the glyph and `::after` draws `•`. Task items hide the bullet | Raw marker when the selection touches the marker |
-| Task `[ ]`/`[x]` | `<span class="cm-task" role="checkbox">` widget. Mousedown toggles one character and leaves the selection alone. Done items get `cm-task-done` (muted, struck) | Raw marker when touched |
-| Quote `>` | Marker and space hidden. `cm-quote` line border, so wrapped rows keep the bar | Raw, per line |
+| ATX heading | `#…` and its space hidden. `cm-hN` line class sets the size (em of `--fs-content`), so the caret is the heading's height. An empty heading keeps its `#`. There are no setext headings | Marks shown |
+| Bullet `- * +` | Same-width bullet: the mark hides the glyph and `::after` draws `•` at the glyph's end, where the reading view's marker sits. Task items hide the marker | Raw marker when the selection touches the marker |
+| Task `[ ]`/`[x]` | `<span class="cm-task" role="checkbox">` widget in place of the marker (bullet or number), the box and the blank after it: one line high, the box centered on it. Mousedown toggles one character and leaves the selection alone. Done items get `cm-task-done` (muted, struck) | Raw marker when touched |
+| Quote `>` | Marker and space hidden. `cm-quote` line bars, so wrapped rows keep them; they run through the gaps inside the quote and begin below the gap above it | Raw, per line |
+| Blank line | A body line: full height, a body-sized caret, no class. Right below a block (in the document or a quote) it carries that block's gap with a paragraph | Same |
 | hr `---` | Text hidden. `cm-hr` line draws a 1px rule at normal line height | Raw |
 | Fenced code | `cm-code` lines (`-first`, `-last`). Fence text is transparent and the language appears as a faint right label (`cm-fence`). No syntax colors | Raw muted fences while the selection is inside |
 | Link `[t](u)` | `[` and `](u)` hidden. The label is a `cm-link` mark, still real text | Raw |
@@ -536,6 +542,7 @@ These are the defaults. Settings → Shortcuts rebinds every global command and 
 
 - `render.ts › renderMarkdown(text, ctx)` returns sanitized HTML. It uses one markdown-it instance configured once, with `{ html: true, linkify: true, breaks: true, typographer: false }` and per-render context passed through `env`.
 - **Own plugins:**
+  - the block dialect (`plugins/dialect.ts`, first): `lheading` is disabled, and a terminator rule ends a quote at a line without `>` and a paragraph or link reference at a line indented less than its list item. It mirrors `Dialect` in `editor/syntax.ts` (§10.1); both sides test the same cases;
   - frontmatter, rendered as `<pre class="frontmatter">`, fences included;
   - fence labels: a fenced block's `<code>` carries `data-lang`, the first word of its info string, drawn as the editor's faint label (`plugins/fences.ts`);
   - wikilinks, rendered as `<a class="internal-link" data-wiki data-subpath>`, with `is-unresolved` when unresolved;

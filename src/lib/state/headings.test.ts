@@ -21,13 +21,16 @@ describe("findHeadingLine", () => {
     expect(findHeadingLine(doc, "Inside code")).toBeNull();
     expect(findHeadingLine(doc, "Not a heading")).toBeNull();
     expect(findHeadingLine(doc, "\uD68C\uC758 \uB178\uD2B8")).toBe(7);
-    expect(findHeadingLine(doc, "setext title")).toBe(8);
     expect(findHeadingLine(doc, "C# and bold")).toBe(10);
+  });
+
+  it("takes no underlined text for a heading: the dialect has no setext headings", () => {
+    expect(findHeadingLine(doc, "setext title")).toBeNull();
   });
 
   it("accepts slugs and nested subpaths", () => {
     expect(findHeadingLine(doc, "\uD68C\uC758-\uB178\uD2B8")).toBe(7);
-    expect(findHeadingLine(doc, "Intro#Setext Title")).toBe(8);
+    expect(findHeadingLine(doc, "Intro#\uD68C\uC758 \uB178\uD2B8")).toBe(7);
     expect(findHeadingLine(doc, "missing")).toBeNull();
     expect(findHeadingLine(doc, "")).toBeNull();
   });

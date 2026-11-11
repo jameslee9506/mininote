@@ -61,7 +61,9 @@ export function measureHangs(view: EditorView, requests: readonly HangRequest[])
     if (view.lineBlockAt(r.from).type === BlockType.WidgetRange) continue;
     const start = view.coordsAtPos(r.from, 1);
     const end = view.coordsAtPos(r.to, -1);
-    if (!start || !end || Math.abs(start.top - end.top) > 2) continue;
+    // On one row the two boxes overlap vertically, whatever their heights (indentation is
+    // text, a task box is as high as its line); a prefix that wraps has no width to hang.
+    if (!start || !end || end.top >= start.bottom || start.top >= end.bottom) continue;
     if (widths.size >= MAX_ENTRIES) widths.clear();
     widths.set(r.key, Math.max(0, Math.round((end.left - start.left) * 10) / 10));
     stored++;
