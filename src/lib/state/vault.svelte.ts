@@ -8,7 +8,7 @@
 import { untrack } from "svelte";
 import { SvelteSet } from "svelte/reactivity";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import type { Entry, ListResult, TreeNode, VaultChangedPayload, VaultInfo, VaultPath } from "../types";
+import type { ListResult, TreeNode, VaultChangedPayload, VaultInfo, VaultPath } from "../types";
 import { buildLinkIndex, resolveMarkdownHref, resolveWikiTarget, wikiLinkText, type LinkIndex } from "../markdown/resolve";
 import {
   binaryWrite,
@@ -25,8 +25,8 @@ import {
 } from "../ipc/commands";
 import { onVaultChanged } from "../ipc/events";
 import { t } from "../i18n";
-import { buildTree, flattenVisible, type TreeRow } from "./tree";
-import { basename, dirname, extname, isSameOrAncestor, join, key, nfc, normalizeRel, rebase, toAbsolute } from "../utils/path";
+import { buildTree, compareNodes, EMPTY_LISTING, flattenVisible, type TreeRow } from "./tree";
+import { basename, dirname, isSameOrAncestor, join, key, nfc, normalizeRel, rebase, toAbsolute } from "../utils/path";
 import { fileKindOf, pastedImageName, titleOf, uniqueName, validateName } from "../utils/names";
 import { within } from "./autosave";
 import { editor, SWITCH_FLUSH_MS } from "./editor.svelte";
@@ -48,7 +48,7 @@ const NAME_ATTEMPTS = 20;
 
 type Timer = ReturnType<typeof setTimeout>;
 
-const isNotePath = (p: VaultPath) => fileKindOf(extname(p)) === "note";
+const isNotePath = (p: VaultPath) => fileKindOf(p) === "note";
 
 class VaultStore {
   /** Active vault, or null when none is open (Welcome screen). */
@@ -56,25 +56,20 @@ class VaultStore {
   /** One vault is being replaced by another (`info` is briefly null meanwhile). */
   switching = $state(false);
   /** Raw listing from `vault_list` (replaced wholesale on refresh). */
-  entries = $state.raw<Entry[]>([]);
-  truncated = $state(false);
+  listing = $state.raw<ListResult>(EMPTY_LISTING);
+  /** The listing stopped at the entry cap: rows missing from it prove nothing (VAULT-01). */
+  truncated = $derived(this.listing.truncated);
 
   /** Derived tree + node map (root node has path ""). */
-  data = $derived(buildTree(this.entries));
+  data = $derived(buildTree(this.listing));
   tree = $derived(this.data.root);
   nodes = $derived(this.data.nodes);
-  /** All notes in stable path order (quick switcher, link index). */
+  /** All notes in listing order (quick switcher, link index). */
   notes = $derived([...this.data.nodes.values()].filter((n) => n.fileKind === "note"));
   /** Notes and images in the same order: what `[[` completion offers (LINK-04). */
   linkables = $derived([...this.data.nodes.values()].filter((n) => n.fileKind === "note" || n.fileKind === "image"));
-  /** Link index over notes and images. */
-  linkIndex: LinkIndex = $derived(
-    buildLinkIndex(
-      [...this.data.nodes.values()]
-        .filter((n) => n.kind === "file")
-        .map((n) => ({ path: n.path, isNote: n.fileKind === "note" })),
-    ),
-  );
+  /** Link index over notes and images: a link never resolves to another kind of file (TREE-16). */
+  linkIndex: LinkIndex = $derived(buildLinkIndex(this.linkables.map((n) => ({ path: n.path, isNote: n.fileKind === "note" }))));
 
   /** Expanded folder paths (persisted per vault in the session). */
   expanded = new SvelteSet<VaultPath>();
@@ -421,8 +416,7 @@ class VaultStore {
     this.#refreshWaiters = [];
     for (const w of waiters) w();
     this.info = null;
-    this.entries = [];
-    this.truncated = false;
+    this.listing = EMPTY_LISTING;
     this.expanded.clear();
     this.selected = null;
     this.renaming = null;
@@ -472,8 +466,7 @@ class VaultStore {
     }
     if (this.info !== info) return false;
     this.#lastListMs = performance.now() - started;
-    this.entries = res.entries;
-    this.truncated = res.truncated;
+    this.listing = res;
     if (res.truncated && !this.#truncationNoticed) {
       // VAULT-01: silently missing notes would look like data loss.
       this.#truncationNoticed = true;
@@ -497,7 +490,7 @@ class VaultStore {
     return new Promise((resolve) => {
       this.#refreshWaiters.push(resolve);
       if (this.#refreshTimer !== null) return;
-      const huge = this.truncated || this.entries.length > LARGE_VAULT_ENTRIES;
+      const huge = this.truncated || this.listing.paths.length > LARGE_VAULT_ENTRIES;
       const gap = huge ? Math.max(REFRESH_MIN_GAP_MS, 2 * this.#lastListMs) : REFRESH_MIN_GAP_MS;
       const delay = Math.max(REFRESH_DEBOUNCE_MS, this.#lastListStart + gap - Date.now());
       this.#refreshTimer = setTimeout(() => {
@@ -537,7 +530,7 @@ class VaultStore {
       switch (c.kind) {
         case "modify": {
           // Content changes never re-list, except images: TREE-15 reloads them by mtime.
-          const kind = fileKindOf(extname(c.path));
+          const kind = fileKindOf(c.path);
           if (kind === "note") {
             if (liveAt(c.path).length > 0) changed.add(c.path);
           } else if (kind === "image") structural = true;
@@ -979,8 +972,14 @@ class VaultStore {
     return this.nodes.get(dir)?.children ?? [];
   }
 
+  /** The child named `nameKey` (by key()); among case or form twins, the one shown first. */
   #childByKey(dir: VaultPath, nameKey: string, kind?: "dir" | "file"): TreeNode | undefined {
-    return this.#children(dir).find((c) => (kind === undefined || c.kind === kind) && key(c.name) === nameKey);
+    let hit: TreeNode | undefined;
+    for (const c of this.#children(dir)) {
+      if (kind !== undefined && c.kind !== kind) continue;
+      if (key(c.name) === nameKey && (hit === undefined || compareNodes(c, hit) < 0)) hit = c;
+    }
+    return hit;
   }
 
   /** key() of every name in `dir` (optionally ignoring one entry): collision checks ignore case and form. */
@@ -993,7 +992,7 @@ class VaultStore {
   #label(path: VaultPath): string {
     const node = this.nodes.get(path);
     if (node) return node.kind === "dir" ? node.name : node.title;
-    return titleOf(nfc(basename(path)), fileKindOf(extname(path)));
+    return titleOf(nfc(basename(path)), fileKindOf(path));
   }
 
   #persistExpanded(): void {

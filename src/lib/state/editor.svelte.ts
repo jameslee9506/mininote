@@ -55,7 +55,6 @@ import {
   decodeLinkPath,
   dirname,
   encodeLinkPath,
-  extname,
   isSameOrAncestor,
   join,
   key,
@@ -198,7 +197,7 @@ interface Snapshot {
 const dirty = (n: Note): boolean => n.version !== n.savedVersion;
 const baselineOf = (b: Baseline): Baseline => ({ mtime: b.mtime, size: b.size, hash: b.hash });
 /** Name used in toasts: NFC, notes without their extension. */
-const displayName = (path: VaultPath): string => titleOf(nfc(basename(path)), fileKindOf(extname(path)));
+const displayName = (path: VaultPath): string => titleOf(nfc(basename(path)), fileKindOf(path));
 
 class EditorStore {
   /** Open file, or null (blank main area). */
@@ -360,7 +359,8 @@ class EditorStore {
   /**
    * Opens `path`: flush current → read (notes) → swap EditorState (cached state
    * when the disk text still matches, else a fresh one) → update history/recent
-   * /session.lastFile → focus per opts. Images just set kind = "image".
+   * /session.lastFile → focus per opts. Images and other files only set `kind`:
+   * their views read nothing here (TREE-15, TREE-16). Folders do not open.
    * On read failure: toast (errOpen/errNotText/errTooLarge) and keep the
    * previous document bound to its own path. Returns success.
    */
@@ -669,10 +669,12 @@ class EditorStore {
 
   async #open(path: VaultPath, opts: OpenOptions): Promise<OpenResult> {
     if (!vault.info) return "failed";
-    const kind = fileKindOf(extname(path));
-    if (kind === null) return "failed";
+    const node = vault.node(path);
+    const kind = fileKindOf(path);
+    // Nothing is read for another kind of file, so only a listed one opens: never a folder.
+    if (node?.kind === "dir" || (kind === "other" && node === undefined)) return "failed";
     const seq = ++this.#openSeq;
-    if (path === this.path && kind === this.kind && (kind === "image" || this.#current?.path === path)) {
+    if (path === this.path && kind === this.kind && (kind !== "note" || this.#current?.path === path)) {
       if (opts.history !== false) this.#history.push({ path, virtual: this.virtual });
       this.#syncHistory();
       if (opts.line !== undefined) this.#revealLine(opts.line, "center", opts.select);
@@ -685,8 +687,8 @@ class EditorStore {
     if (prev) await within(this.#flushNote(prev), SWITCH_FLUSH_MS);
     if (seq !== this.#openSeq) return "stale";
 
-    if (kind === "image") {
-      this.#setShown(path, "image", null);
+    if (kind !== "note") {
+      this.#setShown(path, kind, null);
       this.#bind(null);
       this.#finishOpen(path, false, opts);
       return "ok";
@@ -1866,7 +1868,7 @@ class EditorStore {
 
   /** asset:// URL for a listed image; `?v=<mtime>` reloads it when the file changes (TREE-15). */
   #imageUrl(path: VaultPath): string | null {
-    if (fileKindOf(extname(path)) !== "image") return null;
+    if (fileKindOf(path) !== "image") return null;
     const node = vault.node(path);
     const url = vault.assetUrl(path);
     return node ? `${url}?v=${Math.trunc(node.mtime)}` : url;

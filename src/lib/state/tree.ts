@@ -1,6 +1,6 @@
-/** Pure tree building from the backend's flat listing. */
-import type { Entry, TreeNode, VaultPath } from "../types";
-import { basename, dirname, extname, nfc } from "../utils/path";
+/** Pure tree building from the backend's columnar listing. */
+import type { ListResult, TreeNode, VaultPath } from "../types";
+import { nfc } from "../utils/path";
 import { fileKindOf, titleOf } from "../utils/names";
 
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
@@ -11,82 +11,97 @@ export function compareNodes(a: TreeNode, b: TreeNode): number {
   return collator.compare(a.name, b.name) || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
 }
 
+/** The columns of a `vault_list` result that make the tree. */
+export type Listing = Pick<ListResult, "paths" | "kinds" | "mtimes">;
+
+/** The listing of no vault. */
+export const EMPTY_LISTING: ListResult = { paths: [], kinds: "", mtimes: [], truncated: false };
+
+const DIR = "d".charCodeAt(0);
+
 export interface TreeData {
   root: TreeNode;
   nodes: Map<VaultPath, TreeNode>;
 }
 
-export function buildTree(entries: readonly Entry[]): TreeData {
-  const root: TreeNode = {
-    path: "",
-    name: "",
-    title: "",
-    kind: "dir",
-    fileKind: null,
-    ext: "",
-    mtime: 0,
-    parent: "",
-    depth: -1,
-    children: [],
-  };
+const folder = (path: VaultPath, name: string, parent: TreeNode | null): TreeNode => ({
+  path,
+  name,
+  title: name,
+  kind: "dir",
+  fileKind: null,
+  ext: "",
+  mtime: 0,
+  parent: parent?.path ?? "",
+  depth: parent === null ? -1 : parent.depth + 1,
+  children: [],
+});
+
+/**
+ * Builds the tree in one pass over the listing. Children stay in listing order:
+ * `sortedChildren` sorts a folder when it is first shown, so opening a huge vault
+ * sorts only the folders on screen (PERF-01).
+ */
+export function buildTree(list: Listing): TreeData {
+  const root = folder("", "", null);
   const nodes = new Map<VaultPath, TreeNode>([["", root]]);
 
   const ensureDir = (path: VaultPath): TreeNode => {
     const existing = nodes.get(path);
     if (existing) return existing;
-    const parent = ensureDir(dirname(path));
-    const name = nfc(basename(path));
-    const node: TreeNode = {
-      path,
-      name,
-      title: name,
-      kind: "dir",
-      fileKind: null,
-      ext: "",
-      mtime: 0,
-      parent: parent.path,
-      depth: parent.depth + 1,
-      children: [],
-    };
+    const slash = path.lastIndexOf("/");
+    const parent = ensureDir(slash < 0 ? "" : path.slice(0, slash));
+    const node = folder(path, nfc(path.slice(slash + 1)), parent);
     nodes.set(path, node);
     parent.children!.push(node);
     return node;
   };
 
-  for (const e of entries) {
-    if (e.path === "") continue;
-    if (e.kind === "dir") {
-      ensureDir(e.path).mtime = e.mtime;
+  const { paths, kinds, mtimes } = list;
+  for (let i = 0; i < paths.length; i++) {
+    const path = paths[i];
+    if (path === "") continue;
+    if (kinds.charCodeAt(i) === DIR) {
+      ensureDir(path);
       continue;
     }
-    const ext = extname(e.path);
-    const fileKind = fileKindOf(ext);
-    if (!fileKind || nodes.has(e.path)) continue;
-    const parent = ensureDir(dirname(e.path));
-    const name = nfc(basename(e.path));
+    if (nodes.has(path)) continue;
+    const slash = path.lastIndexOf("/");
+    const name = nfc(path.slice(slash + 1));
+    const dot = name.lastIndexOf(".");
+    const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : "";
+    const fileKind = fileKindOf(name);
+    const parent = ensureDir(slash < 0 ? "" : path.slice(0, slash));
     const node: TreeNode = {
-      path: e.path,
+      path,
       name,
       title: titleOf(name, fileKind),
       kind: "file",
       fileKind,
       ext,
-      mtime: e.mtime,
+      mtime: mtimes[i] ?? 0,
       parent: parent.path,
       depth: parent.depth + 1,
       children: null,
     };
-    nodes.set(e.path, node);
+    nodes.set(path, node);
     parent.children!.push(node);
   }
-
-  const sortRec = (n: TreeNode) => {
-    if (!n.children) return;
-    n.children.sort(compareNodes);
-    for (const c of n.children) sortRec(c);
-  };
-  sortRec(root);
   return { root, nodes };
+}
+
+/** Folders whose children are already in display order. */
+const sorted = new WeakSet<TreeNode>();
+
+/** A folder's children in display order (compareNodes), sorted in place on first use. */
+export function sortedChildren(dir: TreeNode): readonly TreeNode[] {
+  const children = dir.children;
+  if (children === null) return [];
+  if (!sorted.has(dir)) {
+    children.sort(compareNodes);
+    sorted.add(dir);
+  }
+  return children;
 }
 
 /** One visible row of the flattened tree (what FileTree renders). */
@@ -104,7 +119,7 @@ export interface TreeRow {
 export function flattenVisible(root: TreeNode, expanded: ReadonlySet<VaultPath>): TreeRow[] {
   const rows: TreeRow[] = [];
   const walk = (n: TreeNode, above: readonly boolean[]) => {
-    const children = n.children ?? [];
+    const children = sortedChildren(n);
     for (let i = 0; i < children.length; i++) {
       const c = children[i];
       const open = c.kind === "dir" && expanded.has(c.path);

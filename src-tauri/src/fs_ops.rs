@@ -7,7 +7,8 @@ use std::ffi::OsStr;
 use std::fs::{self, File, Metadata, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -41,26 +42,18 @@ static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 // ---------------------------------------------------------------- DTOs
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum EntryKind {
-    Dir,
-    File,
-}
-
-/// `Entry` in src/lib/types.ts.
-#[derive(Debug, Clone, Serialize)]
-pub struct Entry {
-    pub path: String,
-    pub kind: EntryKind,
-    pub mtime: f64,
-    pub size: u64,
-}
-
-/// `ListResult` in src/lib/types.ts.
-#[derive(Debug, Clone, Serialize)]
+/// `ListResult` in src/lib/types.ts. One column per field, so a big listing
+/// crosses IPC as a few flat arrays: entry `i` is `paths[i]`, `kinds[i]` and
+/// `mtimes[i]`.
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct ListResult {
-    pub entries: Vec<Entry>,
+    /// Breadth-first: every folder comes before its contents.
+    pub paths: Vec<String>,
+    /// One ASCII letter per entry: `d` for a folder, `f` for a file.
+    pub kinds: String,
+    /// Whole ms since the Unix epoch for notes and images, 0 for everything
+    /// else: nothing else uses it, and the rest stay unstatted (§6.3).
+    pub mtimes: Vec<u64>,
     pub truncated: bool,
 }
 
@@ -207,8 +200,10 @@ pub fn is_note_name(name: &str) -> bool {
     extension(name).is_some_and(|e| NOTE_EXTS.contains(&e.as_str()))
 }
 
-/// A file the tree lists: a note or an image.
-pub fn is_listed_file_name(name: &str) -> bool {
+/// A note or an image: the files links and completion know (LINK-04), and the
+/// only ones whose content or modification time the frontend uses (listing,
+/// watcher). The tree lists every file; the others only by name.
+pub fn is_linkable_name(name: &str) -> bool {
     extension(name)
         .is_some_and(|e| NOTE_EXTS.contains(&e.as_str()) || IMAGE_EXTS.contains(&e.as_str()))
 }
@@ -388,7 +383,7 @@ fn record_move(state: &VaultState, from: &Path, to: &Path, temp: Option<&Path>) 
 
 // ---------------------------------------------------------------- walking
 
-/// One entry `vault_list` shows.
+/// One entry `walk_notes` visits.
 pub struct Walked {
     pub path: PathBuf,
     pub rel: String,
@@ -396,17 +391,12 @@ pub struct Walked {
     pub meta: Metadata,
 }
 
-/// Walks the vault with the listing rules (TREE-01): no names starting with `.`,
-/// no symlinks or junctions (never followed), no Windows Hidden/System entries,
-/// no names that are not UTF-8; folders, notes and images only. An unreadable
-/// sub-folder is listed without children. `visit` returns `false` to stop.
-/// When `stale` is given, our leftover temp files (older than an hour) are
-/// collected into it.
-pub fn walk_vault(
-    root: &Path,
-    mut stale: Option<&mut Vec<PathBuf>>,
-    mut visit: impl FnMut(Walked) -> bool,
-) {
+/// Walks the vault's folders and notes depth-first with the listing rules
+/// (TREE-01), for search (SRCH-01): no names starting with `.`, no symlinks or
+/// junctions (never followed), no Windows Hidden/System entries, no names that
+/// are not UTF-8. An unreadable sub-folder is visited without children. `visit`
+/// returns `false` to stop.
+pub fn walk_notes(root: &Path, mut visit: impl FnMut(Walked) -> bool) {
     let mut entries = walkdir::WalkDir::new(root)
         .follow_links(false)
         .min_depth(1)
@@ -418,17 +408,13 @@ pub fn walk_vault(
         if is_hidden_name(entry.file_name()) {
             if is_dir {
                 entries.skip_current_dir();
-            } else if let Some(list) = stale.as_deref_mut() {
-                if file_type.is_file() && is_stale_temp(&entry) {
-                    list.push(entry.into_path());
-                }
             }
             continue;
         }
         if file_type.is_symlink() || !(is_dir || file_type.is_file()) {
             continue;
         }
-        if !is_dir && !entry.file_name().to_str().is_some_and(is_listed_file_name) {
+        if !is_dir && !entry.file_name().to_str().is_some_and(is_note_name) {
             continue;
         }
         let meta = match entry.metadata() {
@@ -457,62 +443,209 @@ pub fn walk_vault(
     }
 }
 
-fn is_stale_temp(entry: &walkdir::DirEntry) -> bool {
-    let Some(name) = entry.file_name().to_str() else {
-        return false;
-    };
-    if !(name.starts_with(TEMP_PREFIX) && name.ends_with(TEMP_SUFFIX)) {
-        return false;
-    }
-    entry
-        .metadata()
-        .ok()
-        .and_then(|m| m.modified().ok())
-        .and_then(|t| t.elapsed().ok())
-        .is_some_and(|age| age > STALE_TEMP_AGE)
+// ---------------------------------------------------------------- listing
+
+/// A folder still to read: its absolute path and its `VaultPath`.
+type Pending = (PathBuf, String);
+
+/// What reading one folder found.
+#[derive(Default)]
+struct FolderRead {
+    /// Its visible children: `VaultPath`, whether it is a folder, listing mtime.
+    entries: Vec<(String, bool, u64)>,
+    /// Its visible sub-folders, read with the next level.
+    folders: Vec<Pending>,
 }
 
-/// `vault_list` (scoped): flat metadata-only listing (ARCHITECTURE §6.3).
+/// `vault_list` (scoped): metadata-only listing of every visible folder and file
+/// (ARCHITECTURE §6.3).
 #[tauri::command]
 pub async fn vault_list(app: AppHandle, epoch: u64) -> AppResult<ListResult> {
     blocking(app, move |state| {
         let root = state.check(epoch)?;
-        list_vault(&root)
+        list_vault(&root, MAX_ENTRIES)
     })
     .await
 }
 
-fn list_vault(root: &Path) -> AppResult<ListResult> {
+/// Folders read at once while listing. Listing waits on the disk (a cold cache,
+/// a network volume) more than on the processor, so small machines use a few too.
+fn list_threads() -> usize {
+    std::thread::available_parallelism()
+        .map_or(4, |n| n.get())
+        .clamp(2, 8)
+}
+
+/// Lists the vault breadth-first, one level of folders at a time, each level read
+/// on a few threads. A listing cut at `cap` entries keeps whole upper levels (a
+/// home folder still shows all of its folders), and thread timing never changes a
+/// complete listing: a level keeps the order of the folders it was read from, and
+/// each folder the order its entries were read in. Our temp files left by a crash
+/// are deleted on the way (SAVE-04).
+fn list_vault(root: &Path, cap: usize) -> AppResult<ListResult> {
     fs::read_dir(root).map_err(|e| {
         AppError::new(
             ErrorKind::RootUnavailable,
             format!("vault folder unreadable: {e}"),
         )
     })?;
-    let mut entries = Vec::new();
-    let mut truncated = false;
-    let mut stale = Vec::new();
-    walk_vault(root, Some(&mut stale), |w| {
-        if entries.len() >= MAX_ENTRIES {
-            truncated = true;
-            return false;
+    let budget = AtomicUsize::new(0);
+    let stale = Mutex::new(Vec::new());
+    let threads = list_threads();
+    let mut out = ListResult::default();
+    let mut level: Vec<Pending> = vec![(root.to_path_buf(), String::new())];
+    while !level.is_empty() {
+        let mut next = Vec::new();
+        for read in read_level(&level, threads, cap, &budget, &stale) {
+            for (path, is_dir, mtime) in read.entries {
+                out.paths.push(path);
+                out.kinds.push(if is_dir { 'd' } else { 'f' });
+                out.mtimes.push(mtime);
+            }
+            next.extend(read.folders);
         }
-        entries.push(Entry {
-            path: w.rel,
-            kind: if w.is_dir {
-                EntryKind::Dir
-            } else {
-                EntryKind::File
-            },
-            mtime: mtime_ms(&w.meta),
-            size: if w.is_dir { 0 } else { w.meta.len() },
-        });
-        true
-    });
-    for path in stale {
+        // An entry was refused once the budget passed the cap.
+        if budget.load(Ordering::Relaxed) > cap {
+            out.truncated = true;
+            break;
+        }
+        level = next;
+    }
+    for path in vault::lock(&stale).drain(..) {
         let _ = fs::remove_file(path);
     }
-    Ok(ListResult { entries, truncated })
+    Ok(out)
+}
+
+/// Reads one level's folders on up to `threads` threads, each taking the next
+/// unread folder, and returns what they found in the level's order. Once an
+/// entry has been refused for the cap, the remaining folders are not read.
+fn read_level(
+    level: &[Pending],
+    threads: usize,
+    cap: usize,
+    budget: &AtomicUsize,
+    stale: &Mutex<Vec<PathBuf>>,
+) -> Vec<FolderRead> {
+    let next = AtomicUsize::new(0);
+    let work = || {
+        let mut done = Vec::new();
+        loop {
+            let i = next.fetch_add(1, Ordering::Relaxed);
+            if i >= level.len() || budget.load(Ordering::Relaxed) > cap {
+                return done;
+            }
+            let (abs, rel) = &level[i];
+            done.push((i, read_folder(abs, rel, cap, budget, stale)));
+        }
+    };
+    let mut done = std::thread::scope(|scope| {
+        // Helpers that cannot be started leave their folders to the others.
+        let helpers: Vec<_> = (1..threads.min(level.len()))
+            .map_while(|_| {
+                std::thread::Builder::new()
+                    .name("mininote-list".into())
+                    .spawn_scoped(scope, work)
+                    .ok()
+            })
+            .collect();
+        let mut done = work();
+        for helper in helpers {
+            done.extend(
+                helper
+                    .join()
+                    .unwrap_or_else(|e| std::panic::resume_unwind(e)),
+            );
+        }
+        done
+    });
+    done.sort_unstable_by_key(|(i, _)| *i);
+    done.into_iter().map(|(_, read)| read).collect()
+}
+
+/// Reads one folder with the listing rules (TREE-01): no names starting with `.`,
+/// no symlinks or junctions (never followed), only folders and regular files, no
+/// names that are not UTF-8, and on Windows no Hidden or System entries. The
+/// folder read itself tells what an entry is (and on Windows carries its
+/// attributes), so only notes and images are statted, for their mtime. An
+/// unreadable folder has no children. Each entry takes one unit of `budget`;
+/// once it passes `cap`, reading stops. Our temp files older than an hour are
+/// collected into `stale`.
+fn read_folder(
+    abs: &Path,
+    rel: &str,
+    cap: usize,
+    budget: &AtomicUsize,
+    stale: &Mutex<Vec<PathBuf>>,
+) -> FolderRead {
+    let mut read = FolderRead::default();
+    let Ok(items) = fs::read_dir(abs) else {
+        return read;
+    };
+    for item in items {
+        let Ok(item) = item else { continue };
+        let Ok(file_type) = item.file_type() else {
+            continue;
+        };
+        let name = item.file_name();
+        if is_hidden_name(&name) {
+            if file_type.is_file() && is_stale_temp(&item) {
+                vault::lock(stale).push(item.path());
+            }
+            continue;
+        }
+        let is_dir = file_type.is_dir();
+        if file_type.is_symlink() || !(is_dir || file_type.is_file()) {
+            continue;
+        }
+        let Some(name) = name.to_str() else { continue };
+        if cfg!(windows) && item.metadata().map_or(true, |meta| is_os_hidden(&meta)) {
+            continue;
+        }
+        let mtime = if !is_dir && is_linkable_name(name) {
+            match item.metadata() {
+                Ok(meta) => listing_mtime(&meta),
+                Err(_) => continue, // gone since the folder was read
+            }
+        } else {
+            0
+        };
+        if budget.fetch_add(1, Ordering::Relaxed) >= cap {
+            break;
+        }
+        let path = if rel.is_empty() {
+            name.to_owned()
+        } else {
+            format!("{rel}/{name}")
+        };
+        if is_dir {
+            read.folders.push((item.path(), path.clone()));
+        }
+        read.entries.push((path, is_dir, mtime));
+    }
+    read
+}
+
+/// The listing's mtime: whole ms since the Unix epoch (0 before it).
+fn listing_mtime(meta: &Metadata) -> u64 {
+    mtime_ms(meta).max(0.0) as u64
+}
+
+/// One of our temp files (`.mn~<pid>-<n>.tmp`) unchanged for an hour: a crash
+/// left it behind (SAVE-04).
+fn is_stale_temp(item: &fs::DirEntry) -> bool {
+    let name = item.file_name();
+    let Some(name) = name.to_str() else {
+        return false;
+    };
+    if !(name.starts_with(TEMP_PREFIX) && name.ends_with(TEMP_SUFFIX)) {
+        return false;
+    }
+    item.metadata()
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.elapsed().ok())
+        .is_some_and(|age| age > STALE_TEMP_AGE)
 }
 
 // ---------------------------------------------------------------- reading
@@ -1361,4 +1494,87 @@ pub async fn path_reveal(app: AppHandle, epoch: u64, path: String) -> AppResult<
             .map_err(|e| AppError::new(ErrorKind::Io, format!("reveal {path}: {e}")))
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("mininote-test-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// `(path, kind, has mtime)` rows, sorted, and whether every folder precedes its contents.
+    fn rows(list: &ListResult) -> (Vec<(String, char, bool)>, bool) {
+        let kinds: Vec<char> = list.kinds.chars().collect();
+        let mut rows: Vec<_> = (0..list.paths.len())
+            .map(|i| (list.paths[i].clone(), kinds[i], list.mtimes[i] > 0))
+            .collect();
+        let parents_first = list
+            .paths
+            .iter()
+            .enumerate()
+            .all(|(i, p)| match p.rsplit_once('/') {
+                None => true,
+                Some((dir, _)) => list.paths[..i].iter().any(|q| q == dir),
+            });
+        rows.sort();
+        (rows, parents_first)
+    }
+
+    #[test]
+    fn list_vault_reads_level_by_level() {
+        let root = scratch_dir("list");
+        for dir in ["a/b/c", ".git/objects", "\u{D3F4}\u{B354}"] {
+            fs::create_dir_all(root.join(dir)).unwrap();
+        }
+        for file in [
+            "n.md",
+            "p.PNG",
+            "data.csv",
+            "Makefile",
+            ".hidden.md",
+            ".git/objects/x.md",
+            "a/b/c/deep.md",
+            "\u{D3F4}\u{B354}/\u{1102}\u{1169}\u{1110}\u{1173}.md",
+        ] {
+            fs::write(root.join(file), "x").unwrap();
+        }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(root.join("a"), root.join("link")).unwrap();
+
+        let all = list_vault(&root, MAX_ENTRIES).unwrap();
+        let (listed, parents_first) = rows(&all);
+        let row = |p: &str, k: char, m: bool| (p.to_owned(), k, m);
+        assert_eq!(
+            listed,
+            vec![
+                row("Makefile", 'f', false),
+                row("a", 'd', false),
+                row("a/b", 'd', false),
+                row("a/b/c", 'd', false),
+                row("a/b/c/deep.md", 'f', true),
+                row("data.csv", 'f', false),
+                row("n.md", 'f', true),
+                row("p.PNG", 'f', true),
+                row("\u{D3F4}\u{B354}", 'd', false),
+                row(
+                    "\u{D3F4}\u{B354}/\u{1102}\u{1169}\u{1110}\u{1173}.md",
+                    'f',
+                    true
+                ),
+            ]
+        );
+        assert!(parents_first && !all.truncated);
+
+        // Exactly as many entries as the cap is complete; one fewer cuts the deepest level.
+        assert!(!list_vault(&root, all.paths.len()).unwrap().truncated);
+        let cut = list_vault(&root, all.paths.len() - 1).unwrap();
+        assert!(cut.truncated && cut.paths.len() == all.paths.len() - 1);
+        assert!(!cut.paths.iter().any(|p| p == "a/b/c/deep.md"));
+        fs::remove_dir_all(&root).unwrap();
+    }
 }

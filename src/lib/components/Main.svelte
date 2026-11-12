@@ -5,6 +5,7 @@
   import ImageView from "./ImageView.svelte";
   import InlineTitle from "./InlineTitle.svelte";
   import Reader from "./Reader.svelte";
+  import UnsupportedView from "./UnsupportedView.svelte";
   import UpdateButton from "./UpdateButton.svelte";
   import { t } from "../i18n";
   import { editor } from "../state/editor.svelte";
@@ -19,9 +20,11 @@
 
   const isNote = $derived(editor.path !== null && editor.kind === "note");
   const reading = $derived(isNote && editor.viewMode === "read");
-  /** The single EditorView stays mounted; it is only hidden for images, reading view and the blank state. */
+  /** The single EditorView stays mounted; it is only hidden for other kinds of file, reading view and the blank state. */
   const showEditor = $derived(isNote && editor.viewMode === "edit");
   const imagePath = $derived(editor.kind === "image" ? editor.path : null);
+  /** Any file that is neither a note nor an image: listed, but not opened (TREE-16). */
+  const otherPath = $derived(editor.kind === "other" ? editor.path : null);
 
   /** Reading-view text, recomputed on doc changes while (and only while) it is visible. */
   const readerText = $derived.by(() => {
@@ -128,6 +131,9 @@
       {/if}
       {#if imagePath !== null}
         <ImageView path={imagePath} />
+      {/if}
+      {#if otherPath !== null}
+        <UnsupportedView path={otherPath} />
       {/if}
     </div>
   </div>

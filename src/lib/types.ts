@@ -12,16 +12,6 @@ export type VaultPath = string;
 
 export type EntryKind = "dir" | "file";
 
-/** Flat filesystem entry listed by the backend (`vault_list`). */
-export interface Entry {
-  path: VaultPath;
-  kind: EntryKind;
-  /** Modification time in ms since the Unix epoch. */
-  mtime: number;
-  /** Size in bytes (0 for directories). */
-  size: number;
-}
-
 export interface VaultInfo {
   /** Absolute, canonical path of the vault root with OS-native separators. */
   root: string;
@@ -35,13 +25,24 @@ export interface VaultInfo {
   epoch: number;
 }
 
+/**
+ * The backend's flat listing (`vault_list`), one column per field so that a big
+ * vault crosses IPC as a few flat arrays: entry `i` is `paths[i]`, `kinds[i]`
+ * and `mtimes[i]`.
+ */
 export interface ListResult {
-  entries: Entry[];
+  /** Breadth-first: every folder comes before its contents. */
+  paths: VaultPath[];
+  /** One character per entry: "d" for a folder, "f" for a file. */
+  kinds: string;
+  /** Modification time of notes and images in whole ms since the Unix epoch; 0 for everything else. */
+  mtimes: number[];
   /** True when the backend stopped early because the vault is enormous. */
   truncated: boolean;
 }
 
-export type FileKind = "note" | "image";
+/** Notes and images open in views of their own; every other file is "other" (TREE-16). */
+export type FileKind = "note" | "image" | "other";
 
 export interface TreeNode {
   path: VaultPath;
@@ -54,12 +55,16 @@ export interface TreeNode {
   fileKind: FileKind | null;
   /** Lower-case extension without the dot; "" for directories. */
   ext: string;
+  /** Whole ms since the Unix epoch for notes and images (the listing's); 0 otherwise. */
   mtime: number;
   /** Parent directory path ("" for top-level entries). */
   parent: VaultPath;
   /** 0 for top-level entries. The root node has depth -1. */
   depth: number;
-  /** Sorted children (folders first, natural order); null for files. */
+  /**
+   * Children in listing order, null for files. Read them through `sortedChildren`
+   * (state/tree.ts) wherever order matters: it sorts a folder when first shown.
+   */
   children: TreeNode[] | null;
 }
 

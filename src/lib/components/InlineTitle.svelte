@@ -9,8 +9,8 @@
   import { ui } from "../state/ui.svelte";
   import { vault } from "../state/vault.svelte";
   import type { VaultPath } from "../types";
-  import { fileKindOf, titleOf, validateName } from "../utils/names";
-  import { basename, dirname, extname, join, key, nfc } from "../utils/path";
+  import { fileKindOf, titleOf, validateName, withKeptExtension } from "../utils/names";
+  import { basename, dirname, join, key, nfc } from "../utils/path";
   import { isComposing } from "../utils/platform";
 
   /** Line breaks (and tabs) typed, pasted or dropped become spaces: the title is one line. */
@@ -24,7 +24,7 @@
   let el: HTMLTextAreaElement | undefined = $state();
 
   const path = $derived(editor.path);
-  /** Notes without ".md"; images with their full name (TREE-15). */
+  /** Notes without ".md"; images and other files with their full name (TREE-15, TREE-16). */
   const original = $derived(path === null ? "" : titleFor(path));
   /** The field's text: follows `original` and resets whenever it changes (another file, a rename). */
   let value = $derived(original);
@@ -44,7 +44,7 @@
   /** The title shown for `p`. */
   function titleFor(p: VaultPath): string {
     const name = nfc(basename(p));
-    return titleOf(name, fileKindOf(extname(name)));
+    return titleOf(name, fileKindOf(name));
   }
 
   /**
@@ -57,20 +57,21 @@
     const fileName = nfc(basename(p));
     const dot = fileName.lastIndexOf(".");
     const rawExt = dot > 0 ? fileName.slice(dot + 1) : "";
-    const isImage = fileKindOf(rawExt) === "image";
-    const title = titleOf(fileName, fileKindOf(rawExt));
+    const kind = fileKindOf(fileName);
+    const isNote = kind === "note";
+    const title = titleOf(fileName, kind);
     const name = nfc(text.trim());
     if (text === title || name === title) return SAME;
     if (name === "") return { kind: "invalid", message: "errNameInvalid" };
     // The name vault.rename is given: notes keep their own extension (it drops a typed ".md");
-    // images never lose theirs, which would hide them from the tree…
+    // other files keep theirs when the name brings none (TREE-06)…
     let target: string;
-    if (isImage) target = fileKindOf(extname(name)) === "image" ? name : `${name}.${rawExt}`;
-    else target = NOTE_EXT.test(name) ? name : `${name}.${rawExt || "md"}`;
+    if (isNote) target = NOTE_EXT.test(name) ? name : `${name}.${rawExt || "md"}`;
+    else target = withKeptExtension(name, fileName);
     // …and the name it stores.
-    const stored = isImage ? target : `${target.replace(NOTE_EXT, "").trim()}${dot > 0 ? fileName.slice(dot) : ".md"}`;
+    const stored = isNote ? `${target.replace(NOTE_EXT, "").trim()}${dot > 0 ? fileName.slice(dot) : ".md"}` : target;
     if (stored === fileName) return SAME;
-    if (validateName(stored, { note: !isImage }) !== null) return { kind: "invalid", message: "errNameInvalid" };
+    if (validateName(stored, { note: isNote }) !== null) return { kind: "invalid", message: "errNameInvalid" };
     const storedKey = key(stored);
     const siblings = vault.node(dirname(p))?.children ?? [];
     if (storedKey !== key(fileName) && siblings.some((c) => c.path !== p && key(c.name) === storedKey)) {

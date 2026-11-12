@@ -391,9 +391,9 @@ write_atomic(abs, bytes):
 
   | Event | Emit |
   |---|---|
-  | rename, listed → listed | `rename(from, to)` |
-  | rename, hidden or unlisted temp → listed (the atomic save of VS Code, JetBrains, sync clients, …) | `modify(to)`, or `create(to)` if `to` is new |
-  | rename, listed → hidden or unlisted | `remove(from)` |
+  | rename, listed → listed of one class (folders; notes and images; other files) | `rename(from, to)` |
+  | rename, hidden temp → listed, or a visible temp → note (the atomic save of VS Code, JetBrains, sync clients, …) | `modify(to)`, or `create(to)` if `to` is new; plus `remove(from)` for a visible temp, which the tree lists too |
+  | rename, listed → hidden, or note → another class (a backup copy) | `remove(from)`; plus `create(to)` for a visible target |
   | rename(from, to) where `from` exists again when the batch is emitted (vim's backup-then-write) | `modify(from)` plus whatever `to` maps to [MS §4] |
 
   Filtering a rename by its *source* path silently drops other editors' atomic saves.

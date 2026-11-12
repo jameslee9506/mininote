@@ -25,8 +25,8 @@ const OTHER_FILE_EXTS = new Set([
  * unknown "extension" stays a note title (`Meeting 2024.01`, LINK-03).
  */
 export function mayBecomeNote(target: string): boolean {
-  const ext = extname(target.trim());
-  return fileKindOf(ext) !== "image" && !OTHER_FILE_EXTS.has(ext);
+  const name = target.trim();
+  return fileKindOf(name) !== "image" && !OTHER_FILE_EXTS.has(extname(name));
 }
 
 export interface TargetOptions {

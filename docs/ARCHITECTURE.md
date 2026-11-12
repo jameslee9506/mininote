@@ -37,7 +37,7 @@ The current build covers every P0 requirement, plus these P1 items:
 | Dirty buffer plus external change | Conflict copy `<stem> (conflict YYYYMMDD-HHmmss).<ext>` next to the note. The suffix is not localized. |
 | Delete | Files go to the OS trash without confirmation. `settings.confirmDelete` (default off) adds one. Folders and permanent deletes always confirm. |
 | Attachments | Default `attachments/` at the vault root (`attachmentLocation: "folder"`). |
-| Tree contents | Images are listed (muted). Other non-Markdown files are hidden. |
+| Tree contents | Every visible file is listed, so a folder reads as it is on disk. Images and other files are muted. A file that is neither a note nor an image opens to a notice that its type is not supported (TREE-16). |
 | Reading view | P0 (Mod+E). |
 | Editor spacing | DESIGN.md §3.2: the reading view's pair gaps and gutters; a blank line is a body line, and the one right below a block stands where a paragraph typed on it would. |
 | Markdown dialect | One block dialect in both views (§10.1, §11): no setext headings and no lazy continuation lines. |
@@ -129,7 +129,7 @@ Every command marked "scoped" also takes `epoch: u64`, either as an argument or 
 | Command | Args | Returns | Notes |
 |---|---|---|---|
 | `vault_open` | `path` (absolute) | `VaultInfo` | Steps: (1) canonicalize with dunce; (2) require a directory; (3) set the root (recording whether it is a mount point, §6.1), `epoch += 1`, and clear the self-write registry; (4) allow the asset-protocol scope for the directory (recursive); (5) restart the watcher; (6) prune this vault's recovery copies that are older than 30 days and whose note no longer exists (SAVE-10). Errors: `not_found` (also for a file), `invalid_path` (relative or non-UTF-8 path), `io`. |
-| `vault_list` (scoped) | – | `ListResult` | §6.3. |
+| `vault_list` (scoped) | – | `ListResult` | §6.3: one column per field, `{ paths, kinds, mtimes, truncated }`. |
 | `note_read` (scoped) | `path` | `FileContent` | Strips a UTF-8 BOM (`bom: true`). Reports `readOnly` (the writability test `note_write` uses, §6.2 step 3), plus the baseline `{mtime,size,hash}` taken from stats around the read; a change while reading triggers a re-read (SAVE-06 "partial files"). Errors: `not_found`, `not_utf8`, `too_large` (over 20 MB). |
 | `note_write` (scoped, **raw body**) | body = UTF-8 bytes (BOM included if wanted); headers `x-path` (URI-encoded), `x-expected` (JSON baseline or empty), `x-epoch` | `WriteResult` | §6.2. The `x-expected` check covers external changes since the baseline: a changed file gives `conflict`, a vanished one `not_found`. With an empty `x-expected` there is no baseline check, and missing parent folders **inside** the root are recreated. Either way the target is re-checked right before it is replaced: a file that appeared or changed during the write gives `conflict`, one that vanished `not_found`. Also returns `read_only` and `root_unavailable`. |
 | `note_create` (scoped) | `path, content` | `WriteResult` | Exclusive create, creating missing parents inside the root. Error: `exists`. Used for new notes and conflict copies. |
@@ -202,14 +202,16 @@ Every command marked "scoped" also takes `epoch: u64`, either as an argument or 
 - **Case or normalization-only rename:** tried directly first; when the stored name did not change, go through the visible temp name `<stem>.mn-tmp-<n>.<ext>` (PLAT-07: a hidden temp left by a crash would be invisible) and roll back if the second step fails.
 - **Stale temp files** (ours, older than one hour) are deleted when `vault_list` walks their folder.
 
-### 6.3 Listing (`vault_list`, TREE-01, VAULT-01)
+### 6.3 Listing (`vault_list`, TREE-01, VAULT-01, PERF-01)
 
-- `walkdir` with `follow_links(false)`.
-- Skips names starting with `.`, plus symlinks and junctions.
+- **Breadth-first, one level at a time.** A level's folders are read with `std::fs::read_dir` on up to 8 threads (the machine's parallelism, at least 2), each taking the next unread folder. Links are never followed. A level keeps the order of the folders it came from, and each folder the order its entries were read in, so thread timing never changes a complete listing, and every folder comes before its contents.
+- Skips names starting with `.`, symlinks and junctions, and anything that is neither a folder nor a regular file.
 - On Windows, also skips entries with the Hidden or System attribute.
-- Lists directories, notes (`md`, `markdown`) and images (`png jpg jpeg gif webp svg bmp avif`).
-- An unreadable sub-folder is skipped, not fatal.
-- Capped at 100 000 entries (`truncated`).
+- Lists every folder and regular file. Notes are `md` and `markdown`, images `png jpg jpeg gif webp svg bmp avif`; the frontend classifies the rest as other files (`utils/names.ts › fileKindOf`).
+- **Metadata only where it is used.** The folder read already says what an entry is (and on Windows carries its attributes), so only notes and images are statted, for their mtime: the switcher's order and image reloads.
+- An unreadable sub-folder is listed without children, not fatal.
+- Capped at 100 000 entries (`truncated`). The cap cuts the deepest level being read, so a huge root such as a home folder still shows its upper levels whole.
+- **Wire format.** One column per field: `paths`, `kinds` (one `d` or `f` per entry), `mtimes` (whole ms; 0 for folders) and `truncated`. 100 000 entries cross IPC as three flat arrays, not 100 000 objects.
 
 ### 6.4 Watcher (`watcher.rs`, TREE-12)
 
@@ -220,8 +222,9 @@ Every command marked "scoped" also takes `epoch: u64`, either as an argument or 
   - started by `vault_open`, after dropping the previous debouncer.
 - Event mapping: `Create` → `create`; data `Modify` → `modify`; `Name(Both)` with two paths → `rename` with `to`; `Remove` → `remove`; the `Rescan` flag → `{any, ""}`.
   - A single-sided name change, or a `remove` of a path that exists again, is classified by what exists when the batch is handled: `create` if the path exists, else `remove`.
-  - A paired rename from a hidden or temp file to a note is `create(to)`; from a note to a hidden or outside path is `remove(from)`; a rename whose source exists again (vim's save) is `modify(from)` plus `create(to)`.
-  - Symlinks, files that are neither notes nor images, and folder metadata changes are dropped.
+  - A paired rename between two paths of one class (folders, notes and images, other files) is `rename`. Across classes it is `remove(from)` plus `create(to)`: another app's atomic save through a visible temp file (`a.md.tmp` → `a.md`) reaches a live note as a create, as before. From a hidden file it is `create(to)`; to a hidden or outside path, `remove(from)`. A rename whose source exists again (vim's save) is `modify(from)` plus `create(to)`.
+  - Symlinks, folder metadata changes and content changes of files other than notes and images are dropped. A path that came and went within a batch is a `remove`, which the frontend ignores for paths it never listed (§8.2).
+  - The file-ID cache that pairs renames on macOS and Windows holds folders, notes and images only; another file's rename arrives as a remove and a create, which re-list the tree all the same.
 - **Drop rules:** events outside the root, any hidden component, our temp files, and registry matches.
 - Deduplicate per batch, then `app.emit("vault:changed", …)`.
 - The callback captures the root and epoch it was started for, and drops batches once a newer vault is open.
@@ -278,7 +281,7 @@ The stores are singleton classes with `$state` fields:
 | Store | Responsibility |
 |---|---|
 | `settings` | Loads and saves `{ settings, sessions }` through `settings_load`/`settings_save`, debounced and written only after loading finishes. Settings are sanitized on load and update, so unknown keys are dropped (SET-01). `shortcuts` holds only the user's changes, command id → keys (§9.1). `VaultSession` holds `expanded`, `lastFile`, `recent`, and `last`: the selection, scroll position and view mode for `lastFile` (VAULT-03), recorded on window blur or hide and before close or quit, and restored when the vault reopens. Applies the CSS variables, `data-theme` and the window theme. |
-| `vault` | Active `VaultInfo`, raw `entries` and the derived tree, node map, notes list, `linkables` (notes and images, for `[[` completion) and link index, plus tree UI state: `selected`, `renaming`, and `creating`, the new-folder draft (§8.3). File operations follow §8.3. Owns the `vault:changed` subscription (§8.2). Link resolution wraps `markdown/resolve.ts`. |
+| `vault` | Active `VaultInfo`, the raw `listing` and the derived tree, node map, notes list, `linkables` (notes and images, for `[[` completion) and the link index over them (links never resolve to other files, TREE-16), plus tree UI state: `selected`, `renaming`, and `creating`, the new-folder draft (§8.3). File operations follow §8.3. Owns the `vault:changed` subscription (§8.2). Link resolution wraps `markdown/resolve.ts`. |
 | `editor` | The open file, view mode, history, autosave engine, external-change reconciliation, the EditorState cache (20 notes; dirty ones are pinned), virtual notes and recovery. Each note controller keeps the vault epoch it was created in (§5). Publishes `lineRequest` `{ path, line, seq }` for every line reveal, which the reading view follows (§11). `blur()` takes focus out of the editor before slow commands (§8.3); `busyUnder` and `unsavedAt` let the vault refuse operations that would race a write or displace unsaved text. Owns the single `EditorView` after `Editor.svelte` attaches it. Implements `EditorHost`. |
 | `ui` | Modal, context menu, confirm dialog, toasts, the search query (while it is set, the sidebar shows results instead of the tree), and focus requests. |
 | `commands` | Registry used by the global shortcut handler and the command palette. `keysOf(cmd)` gives the keys in effect (the user's, else the defaults); `paused` is set while the shortcut settings record a key (§9.1). |
@@ -315,7 +318,7 @@ Calls go one way: `vault` → `editor` for moves, removals and external changes.
 ### 8.2 External changes (SAVE-05/06/07)
 
 - **Routing.** The vault store routes `vault:changed` events:
-  - any structural change triggers a debounced refresh (about 150 ms, throttled adaptively for huge vaults). A `remove` counts only when its path is listed or live, or a listing is running: another app's temp or lock file never re-lists the vault;
+  - any structural change triggers a debounced refresh (about 150 ms, throttled adaptively for huge vaults). A `remove` counts only when its path is listed or live, or a listing is running: another app's temp or lock file that came and went between listings never re-lists the vault;
   - `modify`/`create` of a note with live state (open or cached) goes to `editor.onExternalChange(path)`.
   - On window **focus**, the open note is re-checked the same way, because watchers miss changes on network volumes.
 - **`onExternalChange` reads the file and then:**
@@ -382,7 +385,8 @@ App.svelte
        ├─ InlineTitle.svelte editable file name → rename on commit
        ├─ Editor.svelte      the single EditorView (always mounted while a vault is open)
        ├─ Reader.svelte      rendered HTML (reading view)
-       └─ ImageView.svelte   image files (TREE-15)
+       ├─ ImageView.svelte   image files (TREE-15)
+       └─ UnsupportedView.svelte any other file: a notice naming its unsupported extension (TREE-16)
 ├─ QuickSwitcher · CommandPalette · SettingsModal (on Modal.svelte; its shortcuts page is ShortcutSettings.svelte; a last row shows the app version)
 ├─ UpdateButton.svelte       the update control of §6.7: download tray → percentage → restart arrow
 ├─ ContextMenu · ConfirmDialog · Toasts
@@ -439,7 +443,7 @@ These are the defaults. Settings → Shortcuts rebinds every global command and 
   - `http(s):` and `mailto:` go to `openUrl` from plugin-opener;
   - internal targets go to `editor.openLink`.
 - **Wikilinks.** A resolved target opens. An unresolved one opens a **virtual** note (§8.3), unless it names an image or another known kind of file (`[[Q3.pdf]]`; `targets.ts › mayBecomeNote`). An unknown "extension" stays a note title (`Meeting 2024.01`).
-- **Markdown links.** A relative `.md` link opens the note. A missing note target behaves like an unresolved wikilink (LINK-01, LINK-05), except that an existing file the listing does not show (relative to the note, then to the vault root) is never shadowed by a new note: then nothing happens. A `#heading` anchor scrolls to the heading.
+- **Markdown links.** A relative `.md` link opens the note. A missing note target behaves like an unresolved wikilink (LINK-01, LINK-05), except that an existing file that is not a note or an image (relative to the note, then to the vault root) is never shadowed by a new note: then nothing happens. A `#heading` anchor scrolls to the heading.
 - **Positions in another note** (search hits, `[[Note#Heading]]`, `[x](Note.md#h)`) land in either view (NAV-05): the editor moves its caret (a search hit's text is selected, SRCH-01), and the reading view scrolls to the same source line through `editor.lineRequest` (§11).
 
 ## 10. Editor (`src/lib/editor`)
@@ -568,7 +572,8 @@ These are the defaults. Settings → Shortcuts rebinds every global command and 
 
 ## 12. Performance rules (PERF)
 
-- **Tree:** a virtualized flat list of visible rows with a fixed `--row-h`, keyed `{#each}`.
+- **Listing:** parallel breadth-first folder reads, no stat but for notes and images, one flat column per field (§6.3).
+- **Tree:** built in one pass over the listing; a folder's children are sorted only when it is first shown (`tree.ts › sortedChildren`). A virtualized flat list of visible rows with a fixed `--row-h`, keyed `{#each}`.
 - **Live preview:** inline work runs over `view.visibleRanges` only, and the StateField walks the block structure only (top-level blocks and the blocks inside lists and quotes), never inline content beyond a paragraph's own children.
 - **Quick switcher:** ranks the `notes` array in JS and renders at most 50 rows.
 - **Search:** runs in Rust, debounced 200 ms in the UI, and stale responses are dropped.
@@ -580,5 +585,5 @@ These are the defaults. Settings → Shortcuts rebinds every global command and 
 The owner wants minimal verification:
 - `npm run check` and `cargo check` must be clean.
 - `vitest` runs unit tests for pure logic only: utils, resolve, tree, syntax, render plugins, and small state helpers.
-- Rust unit tests cover only the path guard and search helpers.
+- Rust unit tests cover only the path guard, the listing rules and search helpers.
 - There are no integration or E2E tests, and the app is not launched to verify.

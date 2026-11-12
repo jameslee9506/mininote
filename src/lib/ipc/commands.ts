@@ -96,7 +96,7 @@ export async function vaultOpen(path: string): Promise<VaultInfo> {
   return info;
 }
 
-/** Flat recursive listing: non-hidden folders, notes (.md/.markdown) and images. */
+/** Breadth-first listing of the visible folders, notes (.md/.markdown) and images, one column per field. */
 export const vaultList = () => scoped<ListResult>("vault_list");
 
 export const noteRead = (path: VaultPath, at?: number) => scoped<FileContent>("note_read", { path }, at);

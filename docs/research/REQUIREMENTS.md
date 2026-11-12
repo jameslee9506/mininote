@@ -66,6 +66,7 @@ Anything not listed is out of scope (§13).
   - A drive root or the home folder is allowed. The listing stops at 100,000 entries and skips dot-folders, so the app stays responsive.
   - An unreadable or vanished folder shows an error toast and keeps the empty state.
   - [critic] When the listing hits the cap, one error toast says so, because silently missing notes look like data loss. Re-lists of such a vault are throttled (PERF-05).
+  - The listing goes breadth-first, so the cap cuts the deepest level: a home folder still shows all of its upper folders.
   - [critic] Nested vaults need nothing special. A folder inside another vault, or one that contains an Obsidian vault, opens like any folder, and each canonical path keeps its own session.
   - [critic] On Windows, a mapped network drive canonicalizes to its UNC form (`\\server\share\…`). That form is the identity, so asset URLs and reveal must accept UNC roots (Obsidian needed fixes for images on network drives [OB §10]).
 - **Decision.** Allow any folder and cap the listing, instead of refusing the home folder as ZT does. Users keep notes in odd places, and the cap protects performance.
@@ -127,7 +128,7 @@ Anything not listed is out of scope (§13).
   - Folders.
   - Notes (`.md`, `.markdown`, in any letter case), shown without the extension.
   - Images (`png jpg jpeg gif webp svg bmp avif`), in muted text with their extension.
-  - Everything else is hidden. Names are NFC-normalized for display only.
+  - Every other file, in muted text with its extension (TREE-16). Names are NFC-normalized for display only.
 - **Hidden.**
   - Any entry whose name starts with `.`. This covers `.git`, `.obsidian`, `.trash`, `.DS_Store` and our own temp files.
   - Symlinks and Windows junctions, which are also never followed.
@@ -138,7 +139,7 @@ Anything not listed is out of scope (§13).
   - A `node_modules` folder is listed like any other. The entry cap (VAULT-01) protects performance.
   - [critic] An unreadable sub-folder (permission denied, a macOS privacy-protected folder) is listed without children. It never aborts the listing [ZT §10].
   - [critic] Cloud placeholders (iCloud files under "Optimize Mac Storage", OneDrive Files On-Demand) list normally, because the listing reads metadata only. Reading one downloads it and can block for seconds [WR in OT §2.1], so opening is asynchronous (SAVE-03) and search skips them (SRCH-01).
-- **Decision.** Show images (OB) instead of hiding them (ZT, WR). Users paste screenshots and must be able to see, move and delete them.
+- **Decision.** Show images (OB) instead of hiding them (ZT, WR). Users paste screenshots and must be able to see, move and delete them. *Changed:* every other file is listed too, so a folder opened in mininote reads as it is on disk, and the app doubles as a fast viewer for any folder (VAULT-01).
 - **Sources.** OB §3, ZT §3.1, MT §2, OT §4.1, MS §2, SB §3.
 
 #### TREE-02 · Sort order · P0
@@ -184,7 +185,7 @@ Anything not listed is out of scope (§13).
 #### TREE-06 · Inline rename · P0
 - **Start.**
   - F2 on the focused tree row, or on the open note (which focuses the inline title), or the context menu.
-  - The row text becomes an input at the same position and size, with the stem selected. Notes hide `.md`; other files keep their extension outside the selection.
+  - The row text becomes an input at the same position and size, with the stem selected. Notes hide `.md`; other files keep their extension outside the selection, and a name committed without one keeps the old extension.
 - **Commit and cancel.**
   - Enter commits, and so does blur when the name is valid and changed.
   - Esc, a right-click, or blur with an invalid or unchanged name cancels.
@@ -293,7 +294,6 @@ Anything not listed is out of scope (§13).
 - A "Move to…" folder picker.
 - Sticky headers for open folders.
 - Importing OS files dropped on the tree.
-- A "show all file types" toggle.
 
 Sources: OB §3, ZT §3.3–3.4, MT §2.
 
@@ -307,6 +307,17 @@ Sources: OB §3, ZT §3.3–3.4, MT §2.
   - An unreadable or broken image shows the muted empty box (READ-05).
 - **Decision.** TREE-01 lists images so that users can see, move and delete them, but nothing said what opening one does. A bare viewer is the least UI.
 - **Sources.** OB §3, ARCHITECTURE.md §9 (`ImageView.svelte`).
+
+#### TREE-16 · Open a file of another kind · P0
+- **Behavior.**
+  - Clicking the row of a file that is neither a note nor an image shows, in the main area, a notice that its type is not supported, naming the extension (“.pdf” files aren’t supported). Nothing is read from the file.
+  - The inline title shows the full file name and renames it as for images (TREE-15). Mod+E, find and the editor shortcuts do nothing. Back, forward and the session's last file include it.
+- **Edge cases.**
+  - A name without an extension (`Makefile`, `LICENSE`) gets a notice without one.
+  - Links never resolve to such a file: the link index holds notes and images only, so link resolution and its cost stay as they were. Dragged from the tree into a note, such a file inserts no link.
+  - Only a listed file opens this way, so a folder or a path that vanished never shows the notice.
+- **Decision.** Listing everything makes the tree true to the folder (TREE-01); opening stays minimal. A viewer for other types would be its own requirement.
+- **Sources.** ARCHITECTURE.md §9 (`UnsupportedView.svelte`).
 
 ---
 
@@ -1378,7 +1389,7 @@ The current plan already matches most of this spec. Where it differs, this spec 
 
 **P0**
 - VAULT-01–04, VAULT-07, [critic] VAULT-06 (never recreating the root).
-- TREE-01–09, TREE-12, [critic] TREE-15.
+- TREE-01–09, TREE-12, [critic] TREE-15, TREE-16.
 - EDIT-01–05 (B, I, K), EDIT-09 (find), EDIT-10, EDIT-11, EDIT-13, EDIT-15.
 - LIVE-01–10, LIVE-14, LIVE-15, LIVE-16.
 - SAVE-01–08 ([critic] including read-only notes), [critic] SAVE-10 (recovery copies).

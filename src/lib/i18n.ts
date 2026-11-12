@@ -29,6 +29,8 @@ const en = {
   errTooLarge: "“{name}” is too large to open.",
   errVault: "Couldn’t open that folder.",
   errGeneric: "Something went wrong.",
+  unsupportedFile: "This file type isn’t supported.",
+  unsupportedExt: "“.{ext}” files aren’t supported.",
 
   create: "Create “{name}”",
   noResults: "No results",

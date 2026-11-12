@@ -1,15 +1,20 @@
 /** File-name rules shared by the tree, inline title and note creation. */
 import type { FileKind } from "../types";
-import { key } from "./path";
+import { extname, key } from "./path";
 
 export const NOTE_EXTS = ["md", "markdown"] as const;
 export const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"] as const;
 
-export function fileKindOf(ext: string): FileKind | null {
-  const e = ext.toLowerCase();
+/**
+ * What a file name (or a path: its last segment) names, by its extension: a note,
+ * an image, or another file. The tree lists every file; only notes and images open
+ * in a view of their own (TREE-15, TREE-16).
+ */
+export function fileKindOf(name: string): FileKind {
+  const e = extname(name);
   if ((NOTE_EXTS as readonly string[]).includes(e)) return "note";
   if ((IMAGE_EXTS as readonly string[]).includes(e)) return "image";
-  return null;
+  return "other";
 }
 
 /** Display title: notes drop ".md"/".markdown"; everything else keeps its name. */
@@ -17,6 +22,17 @@ export function titleOf(name: string, kind: FileKind | null): string {
   if (kind !== "note") return name;
   const i = name.lastIndexOf(".");
   return i > 0 ? name.slice(0, i) : name;
+}
+
+/**
+ * The full name a file other than a note gets when renamed to `name` (TREE-06): a
+ * name typed without an extension keeps the old one, so a rename never drops it by
+ * accident; a typed extension is taken as it is.
+ */
+export function withKeptExtension(name: string, oldName: string): string {
+  const dot = oldName.lastIndexOf(".");
+  if (dot <= 0 || name.endsWith(".") || extname(name) !== "") return name;
+  return name + oldName.slice(dot);
 }
 
 export type NameError = "empty" | "invalid" | "reserved" | "too_long" | "hidden";

@@ -574,8 +574,9 @@
       return;
     }
     dt.setData(DRAG_TYPE, node.path);
-    // Dropped into the editor (or any text field), a file becomes a wikilink.
-    if (node.kind === "file") dt.setData("text/plain", `[[${vault.linkTextFor(node.path)}]]`);
+    // Dropped into the editor (or any text field), a note or an image becomes a wikilink;
+    // other files have no link that would resolve (TREE-16).
+    if (node.kind === "file" && node.fileKind !== "other") dt.setData("text/plain", `[[${vault.linkTextFor(node.path)}]]`);
     dt.effectAllowed = "all";
     dragSource = node.path;
   }

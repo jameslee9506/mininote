@@ -8,6 +8,7 @@
     | "folder-open"
     | "note"
     | "image"
+    | "file"
     | "search"
     | "settings"
     | "sidebar"
@@ -69,6 +70,10 @@
     <rect x="2.5" y="2.5" width="11" height="11" rx="1.5" />
     <circle cx="6" cy="6" r="1.25" />
     <path d="m13.5 10-2.5-2.5-6 6" />
+  {:else if name === "file"}
+    <!-- The note's page without its lines: any other file (TREE-16). -->
+    <path d="M9 2H4.5A1.5 1.5 0 0 0 3 3.5v9A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V6Z" />
+    <path d="M9 2v4h4" />
   {:else if name === "search"}
     <circle cx="7" cy="7" r="4.25" />
     <path d="m10.25 10.25 3.25 3.25" />

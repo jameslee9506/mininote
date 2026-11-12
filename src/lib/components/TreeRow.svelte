@@ -8,8 +8,8 @@
   import { ui } from "../state/ui.svelte";
   import { t, type MessageKey } from "../i18n";
   import { isComposing, isMac } from "../utils/platform";
-  import { extname, key, nfc } from "../utils/path";
-  import { fileKindOf, validateName } from "../utils/names";
+  import { key, nfc } from "../utils/path";
+  import { validateName, withKeptExtension } from "../utils/names";
 
   interface Props {
     row: RowData;
@@ -56,9 +56,12 @@
   }: Props = $props();
 
   const node = $derived(row.node);
-  const icon: IconName = $derived(
-    node.kind === "dir" ? (row.expanded ? "folder-open" : "folder") : node.fileKind === "image" ? "image" : "note",
-  );
+  /** A folder that opens and closes, a page for notes, a picture for images, a blank page for anything else. */
+  const icon: IconName = $derived.by(() => {
+    if (node.kind === "dir") return row.expanded ? "folder-open" : "folder";
+    if (node.fileKind === "note") return "note";
+    return node.fileKind === "image" ? "image" : "file";
+  });
 
   let invalid = $state(false);
   /** Set once the current edit committed or cancelled; later blur/teardown events are ignored. */
@@ -76,10 +79,10 @@
 
   /**
    * Interprets the typed text. Notes are edited without their extension and a typed
-   * ".md"/".markdown" is dropped (TREE-06). Other files whose new name lacks a listed
-   * extension keep their old one, so an image cannot vanish from the tree by accident.
-   * The result is what `vault.rename` expects (the title for notes, the full name
-   * otherwise). Empty or unchanged (ignoring Unicode form) cancels.
+   * ".md"/".markdown" is dropped (TREE-06). Other files keep their extension when the
+   * new name brings none (`withKeptExtension`). The result is what `vault.rename`
+   * expects (the title for notes, the full name otherwise). Empty or unchanged
+   * (ignoring Unicode form) cancels.
    */
   function judge(raw: string): Verdict {
     const isNote = node.fileKind === "note";
@@ -87,10 +90,7 @@
     if (nfc(raw) === (isNote ? node.title : node.name)) return { kind: "cancel" };
     let name = isNote ? raw.trim().replace(/\.(md|markdown)$/i, "").trim() : raw.trim();
     if (name === "") return { kind: "cancel" };
-    const dot = node.name.lastIndexOf(".");
-    if (node.kind === "file" && !isNote && dot > 0 && !name.endsWith(".") && fileKindOf(extname(name)) === null) {
-      name += node.name.slice(dot);
-    }
+    if (node.kind === "file" && !isNote) name = withKeptExtension(name, node.name);
     if (nfc(name) === (isNote ? node.title : node.name)) return { kind: "cancel" };
     const full = isNote ? `${name}.${node.ext}` : name;
     if (validateName(full, { note: isNote }) !== null) return { kind: "invalid", message: "errNameInvalid" };
@@ -253,7 +253,7 @@
   {id}
   class="row"
   class:folder={node.kind === "dir"}
-  class:image={node.fileKind === "image"}
+  class:muted={node.kind === "file" && node.fileKind !== "note"}
   class:selected
   class:open
   class:stuck
@@ -336,7 +336,8 @@
     background: var(--c-bg-active);
   }
 
-  .row.image {
+  /* Images and other files: secondary to the notes (DESIGN §4). */
+  .row.muted {
     color: var(--c-text-muted);
   }
 

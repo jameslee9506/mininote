@@ -94,7 +94,7 @@ fn search_vault(
         return SearchResponse { results, truncated };
     }
     let mut visited = 0usize;
-    fs_ops::walk_vault(root, None, |entry| {
+    fs_ops::walk_notes(root, |entry| {
         if cancelled() || visited >= fs_ops::MAX_ENTRIES {
             truncated = true;
             return false;

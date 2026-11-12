@@ -25,7 +25,7 @@
   import { vault } from "./lib/state/vault.svelte";
   import { matchShortcut } from "./lib/utils/keys";
   import { fileKindOf, titleOf } from "./lib/utils/names";
-  import { basename, extname, nfc } from "./lib/utils/path";
+  import { basename, nfc } from "./lib/utils/path";
   import { isComposing } from "./lib/utils/platform";
   import { nextFrame } from "./lib/utils/timing";
 
@@ -52,7 +52,7 @@
 
   const windowTitle = $derived.by(() => {
     const p = editor.path;
-    if (p !== null) return titleOf(nfc(basename(p)), fileKindOf(extname(p)));
+    if (p !== null) return titleOf(nfc(basename(p)), fileKindOf(p));
     return vault.info ? nfc(vault.info.name) : "mininote";
   });
 

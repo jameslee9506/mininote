@@ -18,7 +18,7 @@
   import type { SearchFileResult, SearchMatch, VaultPath } from "../types";
   import { t } from "../i18n";
   import { isComposing } from "../utils/platform";
-  import { basename, dirname, extname, nfc } from "../utils/path";
+  import { basename, dirname, nfc } from "../utils/path";
   import { fileKindOf, titleOf } from "../utils/names";
   import { debounce } from "../utils/timing";
 
@@ -240,7 +240,7 @@
   }
 
   function titleFor(path: VaultPath): string {
-    return titleOf(nfc(basename(path)), fileKindOf(extname(path)));
+    return titleOf(nfc(basename(path)), fileKindOf(path));
   }
 
   /**

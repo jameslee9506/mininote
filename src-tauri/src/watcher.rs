@@ -6,7 +6,7 @@ use std::fs;
 use std::path::Path;
 use std::time::Duration;
 
-use notify::event::{CreateKind, ModifyKind, RemoveKind, RenameMode};
+use notify::event::{ModifyKind, RenameMode};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode};
 use notify_debouncer_full::{new_debouncer_opt, DebounceEventResult, DebouncedEvent, Debouncer};
 use serde::Serialize;
@@ -101,7 +101,9 @@ mod ids {
 
     /// File IDs of the vault's visible folders, notes and images. Unlike the
     /// crate's `FileIdMap` it never follows symlinks (which could walk the whole
-    /// disk), skips hidden and unlisted entries, and is bounded for huge vaults.
+    /// disk), skips hidden entries and other files (their renames arrive as a
+    /// remove and a create, which re-list the tree all the same), and is bounded
+    /// for huge vaults.
     pub struct VaultIdCache {
         root: PathBuf,
         ids: HashMap<PathBuf, FileId>,
@@ -149,7 +151,7 @@ mod ids {
                         && entry
                             .file_name()
                             .to_str()
-                            .is_some_and(fs_ops::is_listed_file_name));
+                            .is_some_and(fs_ops::is_linkable_name));
                 if keep {
                     if let Ok(id) = get_file_id(entry.path()) {
                         self.ids.insert(entry.into_path(), id);
@@ -224,9 +226,9 @@ fn visible_rel(root: &Path, path: &Path) -> Option<String> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Present {
     Dir,
-    /// A note or an image.
-    Listed,
-    /// A symlink or a file the tree does not show.
+    /// A regular file: the tree lists every one (TREE-01).
+    File,
+    /// A symlink, or something that is neither a folder nor a regular file.
     Unlisted,
     Missing,
 }
@@ -235,23 +237,24 @@ fn probe(path: &Path) -> Present {
     match fs::symlink_metadata(path) {
         Ok(meta) if meta.file_type().is_symlink() => Present::Unlisted,
         Ok(meta) if meta.is_dir() => Present::Dir,
-        Ok(meta) if meta.is_file() && has_listed_name(path) => Present::Listed,
+        Ok(meta) if meta.is_file() => Present::File,
         Ok(_) => Present::Unlisted,
         Err(_) => Present::Missing,
     }
 }
 
-fn has_listed_name(path: &Path) -> bool {
+/// A note or an image: the only files the frontend reads or shows by content.
+fn has_linkable_name(path: &Path) -> bool {
     path.file_name()
         .and_then(|n| n.to_str())
-        .is_some_and(fs_ops::is_listed_file_name)
+        .is_some_and(fs_ops::is_linkable_name)
 }
 
 /// Maps one debounced event (ARCHITECTURE §6.4 + TECHNIQUES §3.3). Single paths
 /// are classified by what is there now: a path that exists is a `create`
-/// (moved in, recreated) or `modify` (content/metadata change); a path that is
-/// gone is a `remove`. A notify `Rescan`, or an event on the root itself, asks
-/// for a full re-list.
+/// (moved in, recreated) or `modify` (content/metadata change, sent for notes
+/// and images only); a path that is gone is a `remove`. A notify `Rescan`, or
+/// an event on the root itself, asks for a full re-list.
 fn map_event(root: &Path, event: &DebouncedEvent, out: &mut Vec<VaultChange>) {
     if event.need_rescan() {
         out.push(VaultChange::relist());
@@ -286,18 +289,13 @@ fn map_single(root: &Path, path: &Path, kind: EventKind, out: &mut Vec<VaultChan
         return;
     }
     match probe(path) {
-        Present::Missing => {
-            let unlisted_file = matches!(
-                kind,
-                EventKind::Create(CreateKind::File) | EventKind::Remove(RemoveKind::File)
-            ) && !has_listed_name(path);
-            if !unlisted_file {
-                out.push(VaultChange::new(ChangeKind::Remove, rel));
-            }
-        }
+        // Also a file that came and went within the batch: the frontend drops a
+        // remove of a path it never listed (§8.2).
+        Present::Missing => out.push(VaultChange::new(ChangeKind::Remove, rel)),
         Present::Unlisted => {}
         Present::Dir if content_change => {}
-        Present::Dir | Present::Listed => {
+        Present::File if content_change && !has_linkable_name(path) => {}
+        Present::Dir | Present::File => {
             let change = match kind {
                 EventKind::Any => ChangeKind::Any,
                 _ if content_change => ChangeKind::Modify,
@@ -308,10 +306,14 @@ fn map_single(root: &Path, path: &Path, kind: EventKind, out: &mut Vec<VaultChan
     }
 }
 
-/// A paired rename, classified by both ends (TECHNIQUES §3.3): listed → listed is
-/// a `rename`; hidden/unlisted → listed (another app's atomic save) a `create`;
-/// listed → hidden/unlisted/outside a `remove`. When the source exists again
-/// (vim's backup-then-write) the source is a change and the target a `create`.
+/// A paired rename, classified by both ends (TECHNIQUES §3.3). Between two
+/// listed paths of one class (folders, notes and images, other files) it is a
+/// `rename`. Across classes, as when another app saves a note through a visible
+/// temp file (`a.md.tmp` → `a.md`) or keeps a backup (`a.md` → `a.md~`), it is
+/// a `remove` and a `create`, so a live note sees a create as for any atomic
+/// save. Hidden → listed is a `create`, listed → hidden or outside a `remove`.
+/// When the source exists again (vim's backup-then-write) the source is a
+/// change and the target a `create`.
 fn map_rename(root: &Path, from: &Path, to: &Path, out: &mut Vec<VaultChange>) {
     let from_rel = visible_rel(root, from);
     let to_rel = visible_rel(root, to);
@@ -320,15 +322,12 @@ fn map_rename(root: &Path, from: &Path, to: &Path, out: &mut Vec<VaultChange>) {
         return;
     }
     let to_state = probe(to);
-    let from_ok = from_rel.is_some() && (to_state == Present::Dir || has_listed_name(from));
-    let to_ok = to_rel.is_some()
-        && match to_state {
-            Present::Dir | Present::Listed => true,
-            Present::Missing => has_listed_name(to),
-            Present::Unlisted => false,
-        };
+    // The source had the target's type, and a symlink or special file is never listed.
+    let from_ok = from_rel.is_some() && to_state != Present::Unlisted;
+    let to_ok = to_rel.is_some() && to_state != Present::Unlisted;
+    let same_class = to_state == Present::Dir || has_linkable_name(from) == has_linkable_name(to);
     match (from_rel, to_rel) {
-        (Some(from_rel), Some(to_rel)) if from_ok && to_ok => match probe(from) {
+        (Some(from_rel), Some(to_rel)) if from_ok && to_ok && same_class => match probe(from) {
             Present::Missing => out.push(VaultChange {
                 kind: ChangeKind::Rename,
                 path: from_rel,
@@ -344,9 +343,14 @@ fn map_rename(root: &Path, from: &Path, to: &Path, out: &mut Vec<VaultChange>) {
                 out.push(VaultChange::new(ChangeKind::Create, to_rel));
             }
         },
-        (Some(from_rel), _) if from_ok => out.push(VaultChange::new(ChangeKind::Remove, from_rel)),
-        (_, Some(to_rel)) if to_ok => out.push(VaultChange::new(ChangeKind::Create, to_rel)),
-        _ => {}
+        (from_rel, to_rel) => {
+            if let Some(from_rel) = from_rel.filter(|_| from_ok) {
+                out.push(VaultChange::new(ChangeKind::Remove, from_rel));
+            }
+            if let Some(to_rel) = to_rel.filter(|_| to_ok) {
+                out.push(VaultChange::new(ChangeKind::Create, to_rel));
+            }
+        }
     }
 }
 
