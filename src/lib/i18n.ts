@@ -37,6 +37,10 @@ const en = {
 
   settings: "Settings",
   fontSize: "Font size",
+  codeFont: "Code font",
+  fontDefault: "Default",
+  fontCustom: "Custom",
+  fontName: "Font name",
   lineWidth: "Line width",
   fullWidth: "Full",
   theme: "Theme",
@@ -96,6 +100,7 @@ const en = {
   errRename: "Couldn’t rename “{name}”.",
   errCreate: "Couldn’t create “{name}”.",
   errAttachment: "Couldn’t save the image.",
+  errFontNotMono: "“{name}” isn’t an installed monospaced font.",
   errShortcutInvalid: "That key can’t be a shortcut.",
   errShortcutReserved: "{key} is reserved.",
   errShortcutTaken: "{key} is already used by “{name}”.",

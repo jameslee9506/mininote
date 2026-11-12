@@ -24,7 +24,7 @@
   let el: HTMLTextAreaElement | undefined = $state();
 
   const path = $derived(editor.path);
-  /** Notes without ".md"; images and other files with their full name (TREE-15, TREE-16). */
+  /** Notes without ".md"; images, code and other files with their full name (TREE-15, TREE-16, TREE-17). */
   const original = $derived(path === null ? "" : titleFor(path));
   /** The field's text: follows `original` and resets whenever it changes (another file, a rename). */
   let value = $derived(original);
@@ -120,11 +120,11 @@
     void commitDraft(d);
   }
 
-  /** The editor is the place to go after the title, when it is showing; otherwise focus just leaves. */
+  /** The editor is the place to go after the title, when it is showing (a note being edited, a code file); otherwise focus just leaves. */
   function leave(at?: "start"): void {
     leaving = true;
     try {
-      if (editor.kind === "note" && editor.viewMode === "edit") editor.focusEditor(at);
+      if (editor.kind === "code" || (editor.kind === "note" && editor.viewMode === "edit")) editor.focusEditor(at);
       if (el && document.activeElement === el) el.blur();
     } finally {
       leaving = false;

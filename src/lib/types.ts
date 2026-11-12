@@ -41,8 +41,12 @@ export interface ListResult {
   truncated: boolean;
 }
 
-/** Notes and images open in views of their own; every other file is "other" (TREE-16). */
-export type FileKind = "note" | "image" | "other";
+/**
+ * What a file opens as: a note in the editor, an image in its viewer, a code or
+ * plain-text file in the read-only code view (TREE-17). Every other file is "other"
+ * and only says that its type is not supported (TREE-16).
+ */
+export type FileKind = "note" | "image" | "code" | "other";
 
 export interface TreeNode {
   path: VaultPath;
@@ -143,6 +147,11 @@ export type ViewMode = "edit" | "read";
 export interface Settings {
   /** Content (editor + reading view) font size in px. Default 15. */
   fontSize: number;
+  /**
+   * The monospaced family of everything shown as code: code files, code blocks, inline
+   * code. "" uses the default stack (SET-07).
+   */
+  codeFont: string;
   /** Max content column width in px; 0 means full width. Default 720. */
   lineWidth: number;
   theme: ThemeMode;

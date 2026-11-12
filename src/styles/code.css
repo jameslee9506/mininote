@@ -1,0 +1,65 @@
+/*
+ * Code view: a code file in the app's CodeMirror view, read-only (ARCHITECTURE §10.4,
+ * DESIGN §6). `.cm-mn-code` sits on the editor root of every state built by
+ * src/lib/editor/code/state.ts. Tokens only. Every rule here has more classes than the
+ * CodeMirror rule it overrides (its base theme goes up to three, as in
+ * `.cm-gutters.cm-gutters-before`), so it wins wherever the two stylesheets stand.
+ */
+
+/* One font and size for code and line numbers, so `ch` is the same on the root (the
+ * gutter's width, below), in the gutter and on the lines. */
+.cm-editor.cm-mn-code {
+  --mn-gutter: calc(var(--mn-digits, 2) * 1ch + var(--code-gutter-gap));
+  /* The line numbers hang in the page margin, so the code starts where the title above
+   * it does. A gutter wider than the margin moves the code right instead of being cut off. */
+  margin-left: max(calc(-1 * var(--mn-gutter)), calc(var(--code-gutter-edge) - var(--content-pad-x)));
+  font-family: var(--font-mono);
+  font-size: var(--fs-code);
+}
+
+.cm-editor.cm-mn-code .cm-scroller {
+  font-family: inherit;
+  font-size: inherit;
+  line-height: var(--md-code-lh);
+}
+
+/* Selectable text, never editable: an I-beam, and no caret. */
+.cm-editor.cm-mn-code .cm-content {
+  cursor: text;
+}
+
+.cm-editor.cm-mn-code .cm-cursorLayer {
+  display: none;
+}
+
+/* ── Line numbers: faint, in the margin, no box of their own ────── */
+
+.cm-editor.cm-mn-code .cm-scroller .cm-gutters {
+  border: 0;
+  background: none;
+  color: var(--c-text-faint);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* As wide as the digits and the gap: the --mn-gutter the root reserves. */
+.cm-editor.cm-mn-code .cm-lineNumbers .cm-gutterElement {
+  min-width: 0;
+  padding: 0 var(--code-gutter-gap) 0 0;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Long lines wrap; later rows start under the line's own text ── */
+
+.cm-editor.cm-mn-code .cm-content .cm-line.cm-wrap-indent {
+  text-indent: calc(var(--mn-indent, 0) * 1ch) hanging;
+}
+
+/* Chromium before 146 has no `hanging`, including the Windows build's minimum
+ * target. Padding plus a negative first-line indent keeps the same wrapped rows. */
+@supports not (text-indent: 1ch hanging) {
+  .cm-editor.cm-mn-code .cm-content .cm-line.cm-wrap-indent {
+    padding-left: calc(var(--mn-indent, 0) * 1ch);
+    text-indent: calc(var(--mn-indent, 0) * -1ch);
+  }
+}

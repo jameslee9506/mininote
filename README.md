@@ -33,6 +33,7 @@ npm test               # Unit tests (Vitest)
 | Editor | Obsidian-style live preview powered by CodeMirror 6, hiding syntax away from the cursor. Supports tables, images, checkboxes, `[[wikilinks]]` with completion, `==highlights==`, find and replace, and images pasted or dropped as attachments. Handles Korean IME composition safely. |
 | Saving | Atomic saves 0.4 seconds after typing stops, or at least every 2 seconds while typing continues. External changes reload automatically; if there are unsaved edits, the disk version is kept as a conflict copy. Failed saves leave a recovery copy. |
 | Reading view | Toggle with `Mod+E`. Markdown is rendered with markdown-it and sanitized with DOMPurify. |
+| Code files | Source, configuration and plain-text files open in a read-only viewer with syntax colors for the common languages, line numbers and find. The code font is a setting. |
 | Search | Quick switcher (`Mod+O`) with fuzzy matching, including Hangul initial consonants; full-text search in Rust (`Mod+Shift+F`); and a command palette (`Mod+P`). |
 | Updates | Signed releases on GitHub. The app checks once at launch; when a newer version exists, an update icon appears that downloads it, installs it and restarts. Settings show the running version. |
 

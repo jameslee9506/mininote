@@ -65,6 +65,7 @@
   const spellcheck = $derived(editor.options().spellcheck);
   const readOnly = $derived(editor.options().readOnly);
   const fontSize = $derived(settings.values.fontSize);
+  const codeFont = $derived(settings.values.codeFont);
   const lineWidth = $derived(settings.values.lineWidth);
   const theme = $derived(settings.values.theme);
 
@@ -82,9 +83,10 @@
     if (view) refreshDecorations(view);
   });
 
-  // Font size, line width and theme change line heights without any DOM change CodeMirror watches.
+  // Font size, code font, line width and theme change line heights without any DOM change CodeMirror watches.
   $effect(() => {
     void fontSize;
+    void codeFont;
     void lineWidth;
     void theme;
     view?.requestMeasure();

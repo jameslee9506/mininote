@@ -1,8 +1,9 @@
 /*
  * Design tokens — the single source of visual truth (see docs/DESIGN.md).
- * Monotone: every color is a gray. Components must use these variables only.
- * --fs-content, --content-max and --sidebar-width are overridden at runtime
- * from user settings (set on :root by the app shell).
+ * Monotone: every color is a gray, except the syntax colors of the code view
+ * (--c-syn-*). Components must use these variables only.
+ * --fs-content, --content-max, --sidebar-width and --font-mono are overridden at
+ * runtime from user settings (set on :root by the app shell).
  */
 
 :root {
@@ -30,11 +31,30 @@
   --c-scrollbar-hover: rgba(0, 0, 0, 0.26);
   --shadow-elev: 0 10px 30px rgba(0, 0, 0, 0.1), 0 1px 3px rgba(0, 0, 0, 0.07);
 
+  /* ── Color: syntax (code view only) ───────────────────────────
+   * The one place with hue (DESIGN §6). The light values are CodeMirror's default
+   * highlight style; the dark ones keep each hue at a lightness that reads on --c-bg. */
+  --c-syn-keyword: #770088;
+  --c-syn-atom: #221199;        /* true, null, labels, URLs */
+  --c-syn-number: #116644;
+  --c-syn-string: #aa1111;
+  --c-syn-escape: #ee4400;      /* escapes, regular expressions */
+  --c-syn-def: #0000ff;         /* names where they are defined */
+  --c-syn-local: #3300aa;       /* local and built-in names */
+  --c-syn-type: #008855;        /* types, tags */
+  --c-syn-class: #116677;
+  --c-syn-macro: #225566;       /* macros, special variables */
+  --c-syn-property: #0000cc;    /* keys where they are defined */
+  --c-syn-comment: #994400;
+  --c-syn-meta: #404740;        /* annotations, preprocessor lines */
+  --c-syn-invalid: #ff0000;
+
   /* ── Typography ───────────────────────────────────────────── */
   --font-text: -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo",
     "Malgun Gothic", "Noto Sans KR", "Noto Sans", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "D2Coding",
+  --font-mono-default: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "D2Coding",
     "Noto Sans Mono", "Liberation Mono", monospace;
+  --font-mono: var(--font-mono-default); /* settings.codeFont, when set, comes first */
 
   --fs-content: 15px;           /* settings.fontSize */
   --lh-content: 1.7;
@@ -82,6 +102,11 @@
   --md-task-size: 0.9333em;     /* checkbox: 14px at the 15px base */
   --md-task-gap: 0.5em;         /* checkbox to text */
   --md-cell-pad: 6px 12px;      /* table cells */
+
+  /* ── Code view (code.css) ───────────────────────────────────── */
+  --code-max: calc(var(--fs-code) * 60); /* the least measure of a code file: about 100 columns */
+  --code-gutter-gap: 12px;      /* line numbers to code */
+  --code-gutter-edge: 4px;      /* least room left of the line numbers */
 
   /* ── Layout ───────────────────────────────────────────────── */
   --sidebar-width: 248px;       /* settings.sidebarWidth */
@@ -134,6 +159,20 @@
   --c-scrollbar: rgba(255, 255, 255, 0.14);
   --c-scrollbar-hover: rgba(255, 255, 255, 0.26);
   --shadow-elev: 0 10px 30px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.4);
+  --c-syn-keyword: #c88be0;
+  --c-syn-atom: #8ea6f6;
+  --c-syn-number: #7fc99a;
+  --c-syn-string: #e98c86;
+  --c-syn-escape: #f0975c;
+  --c-syn-def: #62a9f1;
+  --c-syn-local: #b3a4f5;
+  --c-syn-type: #4fc9a4;
+  --c-syn-class: #5cb9c8;
+  --c-syn-macro: #86b9cc;
+  --c-syn-property: #6ea7ee;
+  --c-syn-comment: #b48a62;
+  --c-syn-meta: #9aa39a;
+  --c-syn-invalid: #ff6b6b;
 }
 
 /* … and for "system" mode when the OS prefers dark (same values as above). */
@@ -160,5 +199,19 @@
     --c-scrollbar: rgba(255, 255, 255, 0.14);
     --c-scrollbar-hover: rgba(255, 255, 255, 0.26);
     --shadow-elev: 0 10px 30px rgba(0, 0, 0, 0.45), 0 1px 3px rgba(0, 0, 0, 0.4);
+    --c-syn-keyword: #c88be0;
+    --c-syn-atom: #8ea6f6;
+    --c-syn-number: #7fc99a;
+    --c-syn-string: #e98c86;
+    --c-syn-escape: #f0975c;
+    --c-syn-def: #62a9f1;
+    --c-syn-local: #b3a4f5;
+    --c-syn-type: #4fc9a4;
+    --c-syn-class: #5cb9c8;
+    --c-syn-macro: #86b9cc;
+    --c-syn-property: #6ea7ee;
+    --c-syn-comment: #b48a62;
+    --c-syn-meta: #9aa39a;
+    --c-syn-invalid: #ff6b6b;
   }
 }

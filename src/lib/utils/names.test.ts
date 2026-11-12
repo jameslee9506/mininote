@@ -24,12 +24,16 @@ describe("names", () => {
     expect(uniqueName("\uC81C\uBAA9 \uC5C6\uC74C", "md", (k) => nfd.has(k))).toBe("\uC81C\uBAA9 \uC5C6\uC74C 1.md");
   });
 
-  it("tells notes, images and every other file apart by name", () => {
+  it("tells notes, images, code and every other file apart by name", () => {
     expect(fileKindOf("a/Note.MD")).toBe("note");
     expect(fileKindOf("x.markdown")).toBe("note");
     expect(fileKindOf("pics/p.JPEG")).toBe("image");
+    expect(fileKindOf("src/main.RS")).toBe("code");
+    expect(fileKindOf("Makefile")).toBe("code");
+    // A note or an image stays one, whatever its name starts with.
+    expect(fileKindOf("Makefile.md")).toBe("note");
+    expect(fileKindOf("Dockerfile.png")).toBe("image");
     expect(fileKindOf("report.pdf")).toBe("other");
-    expect(fileKindOf("Makefile")).toBe("other");
     expect(fileKindOf(".md")).toBe("other");
     expect(fileKindOf("md")).toBe("other");
   });

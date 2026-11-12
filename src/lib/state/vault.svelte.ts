@@ -48,7 +48,11 @@ const NAME_ATTEMPTS = 20;
 
 type Timer = ReturnType<typeof setTimeout>;
 
-const isNotePath = (p: VaultPath) => fileKindOf(p) === "note";
+/** A note or a code file: the files the editor reads, and keeps current while they are live (§8.2). */
+const isTextPath = (p: VaultPath): boolean => {
+  const kind = fileKindOf(p);
+  return kind === "note" || kind === "code";
+};
 
 class VaultStore {
   /** Active vault, or null when none is open (Welcome screen). */
@@ -528,17 +532,15 @@ class VaultStore {
       if (c.kind === "create" || c.kind === "modify")
         for (const lp of liveAt(c.path)) if (!isSameOrAncestor(c.path, lp)) respelled.add(lp);
       switch (c.kind) {
-        case "modify": {
+        case "modify":
           // Content changes never re-list, except images: TREE-15 reloads them by mtime.
-          const kind = fileKindOf(c.path);
-          if (kind === "note") {
+          if (isTextPath(c.path)) {
             if (liveAt(c.path).length > 0) changed.add(c.path);
-          } else if (kind === "image") structural = true;
+          } else if (fileKindOf(c.path) === "image") structural = true;
           break;
-        }
         case "create":
           structural = true;
-          if (isNotePath(c.path)) {
+          if (isTextPath(c.path)) {
             created.push(c.path);
             if (liveAt(c.path).length > 0) changed.add(c.path);
           }
@@ -620,11 +622,10 @@ class VaultStore {
     }
   }
 
-  /** TREE-12: watchers miss changes on network volumes, so focus re-checks the open note and re-lists. */
+  /** TREE-12: watchers miss changes on network volumes, so focus re-checks the open note or code file and re-lists. */
   #onFocus(): void {
     if (!this.info) return;
-    const open = editor.path;
-    if (open !== null && editor.kind === "note" && !editor.virtual) void editor.onExternalChange(open);
+    void editor.recheckOpen();
     void this.#requestRefresh();
   }
 

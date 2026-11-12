@@ -1,7 +1,7 @@
 <script lang="ts">
-  // What the main area shows for a file that is neither a note nor an image (TREE-16): the
-  // tree lists every file, but only those two open. Nothing is read from the file; the
-  // inline title above still shows its full name and renames it.
+  // What the main area shows for a file that is not a note, an image or a code file
+  // (TREE-16): the tree lists every file, but only those open. Nothing is read from the
+  // file; the inline title above still shows its full name and renames it.
   import Icon from "./Icon.svelte";
   import { t } from "../i18n";
   import type { VaultPath } from "../types";

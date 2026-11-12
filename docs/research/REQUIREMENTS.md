@@ -128,6 +128,7 @@ Anything not listed is out of scope (§13).
   - Folders.
   - Notes (`.md`, `.markdown`, in any letter case), shown without the extension.
   - Images (`png jpg jpeg gif webp svg bmp avif`), in muted text with their extension.
+  - Code and plain-text files, with their extension (TREE-17).
   - Every other file, in muted text with its extension (TREE-16). Names are NFC-normalized for display only.
 - **Hidden.**
   - Any entry whose name starts with `.`. This covers `.git`, `.obsidian`, `.trash`, `.DS_Store` and our own temp files.
@@ -310,14 +311,31 @@ Sources: OB §3, ZT §3.3–3.4, MT §2.
 
 #### TREE-16 · Open a file of another kind · P0
 - **Behavior.**
-  - Clicking the row of a file that is neither a note nor an image shows, in the main area, a notice that its type is not supported, naming the extension (“.pdf” files aren’t supported). Nothing is read from the file.
+  - Clicking the row of a file that is not a note, an image or a code file (TREE-17) shows, in the main area, a notice that its type is not supported, naming the extension (“.pdf” files aren’t supported). Nothing is read from the file.
   - The inline title shows the full file name and renames it as for images (TREE-15). Mod+E, find and the editor shortcuts do nothing. Back, forward and the session's last file include it.
 - **Edge cases.**
-  - A name without an extension (`Makefile`, `LICENSE`) gets a notice without one.
+  - A name without an extension, unless TREE-17 knows it (`Makefile`, `LICENSE`), gets a notice without one.
   - Links never resolve to such a file: the link index holds notes and images only, so link resolution and its cost stay as they were. Dragged from the tree into a note, such a file inserts no link.
   - Only a listed file opens this way, so a folder or a path that vanished never shows the notice.
-- **Decision.** Listing everything makes the tree true to the folder (TREE-01); opening stays minimal. A viewer for other types would be its own requirement.
+- **Decision.** Listing everything makes the tree true to the folder (TREE-01); opening stays minimal. Code and plain text have a viewer (TREE-17); one for further types would be its own requirement.
 - **Sources.** ARCHITECTURE.md §9 (`UnsupportedView.svelte`).
+
+#### TREE-17 · View a code file · P0
+- **Behavior.**
+  - A code file opens in the main area as a viewer: its text in the code font (SET-07) with syntax colors, line numbers in the margin, and long lines wrapped under their own indentation. It cannot be edited there, and nothing in the app ever writes it.
+  - Code files are told by name: the source files of the common programming languages; markup, style, data and configuration formats; shell and build scripts; the text scene, resource and project files of game engines; and plain text (`txt`, `log`, `csv`, `LICENSE`…), which is shown without colors. A whole name (`Makefile`, `CMakeLists.txt`) or a name prefix (`Dockerfile.dev`) counts before the extension.
+  - The text can be selected and copied (Mod+A selects all of it), and Mod+F finds in it; there is no replace. The arrow, Page, Home and End keys scroll. The system's menu appears over selected text only (PLAT-13).
+  - The inline title shows the full file name and renames it as for images (TREE-15). A faint lock in the top strip marks the view as read-only. Mod+E and the editing shortcuts do nothing. Back, forward and the session's last file include it, with its scroll position.
+  - The view follows the file: a change on disk reloads it in place and keeps the scroll position, and a deleted file closes.
+- **Edge cases.**
+  - A file that is not UTF-8 text, or is larger than 20 MB, does not open: one error toast, as for a note.
+  - No content may stall or fail the view. Characters that a tokenizer cannot pass (U+2028, U+2029) are read as spaces, a tokenizer that fails leaves its line uncolored, and a language that does not load leaves the file as plain text.
+  - Renaming changes what a file is at once: `todo.txt` renamed to `todo.md` becomes an editable note where it stands, a script renamed to another language is recolored, and a name the table does not know shows the notice of TREE-16.
+  - Colors follow the theme: the editor component's default palette in light mode, and its counterpart in dark mode. They are the one use of hue in the app (DESIGN §6).
+  - Links never resolve to a code file, and `[[` completion does not offer one (as in TREE-16). The quick switcher and the full-text search cover notes only.
+  - Dot files stay hidden (TREE-01), whatever their type.
+- **Decision.** People open project folders, not only note folders, and read the code next to their notes. A viewer is enough: editing code belongs to an editor built for it, and a view that cannot write can never damage a project file. Colors come from tokenizers loaded on demand, not from language servers.
+- **Sources.** ARCHITECTURE.md §10.4, DESIGN.md §6.
 
 ---
 
@@ -1132,6 +1150,7 @@ Math and diagrams are out of scope.
 - **Behavior.** Mod+, opens a modal with one row per setting (label on the left, control on the right) and no descriptions. Changes apply immediately.
   - Theme: System, Light or Dark.
   - Font size: 12–24 px, default 15.
+  - Code font: the default, an installed monospaced family, or a typed one (SET-07).
   - Readable width: on or off (720 px).
   - New-note location: current folder or vault root.
   - Attachment location: the `attachments` folder, next to the note, or the vault root.
@@ -1165,6 +1184,17 @@ Math and diagrams are out of scope.
   - While a key is being recorded, no shortcut runs and no engine key acts (reload, print). Korean input stays safe: keys are recorded by the same physical-key fallback that matches them.
   - Fixed: find and replace, Tab/Enter/Backspace editing, ↑ to the title, mouse buttons, browser keys, and on macOS the menu's Cmd+Q.
 - **Sources.** OB §11 (Hotkeys), SET-05.
+
+#### SET-07 · Code font · P1
+- **Behavior.**
+  - One setting names the monospaced family of everything shown as code: code files (TREE-17), code blocks, inline code, frontmatter and table source. The default is the system's monospaced font.
+  - The settings list "Default" and the well-known monospaced families that are installed, found by measuring text. "Custom" opens a field for any other family name.
+  - A typed family must be installed and monospaced: its narrow and wide letters must advance alike. Any other name is refused with an error toast, and the font in use stays.
+  - Code has no size setting of its own: it is 0.88 of the content font size (SET-02) wherever it is shown.
+- **Edge cases.**
+  - The default fonts stay behind the chosen family as its fallback, so a font removed later, or a character it lacks, still shows monospaced.
+  - A stored name is cleaned on load (one family, no quotes or control characters), so a hand-edited settings file cannot inject CSS.
+- **Sources.** DESIGN.md §2, §6.
 
 ---
 
@@ -1389,7 +1419,7 @@ The current plan already matches most of this spec. Where it differs, this spec 
 
 **P0**
 - VAULT-01–04, VAULT-07, [critic] VAULT-06 (never recreating the root).
-- TREE-01–09, TREE-12, [critic] TREE-15, TREE-16.
+- TREE-01–09, TREE-12, [critic] TREE-15, TREE-16, TREE-17.
 - EDIT-01–05 (B, I, K), EDIT-09 (find), EDIT-10, EDIT-11, EDIT-13, EDIT-15.
 - LIVE-01–10, LIVE-14, LIVE-15, LIVE-16.
 - SAVE-01–08 ([critic] including read-only notes), [critic] SAVE-10 (recovery copies).
@@ -1410,7 +1440,7 @@ The current plan already matches most of this spec. Where it differs, this spec 
 - SRCH-01, SRCH-02.
 - LINK-04 (headings), LINK-07, LINK-08.
 - READ-08.
-- SET-02, SET-06.
+- SET-02, SET-06, SET-07.
 - PLAT-01 (Linux), PLAT-11, PLAT-12. ([critic] PLAT-05 single instance moved to P0.)
 - PERF-04–07.
 

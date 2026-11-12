@@ -219,8 +219,11 @@ const REMOVED_DEFAULTS = new Set<unknown>([
 ]);
 const defaultBindings = defaultKeymap.filter((binding) => !REMOVED_DEFAULTS.has(binding.run));
 
-/** Parses past the viewport synchronously after a state swap or scroll (WebKit has no requestIdleCallback). */
-const parseAhead = ViewPlugin.fromClass(
+/**
+ * Parses past the viewport synchronously after a state swap or scroll (WebKit has no
+ * requestIdleCallback). Shared with the code view, whose text must not trail its colors either.
+ */
+export const parseAhead = ViewPlugin.fromClass(
   class {
     private queued = false;
     private dead = false;
@@ -335,10 +338,12 @@ export function createEditorState(doc: string, host: EditorHost, opts: EditorOpt
 /**
  * Applies changed options to a live view via compartments (no state rebuild).
  * Cheap when nothing changed (the size check is cached per document), so it can
- * run after every state swap or settings change.
+ * run after every state swap or settings change. A state built elsewhere (the code
+ * view's, `code/state.ts`) has none of these compartments and no options: it is left alone.
  */
 export function reconfigureEditor(view: EditorView, opts: EditorOptions): void {
   const { state } = view;
+  if (previewMode.get(state) === undefined) return;
   const host = state.facet(hostFacet);
   const effects: StateEffect<unknown>[] = [];
   const preview = host && opts.livePreview && !isLarge(state.doc) ? liveMode(host) : sourceMode;

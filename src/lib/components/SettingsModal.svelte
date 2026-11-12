@@ -1,8 +1,9 @@
 <script lang="ts">
   // Settings (SET-02): one row per setting, label left and control right, no
-  // descriptions. Every change applies at once through settings.update. The shortcuts
-  // row opens the shortcut list in the same panel (SET-06); a quiet last row shows the
-  // app version.
+  // descriptions. Every change applies at once through settings.update. The code
+  // font is a monospaced family installed here, listed or typed by hand (SET-07).
+  // The shortcuts row opens the shortcut list in the same panel (SET-06); a quiet
+  // last row shows the app version.
   import { tick } from "svelte";
   import Icon from "./Icon.svelte";
   import Modal from "./Modal.svelte";
@@ -12,6 +13,7 @@
   import { updater } from "../state/updater.svelte";
   import { t, type MessageKey } from "../i18n";
   import type { Settings, ThemeMode } from "../types";
+  import { installedMonoFonts, monoFontProbe, sanitizeFontFamily } from "../utils/fonts";
   import { validateName } from "../utils/names";
   import { nfc } from "../utils/path";
   import { isComposing } from "../utils/platform";
@@ -36,6 +38,15 @@
     { value: "same", label: t("attachmentSame") },
     { value: "root", label: t("attachmentRoot") },
   ];
+  /** The select's value for a family typed by hand. No family is named so: a stored name has no quotes. */
+  const CUSTOM_FONT = '"custom"';
+  /** The monospaced families installed here, probed as the modal opens (SET-07). */
+  const monoFonts = installedMonoFonts();
+  const FONTS: Option[] = [
+    { value: "", label: t("fontDefault") },
+    ...monoFonts.map((name) => ({ value: name, label: name })),
+    { value: CUSTOM_FONT, label: t("fontCustom") },
+  ];
 
   const uid = $props.id();
   const v = $derived(settings.values);
@@ -54,6 +65,10 @@
   let backButton: HTMLButtonElement | undefined = $state();
   let folderDraft = $state(settings.values.attachmentFolder);
   let folderInvalid = $state(false);
+  /** The code font is typed by hand: chosen so in the select, or stored and not among the listed families. */
+  let customFont = $state(settings.values.codeFont !== "" && !monoFonts.includes(settings.values.codeFont));
+  let fontDraft = $state(settings.values.codeFont);
+  let fontInvalid = $state(false);
 
   function stepFontSize(delta: number): void {
     const size = v.fontSize + delta;
@@ -108,6 +123,44 @@
     }
   }
 
+  /** The code font select: a listed family applies at once; "Custom" opens the name field on the current one. */
+  function chooseFont(value: string): void {
+    fontInvalid = false;
+    if (value === CUSTOM_FONT) {
+      customFont = true;
+      fontDraft = settings.values.codeFont;
+      return;
+    }
+    customFont = false;
+    settings.update({ codeFont: value });
+  }
+
+  /**
+   * Commits the typed family, which must be installed and monospaced (SET-07); an empty
+   * name is the default. A refused one toasts, and reverts when `revert` is set.
+   */
+  function commitFont(revert: boolean): void {
+    const stored = settings.values.codeFont;
+    const name = sanitizeFontFamily(fontDraft);
+    if (name !== "" && name !== stored && monoFontProbe()?.(name) === false) {
+      ui.notify(t("errFontNotMono", { name }));
+      fontInvalid = !revert;
+      if (revert) fontDraft = stored;
+      return;
+    }
+    fontInvalid = false;
+    fontDraft = name;
+    if (name !== stored) settings.update({ codeFont: name });
+  }
+
+  function onFontKeydown(e: KeyboardEvent): void {
+    if (isComposing(e)) return;
+    if (e.key === "Enter") {
+      e.preventDefault();
+      commitFont(false);
+    }
+  }
+
   /** Switches pages; focus lands where the user can go back the same way. */
   async function show(next: typeof page): Promise<void> {
     page = next;
@@ -116,9 +169,10 @@
   }
 
   // Escape or a click outside closes the modal without blurring the field first:
-  // keep a valid folder that was typed but not yet committed.
+  // keep a valid folder or font name that was typed but not yet committed.
   $effect(() => () => {
     if (settings.values.attachmentLocation === "folder" && folderDraft !== settings.values.attachmentFolder) commitFolder(false);
+    if (customFont && sanitizeFontFamily(fontDraft) !== settings.values.codeFont) commitFont(false);
   });
 </script>
 
@@ -189,6 +243,29 @@
         </div>
       </div>
 
+      {@render choice(t("codeFont"), customFont ? CUSTOM_FONT : v.codeFont, FONTS, chooseFont)}
+
+      {#if customFont}
+        <label class="row sub">
+          <span class="label">{t("fontName")}</span>
+          <input
+            class="field name"
+            class:invalid={fontInvalid}
+            type="text"
+            aria-invalid={fontInvalid}
+            bind:value={fontDraft}
+            oninput={() => (fontInvalid = false)}
+            onkeydown={onFontKeydown}
+            onblur={() => commitFont(true)}
+            spellcheck="false"
+            autocomplete="off"
+            autocorrect="off"
+            autocapitalize="off"
+            writingsuggestions="false"
+          />
+        </label>
+      {/if}
+
       {@render choice(t("lineWidth"), v.lineWidth, widthOptions, (w) => settings.update({ lineWidth: Number(w) }))}
       {@render toggle("live", t("livePreview"), v.editorMode === "live", (on) => settings.update({ editorMode: on ? "live" : "source" }))}
       {@render toggle("spellcheck", t("spellcheck"), v.spellcheck, (on) => settings.update({ spellcheck: on }))}
@@ -204,7 +281,7 @@
         <label class="row sub">
           <span class="label">{t("attachmentFolder")}</span>
           <input
-            class="field folder"
+            class="field name"
             class:invalid={folderInvalid}
             type="text"
             aria-invalid={folderInvalid}
@@ -446,14 +523,14 @@
     outline-offset: 2px;
   }
 
-  /* Attachment folder field. */
-  .folder {
+  /* Name fields: the attachment folder, a custom code font. */
+  .name {
     flex: none;
     width: 150px;
     font-size: var(--fs-ui);
   }
 
-  .folder.invalid {
+  .name.invalid {
     border-style: dashed;
     border-color: var(--c-text-muted);
   }

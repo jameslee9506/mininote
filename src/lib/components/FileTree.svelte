@@ -316,7 +316,7 @@
 
   function openFile(path: VaultPath): void {
     if (editor.path === path) {
-      if (editor.kind === "note") editor.focusEditor();
+      if (editor.kind === "note" || editor.kind === "code") editor.focusEditor();
       return;
     }
     safely(editor.open(path));
@@ -485,7 +485,7 @@
       case "Escape":
         if (!plain) return;
         vault.selected = null;
-        if (editor.path !== null && editor.kind === "note") editor.focusEditor();
+        if (editor.path !== null && (editor.kind === "note" || editor.kind === "code")) editor.focusEditor();
         break;
       default:
         return;
@@ -575,8 +575,8 @@
     }
     dt.setData(DRAG_TYPE, node.path);
     // Dropped into the editor (or any text field), a note or an image becomes a wikilink;
-    // other files have no link that would resolve (TREE-16).
-    if (node.kind === "file" && node.fileKind !== "other") dt.setData("text/plain", `[[${vault.linkTextFor(node.path)}]]`);
+    // code and other files have no link that would resolve (TREE-16).
+    if (node.fileKind === "note" || node.fileKind === "image") dt.setData("text/plain", `[[${vault.linkTextFor(node.path)}]]`);
     dt.effectAllowed = "all";
     dragSource = node.path;
   }

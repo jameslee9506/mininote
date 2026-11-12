@@ -243,18 +243,25 @@ fn probe(path: &Path) -> Present {
     }
 }
 
-/// A note or an image: the only files the frontend reads or shows by content.
+/// A note or an image: one class for pairing renames, apart from every other file.
 fn has_linkable_name(path: &Path) -> bool {
     path.file_name()
         .and_then(|n| n.to_str())
         .is_some_and(fs_ops::is_linkable_name)
 }
 
+/// A note, an image or a code file: the files the frontend reads or shows by content.
+fn has_content_name(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(fs_ops::is_content_name)
+}
+
 /// Maps one debounced event (ARCHITECTURE §6.4 + TECHNIQUES §3.3). Single paths
 /// are classified by what is there now: a path that exists is a `create`
-/// (moved in, recreated) or `modify` (content/metadata change, sent for notes
-/// and images only); a path that is gone is a `remove`. A notify `Rescan`, or
-/// an event on the root itself, asks for a full re-list.
+/// (moved in, recreated) or `modify` (content/metadata change, sent for notes,
+/// images and code files only); a path that is gone is a `remove`. A notify
+/// `Rescan`, or an event on the root itself, asks for a full re-list.
 fn map_event(root: &Path, event: &DebouncedEvent, out: &mut Vec<VaultChange>) {
     if event.need_rescan() {
         out.push(VaultChange::relist());
@@ -294,7 +301,7 @@ fn map_single(root: &Path, path: &Path, kind: EventKind, out: &mut Vec<VaultChan
         Present::Missing => out.push(VaultChange::new(ChangeKind::Remove, rel)),
         Present::Unlisted => {}
         Present::Dir if content_change => {}
-        Present::File if content_change && !has_linkable_name(path) => {}
+        Present::File if content_change && !has_content_name(path) => {}
         Present::Dir | Present::File => {
             let change = match kind {
                 EventKind::Any => ChangeKind::Any,

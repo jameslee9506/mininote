@@ -15,16 +15,16 @@ function listing(...paths: string[]): Listing {
 
 describe("tree", () => {
   it("builds a tree sorted on first use: folders first, natural order, every file kept", () => {
-    const { root, nodes } = buildTree(listing("note 10.md", "note 2.md", "b/", "a/x.md", "data.csv", "pic.PNG"));
-    expect(root.children!.map((n) => n.name)).toEqual(["note 10.md", "note 2.md", "b", "a", "data.csv", "pic.PNG"]);
-    const shown = ["a", "b", "data.csv", "note 2.md", "note 10.md", "pic.PNG"];
+    const { root, nodes } = buildTree(listing("note 10.md", "note 2.md", "b/", "a/x.md", "data.bin", "pic.PNG"));
+    expect(root.children!.map((n) => n.name)).toEqual(["note 10.md", "note 2.md", "b", "a", "data.bin", "pic.PNG"]);
+    const shown = ["a", "b", "data.bin", "note 2.md", "note 10.md", "pic.PNG"];
     expect(sortedChildren(root).map((n) => n.name)).toEqual(shown);
     expect(root.children!.map((n) => n.name)).toEqual(shown);
     expect(nodes.get("a/x.md")?.depth).toBe(1);
     expect(nodes.get("note 2.md")?.title).toBe("note 2");
     expect(nodes.get("note 2.md")?.mtime).toBe(7);
     expect(nodes.get("pic.PNG")?.fileKind).toBe("image");
-    expect(nodes.get("data.csv")).toMatchObject({ fileKind: "other", title: "data.csv", ext: "csv" });
+    expect(nodes.get("data.bin")).toMatchObject({ fileKind: "other", title: "data.bin", ext: "bin" });
   });
 
   it("flattens only expanded folders", () => {

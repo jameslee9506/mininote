@@ -21,7 +21,9 @@ export default defineConfig({
     target: process.env.TAURI_ENV_PLATFORM === "windows" ? "chrome110" : "safari15",
     minify: !debug,
     sourcemap: debug,
-    // One bundle read from local disk by the webview: code splitting would buy nothing.
+    // The app is one bundle, read from local disk by the webview: splitting it would buy nothing.
+    // Only the code view's language modes are chunks of their own, fetched when a file of that
+    // language is first opened (src/lib/editor/code/languages.ts).
     chunkSizeWarningLimit: 2048,
   },
 });

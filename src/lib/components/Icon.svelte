@@ -24,7 +24,8 @@
     | "plus"
     | "reset"
     | "download"
-    | "restart";
+    | "restart"
+    | "code";
 </script>
 
 <script lang="ts">
@@ -122,6 +123,11 @@
     <!-- A clockwise arrow, the mirror of reset: quit and come back. -->
     <path d="M13.5 8a5.5 5.5 0 1 1-5.5-5.5 6 6 0 0 1 4.12 1.68L13.5 5.5" />
     <path d="M13.5 2.5v3h-3" />
+  {:else if name === "code"}
+    <!-- The note's page with angle brackets for its lines: a code file (TREE-17). -->
+    <path d="M9 2H4.5A1.5 1.5 0 0 0 3 3.5v9A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V6Z" />
+    <path d="M9 2v4h4" />
+    <path d="m7 8.5-1.5 1.5L7 11.5M9 8.5l1.5 1.5L9 11.5" />
   {/if}
 </svg>
 

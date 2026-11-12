@@ -18,7 +18,7 @@ The current build covers every P0 requirement, plus these P1 items:
 - SAVE-09, SAVE-11
 - NAV-02 (Hangul extras, already in `utils/fuzzy.ts`), NAV-03, NAV-06
 - SRCH-01, SRCH-02
-- SET-02, SET-06, PLAT-05, PLAT-12
+- SET-02, SET-06, SET-07, PLAT-05, PLAT-12
 
 **Deferred** to the next round:
 - SAVE-06 P1 (three-way merge); the conflict copy is the P0 behavior
@@ -37,7 +37,7 @@ The current build covers every P0 requirement, plus these P1 items:
 | Dirty buffer plus external change | Conflict copy `<stem> (conflict YYYYMMDD-HHmmss).<ext>` next to the note. The suffix is not localized. |
 | Delete | Files go to the OS trash without confirmation. `settings.confirmDelete` (default off) adds one. Folders and permanent deletes always confirm. |
 | Attachments | Default `attachments/` at the vault root (`attachmentLocation: "folder"`). |
-| Tree contents | Every visible file is listed, so a folder reads as it is on disk. Images and other files are muted. A file that is neither a note nor an image opens to a notice that its type is not supported (TREE-16). |
+| Tree contents | Every visible file is listed, so a folder reads as it is on disk. Images and unsupported files are muted. Code and plain-text files open in a read-only code view (TREE-17, §10.4); any other file that is not a note or an image opens to a notice that its type is not supported (TREE-16). |
 | Reading view | P0 (Mod+E). |
 | Editor spacing | DESIGN.md §3.2: the reading view's pair gaps and gutters; a blank line is a body line, and the one right below a block stands where a paragraph typed on it would. |
 | Markdown dialect | One block dialect in both views (§10.1, §11): no setext headings and no lazy continuation lines. |
@@ -53,6 +53,7 @@ The current build covers every P0 requirement, plus these P1 items:
 | Shell | **Tauri 2** (Rust) | Windows, macOS, and Linux from one codebase. The OS webview keeps bundles around 10 MB and idle memory low (Electron uses about 150 MB). Rust provides native filesystem access, trash, and watching. |
 | UI | **Svelte 5** (runes) + TypeScript + Vite | Compiles to direct DOM updates with a tiny runtime, so typing and tree updates stay cheap. |
 | Editor | **CodeMirror 6** | Incremental Lezer parser and viewport-only rendering handle multi-MB notes. It is the same engine as Obsidian's live preview. |
+| Code view | The same CodeMirror view + **`@codemirror/legacy-modes`** | Code files are shown read-only with syntax colors (§10.4). The stream modes of CodeMirror 5 cover some fifty languages in one small package without dependencies of its own, each loaded when first needed. |
 | Reading view | **markdown-it** + **DOMPurify** | Fast and extensible. Sanitizing is mandatory, because injected script could reach Tauri IPC. |
 | Settings | Own Rust commands (`settings_load` / `settings_save`) | Atomic JSON in the app-config dir. `tauri-plugin-store` writes non-atomically and silently drops unparsable files. |
 | Plugins | `single-instance`, `process`, `updater`, `dialog`, `opener`, `window-state` | No `fs` plugin. Every file operation is a vault-scoped custom command. `updater` and `process` only replace the app bundle and restart (§6.7). |
@@ -82,17 +83,18 @@ The current build covers every P0 requirement, plus these P1 items:
 src/
   main.ts                    mount(App) + global CSS
   App.svelte                 shell: layout, global shortcuts, startup, close/exit flush
-  styles/                    tokens.css · base.css · markdown.css · editor.css · index.css
+  styles/                    tokens.css · base.css · markdown.css · editor.css · code.css · index.css
   lib/
     types.ts                 shared data contracts (mirrors Rust DTOs)
     i18n.ts                  t(key) — English UI strings
     appCommands.ts           concrete command list (shortcuts + palette)
     ipc/commands.ts          typed wrappers for every Rust command (epoch injected)
     ipc/events.ts            vault:changed, app:flush-request
-    utils/                   path · names · fuzzy · platform · keys · timing
+    utils/                   path · names · codeFiles · fonts · fuzzy · platform · keys · timing
     state/                   settings · vault · editor · ui · commands · updater (*.svelte.ts), tree.ts
     editor/                  setup · theme · syntax · commands · complete · paste · search panel
                              · ime.ts · host.ts (bridge interface) · shared.ts · livePreview/*
+                             · code/* (the read-only code view: languages, state, highlight, modes/)
     markdown/                render.ts (+ plugins/) · resolve.ts
     components/              Svelte components (§9)
 src-tauri/src/
@@ -130,7 +132,7 @@ Every command marked "scoped" also takes `epoch: u64`, either as an argument or 
 |---|---|---|---|
 | `vault_open` | `path` (absolute) | `VaultInfo` | Steps: (1) canonicalize with dunce; (2) require a directory; (3) set the root (recording whether it is a mount point, §6.1), `epoch += 1`, and clear the self-write registry; (4) allow the asset-protocol scope for the directory (recursive); (5) restart the watcher; (6) prune this vault's recovery copies that are older than 30 days and whose note no longer exists (SAVE-10). Errors: `not_found` (also for a file), `invalid_path` (relative or non-UTF-8 path), `io`. |
 | `vault_list` (scoped) | – | `ListResult` | §6.3: one column per field, `{ paths, kinds, mtimes, truncated }`. |
-| `note_read` (scoped) | `path` | `FileContent` | Strips a UTF-8 BOM (`bom: true`). Reports `readOnly` (the writability test `note_write` uses, §6.2 step 3), plus the baseline `{mtime,size,hash}` taken from stats around the read; a change while reading triggers a re-read (SAVE-06 "partial files"). Errors: `not_found`, `not_utf8`, `too_large` (over 20 MB). |
+| `note_read` (scoped) | `path` | `FileContent` | Strips a UTF-8 BOM (`bom: true`). Reports `readOnly` (the writability test `note_write` uses, §6.2 step 3), plus the baseline `{mtime,size,hash}` taken from stats around the read; a change while reading triggers a re-read (SAVE-06 "partial files"). Also reads a code file for its viewer (TREE-17). Errors: `not_found`, `not_utf8`, `too_large` (over 20 MB). |
 | `note_write` (scoped, **raw body**) | body = UTF-8 bytes (BOM included if wanted); headers `x-path` (URI-encoded), `x-expected` (JSON baseline or empty), `x-epoch` | `WriteResult` | §6.2. The `x-expected` check covers external changes since the baseline: a changed file gives `conflict`, a vanished one `not_found`. With an empty `x-expected` there is no baseline check, and missing parent folders **inside** the root are recreated. Either way the target is re-checked right before it is replaced: a file that appeared or changed during the write gives `conflict`, one that vanished `not_found`. Also returns `read_only` and `root_unavailable`. |
 | `note_create` (scoped) | `path, content` | `WriteResult` | Exclusive create, creating missing parents inside the root. Error: `exists`. Used for new notes and conflict copies. |
 | `dir_create` (scoped) | `path` | – | Creates parents. Error: `exists`. |
@@ -207,7 +209,7 @@ Every command marked "scoped" also takes `epoch: u64`, either as an argument or 
 - **Breadth-first, one level at a time.** A level's folders are read with `std::fs::read_dir` on up to 8 threads (the machine's parallelism, at least 2), each taking the next unread folder. Links are never followed. A level keeps the order of the folders it came from, and each folder the order its entries were read in, so thread timing never changes a complete listing, and every folder comes before its contents.
 - Skips names starting with `.`, symlinks and junctions, and anything that is neither a folder nor a regular file.
 - On Windows, also skips entries with the Hidden or System attribute.
-- Lists every folder and regular file. Notes are `md` and `markdown`, images `png jpg jpeg gif webp svg bmp avif`; the frontend classifies the rest as other files (`utils/names.ts › fileKindOf`).
+- Lists every folder and regular file. Notes are `md` and `markdown`, images `png jpg jpeg gif webp svg bmp avif`; the frontend classifies the rest as code files (TREE-17) or other files (`utils/names.ts › fileKindOf`).
 - **Metadata only where it is used.** The folder read already says what an entry is (and on Windows carries its attributes), so only notes and images are statted, for their mtime: the switcher's order and image reloads.
 - An unreadable sub-folder is listed without children, not fatal.
 - Capped at 100 000 entries (`truncated`). The cap cuts the deepest level being read, so a huge root such as a home folder still shows its upper levels whole.
@@ -223,7 +225,7 @@ Every command marked "scoped" also takes `epoch: u64`, either as an argument or 
 - Event mapping: `Create` → `create`; data `Modify` → `modify`; `Name(Both)` with two paths → `rename` with `to`; `Remove` → `remove`; the `Rescan` flag → `{any, ""}`.
   - A single-sided name change, or a `remove` of a path that exists again, is classified by what exists when the batch is handled: `create` if the path exists, else `remove`.
   - A paired rename between two paths of one class (folders, notes and images, other files) is `rename`. Across classes it is `remove(from)` plus `create(to)`: another app's atomic save through a visible temp file (`a.md.tmp` → `a.md`) reaches a live note as a create, as before. From a hidden file it is `create(to)`; to a hidden or outside path, `remove(from)`. A rename whose source exists again (vim's save) is `modify(from)` plus `create(to)`.
-  - Symlinks, folder metadata changes and content changes of files other than notes and images are dropped. A path that came and went within a batch is a `remove`, which the frontend ignores for paths it never listed (§8.2).
+  - Symlinks, folder metadata changes and content changes of files other than notes, images and code files are dropped. Code files are told by name (`fs_ops::is_code_name`, the lists of the frontend's `utils/codeFiles.ts`, §10.4). A path that came and went within a batch is a `remove`, which the frontend ignores for paths it never listed (§8.2).
   - The file-ID cache that pairs renames on macOS and Windows holds folders, notes and images only; another file's rename arrives as a remove and a create, which re-list the tree all the same.
 - **Drop rules:** events outside the root, any hidden component, our temp files, and registry matches.
 - Deduplicate per batch, then `app.emit("vault:changed", …)`.
@@ -280,9 +282,9 @@ The stores are singleton classes with `$state` fields:
 
 | Store | Responsibility |
 |---|---|
-| `settings` | Loads and saves `{ settings, sessions }` through `settings_load`/`settings_save`, debounced and written only after loading finishes. Settings are sanitized on load and update, so unknown keys are dropped (SET-01). `shortcuts` holds only the user's changes, command id → keys (§9.1). `VaultSession` holds `expanded`, `lastFile`, `recent`, and `last`: the selection, scroll position and view mode for `lastFile` (VAULT-03), recorded on window blur or hide and before close or quit, and restored when the vault reopens. Applies the CSS variables, `data-theme` and the window theme. |
+| `settings` | Loads and saves `{ settings, sessions }` through `settings_load`/`settings_save`, debounced and written only after loading finishes. Settings are sanitized on load and update, so unknown keys are dropped (SET-01). `shortcuts` holds only the user's changes, command id → keys (§9.1). `VaultSession` holds `expanded`, `lastFile`, `recent`, and `last`: the selection, scroll position and view mode for `lastFile` (VAULT-03), recorded on window blur or hide and before close or quit, and restored when the vault reopens. Applies the CSS variables (the content font size, the code font as `--font-mono`, the widths), `data-theme` and the window theme. |
 | `vault` | Active `VaultInfo`, the raw `listing` and the derived tree, node map, notes list, `linkables` (notes and images, for `[[` completion) and the link index over them (links never resolve to other files, TREE-16), plus tree UI state: `selected`, `renaming`, and `creating`, the new-folder draft (§8.3). File operations follow §8.3. Owns the `vault:changed` subscription (§8.2). Link resolution wraps `markdown/resolve.ts`. |
-| `editor` | The open file, view mode, history, autosave engine, external-change reconciliation, the EditorState cache (20 notes; dirty ones are pinned), virtual notes and recovery. Each note controller keeps the vault epoch it was created in (§5). Publishes `lineRequest` `{ path, line, seq }` for every line reveal, which the reading view follows (§11). `blur()` takes focus out of the editor before slow commands (§8.3); `busyUnder` and `unsavedAt` let the vault refuse operations that would race a write or displace unsaved text. Owns the single `EditorView` after `Editor.svelte` attaches it. Implements `EditorHost`. |
+| `editor` | The open file, view mode, history, autosave engine, external-change reconciliation, the EditorState cache (20 notes and code files; dirty ones are pinned), virtual notes and recovery. A code file has a controller of kind `"code"`: cached and reloaded like a note, never dirty, never written (§10.4). Each controller keeps the vault epoch it was created in (§5). Publishes `lineRequest` `{ path, line, seq }` for every line reveal, which the reading view follows (§11). `blur()` takes focus out of the editor before slow commands (§8.3); `busyUnder` and `unsavedAt` let the vault refuse operations that would race a write or displace unsaved text. Owns the single `EditorView` after `Editor.svelte` attaches it. Implements `EditorHost`. |
 | `ui` | Modal, context menu, confirm dialog, toasts, the search query (while it is set, the sidebar shows results instead of the tree), and focus requests. |
 | `commands` | Registry used by the global shortcut handler and the command palette. `keysOf(cmd)` gives the keys in effect (the user's, else the defaults); `paused` is set while the shortcut settings record a key (§9.1). |
 | `updater` | The update phase (`idle` → `checking` → `available` → `downloading` → `installing` → `restart` / `restarting`), the offered and the running version, and the download percentage. `start(beforeExit)` at mount, `install()` from the button (§6.7). The Tauri `Update` resource stays out of reactive state. |
@@ -319,9 +321,11 @@ Calls go one way: `vault` → `editor` for moves, removals and external changes.
 
 - **Routing.** The vault store routes `vault:changed` events:
   - any structural change triggers a debounced refresh (about 150 ms, throttled adaptively for huge vaults). A `remove` counts only when its path is listed or live, or a listing is running: another app's temp or lock file that came and went between listings never re-lists the vault;
-  - `modify`/`create` of a note with live state (open or cached) goes to `editor.onExternalChange(path)`.
-  - On window **focus**, the open note is re-checked the same way, because watchers miss changes on network volumes.
+  - `modify`/`create` of a note or a code file with live state (open or cached) goes to `editor.onExternalChange(path)`.
+  - On window **focus**, the open note or code file is re-checked the same way, because watchers miss changes on network volumes.
+  - A code file is never dirty, so of the rules below only the clean ones apply to it: a change reloads its view in place, and a removal closes it. Its reads never overlap (`editor.#refreshCode`): one runs at a time, and a change that arrives meanwhile is read once more after it, so a big file written faster than it can be read still updates; a read that has not answered for 10 s no longer holds back the next. Over 2 MB it is not read again on window focus; the watcher's events are enough. It follows a create of the same text only when it has at least 200 characters (short files have twins), and only among the few created code files that kept its name or its folder.
 - **`onExternalChange` reads the file and then:**
+  - **Moved meanwhile:** an answer that arrives after the note or code file got another path is about the old path, "not found" above all. It is dropped and the file is read at its new path (three reads at most).
   - **Same text** as the buffer or as `lastSaved` (our own echo, or a line-ending-only change): update the baseline and line-ending style, and stop.
   - **Clean buffer:** reload in place with one minimal change (common prefix and suffix), annotated `External`, `addToHistory: false`, which preserves the selection and scroll. If a composition is active, wait for `compositionend`. Before a reload that would empty a non-empty note, wait until the file has stayed empty for 1 s.
   - **Dirty buffer**, which is a **conflict copy**:
@@ -383,7 +387,7 @@ App.svelte
    ├─ Resizer.svelte
    └─ Main.svelte            top strip (drag region; sidebar toggle, always shown; nav, view and lock icons; UpdateButton while a release waits) + .doc-scroll
        ├─ InlineTitle.svelte editable file name → rename on commit
-       ├─ Editor.svelte      the single EditorView (always mounted while a vault is open)
+       ├─ Editor.svelte      the single EditorView (always mounted while a vault is open): notes, and code files read-only (§10.4)
        ├─ Reader.svelte      rendered HTML (reading view)
        ├─ ImageView.svelte   image files (TREE-15)
        └─ UnsupportedView.svelte any other file: a notice naming its unsupported extension (TREE-16)
@@ -422,7 +426,8 @@ These are the defaults. Settings → Shortcuts rebinds every global command and 
 | Mod-Enter | Open the link under the cursor | editor |
 | Tab / Shift-Tab | Indent / outdent (list item with its subtree) | editor |
 | Enter / Backspace | Continue / remove list & quote markup | editor |
-| Mod-F | Find; pressed again in the panel, it focuses the input and selects its text. Mod-H (Mod-Alt-F on macOS) opens replace, and the panel's chevron toggles the replace row. Outside the editor (reading view, tree, blank page) it switches to editing and opens the panel (EDIT-09) | editor (+ global fallback) |
+| Mod-F | Find; pressed again in the panel, it focuses the input and selects its text. Mod-H (Mod-Alt-F on macOS) opens replace, and the panel's chevron toggles the replace row. Outside the editor (reading view, tree, blank page) it switches to editing and opens the panel (EDIT-09). In the code view it finds only | editor (+ global fallback) |
+| Mod-A; arrows, Page Up/Down, Home/End | Select all; scroll (the code view has no caret to move) | code view |
 | ↑ on the first visual line | Move to the inline title, caret at its end (EDIT-15) | editor |
 | ↑ / ↓ (also with Shift) next to a rendered table or image | Put the caret on the widget's nearest source line, revealing it; the default motion would skip the widget | editor |
 | Alt-click | Add a cursor (Mod-click is reserved for links) | editor |
@@ -435,7 +440,7 @@ These are the defaults. Settings → Shortcuts rebinds every global command and 
   - While the recorder listens, `commands.paused` makes the capturing listener return at once. The focused recorder button cancels every key itself: nothing runs or reloads, and Escape cancels recording instead of closing the modal. Tab still moves focus, and the blur ends recording.
   - A recorded key must pass `canBind` (`utils/keys.ts`): a function key, or a key held with Mod, with Control on macOS, or with Alt elsewhere. It must not be reserved: clipboard, undo/redo, select all, find and its next/previous keys, replace, and the macOS app-menu and window keys (Quit, Hide, Minimize, Full Screen, Cmd+\`). A key belongs to one command at most; a taken key is refused with a toast naming its command.
 - **Composition.** Every custom key handler returns early on `isComposing(e)`. A Mod-chord that arrives mid-composition is ignored (EDIT-11).
-- **Context menu.** The native context menu is suppressed everywhere except over the editor content, inputs, or selected text (PLAT-13).
+- **Context menu.** The native context menu is suppressed everywhere except over editable text (the editor, inputs) or selected text (PLAT-13). A read-only editor, a locked note or a code file, is not editable: its menu appears over selected text only, and nothing drops into it.
 
 ### 9.2 Links, anchors, navigation (LINK-01…05)
 
@@ -542,6 +547,28 @@ These are the defaults. Settings → Shortcuts rebinds every global command and 
   - A dropped tree item becomes `[[link text]]`.
 - **Find panel:** one input and no labels. Enter goes to the next match, Shift+Enter to the previous, and Escape closes the panel. Mod-F in the panel re-selects the input's text; the chevron button toggles the replace row. All key handling is IME-guarded. When there are no matches, the input text turns faint.
 
+### 10.4 Code view (`editor/code`, TREE-17)
+
+A code file is shown by the same `EditorView`, in a state of its own kind. The editor store keeps a controller for it as for a note (the state cache, scroll restore, reload on external change, §8.2), of kind `"code"`: its state is read-only, so it is never dirty, and no save path accepts it.
+
+- **What is code** is decided by name in `utils/codeFiles.ts`: a table from extensions, whole file names (`Makefile`, `CMakeLists.txt`) and name prefixes (`Dockerfile.`) to a language id. `text` is the id of files shown without colors. `fileKindOf` (`utils/names.ts`) asks it after the note and image extensions. The backend mirrors the three lists (`fs_ops::is_code_name`) for the watcher (§6.4); `codeFiles.test.ts` reads `fs_ops.rs` and fails when they differ.
+- **Languages** (`code/languages.ts`): one loader per id, checked by the compiler against the table.
+  - JavaScript, TypeScript, JSX, HTML, CSS and Markdown use the Lezer grammars that lang-markdown already brings.
+  - The others are CodeMirror 5 stream modes from `@codemirror/legacy-modes`, plus a few written here (`code/modes/`): PHP, Solidity, GDScript and a GLSL-like shading language; typed `.cfg` files and the text scene and resource formats built on their syntax; and rule lists for Makefile, Elixir, Zig, GraphQL, HCL, batch files and gettext.
+  - Each stream mode is a chunk of its own, fetched when a file of that language is first opened and kept for the session. `loadCodeLanguage` never rejects: a file whose language fails to load opens as plain text, and the load is tried again the next time it opens.
+  - **No input may stall or fail a mode** (`code/stream.ts › hardened`). The modes were written for an editor's own text; a viewer opens any file. U+2028 and U+2029, which CodeMirror keeps inside a line but a regular expression's `.` does not match, are read as spaces: several modes loop forever on one, or cannot get past it. A tokenizer that throws leaves the rest of its line unstyled, and one that does not advance yields one unstyled character. The modes written here are linear in the length of a line.
+- **State** (`code/state.ts › createCodeState(doc, language)`):
+  - `EditorState.readOnly` and a non-editable view with `tabindex`, as for a read-only note: selection, copy and find keep working, and the caret is hidden.
+  - `lineNumbers()` in a gutter that is not sticky; line wrapping; tab stops of 4 columns.
+  - `wrapIndent` (`code/wrap.ts`): each indented line in view carries its indentation in columns, which `code.css` turns into a hanging indent, so wrapped rows start under the line's own text.
+  - `syntaxHighlighting(codeHighlight)` (`code/highlight.ts`): CodeMirror's default highlight style with its colors as `--c-syn-*` tokens (DESIGN §6), so dark mode needs no second style.
+  - The find panel and its keys (§10.3; replace stays hidden in a read-only state) and Mod-A. No motion keys: the arrow, Page, Home and End keys scroll the document natively.
+  - Drops are refused. The editor theme of §10.1 applies, and so does its `parseAhead` plugin for a text of up to 2 million characters; a bigger one is colored by CodeMirror's background parser alone, which never blocks a scroll. A language that fails on the very text gives way to plain text.
+  - Nothing of the Markdown stack: no host, no compartments. `reconfigureEditor` returns at once for such a state.
+- **Opening** (`editor.#openNote`): the file is read with `note_read` while its language loads, then the state is built, so the text never shows uncolored first. A cached controller is reused while the file's text is unchanged; one built for another kind or language is dropped.
+- **A move that changes what the file is** (`editor.#reopenShown`): when the shown file's new name opens differently (a text file renamed to `.md`, a script to another language, any file into or out of an unsupported type), it is shown again as what it is now, at the same selection and scroll position. The check runs after every move, because another file's controller may also have taken the shown file's place. A note shown this way gets its recovery copy checked like any opened note (§8.4). This is not a navigation: it takes no turn in the open sequence, so it never cancels an open the user started, and it gives up when one starts or the file moves again. History and the tree stay as they are. Unsaved note text never leaves its editor this way.
+- **Layout** (`Main.svelte`, `code.css`): the document column takes the wider of the text measure and the code measure (`--code-max`). The line numbers hang in the page margin, so the code starts where the inline title does; a gutter wider than the margin moves the code right instead.
+
 ## 11. Reading view (`src/lib/markdown`, READ-01…07)
 
 - `render.ts › renderMarkdown(text, ctx)` returns sanitized HTML. It uses one markdown-it instance configured once, with `{ html: true, linkify: true, breaks: true, typographer: false }` and per-render context passed through `env`.
@@ -578,12 +605,13 @@ These are the defaults. Settings → Shortcuts rebinds every global command and 
 - **Quick switcher:** ranks the `notes` array in JS and renders at most 50 rows.
 - **Search:** runs in Rust, debounced 200 ms in the UI, and stale responses are dropped.
 - **Reading view:** renders only while visible.
+- **Code view:** a language's mode is fetched on first use; colors cover the viewport and a little past it, like the note parser (§10.1). Line decorations are built for visible lines only.
 - **Layout:** no layout reads inside effects that write.
 
 ## 13. Testing policy
 
 The owner wants minimal verification:
 - `npm run check` and `cargo check` must be clean.
-- `vitest` runs unit tests for pure logic only: utils, resolve, tree, syntax, render plugins, and small state helpers.
+- `vitest` runs unit tests for pure logic only: utils, resolve, tree, syntax, render plugins, the code view's tables and modes, and small state helpers.
 - Rust unit tests cover only the path guard, the listing rules and search helpers.
 - There are no integration or E2E tests, and the app is not launched to verify.

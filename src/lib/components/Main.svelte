@@ -19,11 +19,13 @@
   let editorSlotEl: HTMLElement | null = $state(null);
 
   const isNote = $derived(editor.path !== null && editor.kind === "note");
+  /** A code file: the editor view shows it too, read-only (TREE-17). */
+  const isCode = $derived(editor.path !== null && editor.kind === "code");
   const reading = $derived(isNote && editor.viewMode === "read");
-  /** The single EditorView stays mounted; it is only hidden for other kinds of file, reading view and the blank state. */
-  const showEditor = $derived(isNote && editor.viewMode === "edit");
+  /** The single EditorView stays mounted; it is only hidden for images and unsupported files, reading view and the blank state. */
+  const showEditor = $derived((isNote && editor.viewMode === "edit") || isCode);
   const imagePath = $derived(editor.kind === "image" ? editor.path : null);
-  /** Any file that is neither a note nor an image: listed, but not opened (TREE-16). */
+  /** A file that is not a note, an image or a code file: listed, but not opened (TREE-16). */
   const otherPath = $derived(editor.kind === "other" ? editor.path : null);
 
   /** Reading-view text, recomputed on doc changes while (and only while) it is visible. */
@@ -97,7 +99,8 @@
       <Icon name="arrow-right" />
     </button>
     <div class="grow"></div>
-    {#if editor.readOnly && editor.path !== null}
+    <!-- A file that cannot be written, and every code file: the code view never edits. -->
+    {#if (editor.readOnly || isCode) && editor.path !== null}
       <span class="lock" role="img" aria-label={t("ariaReadOnly")}>
         <Icon name="lock" />
       </span>
@@ -116,7 +119,7 @@
   </header>
 
   <div class="doc-scroll" role="presentation" bind:this={docScrollEl} onmousedown={onDocMouseDown}>
-    <div class="doc-column">
+    <div class="doc-column" class:code={isCode}>
       {#if settings.values.inlineTitle}
         <InlineTitle />
       {/if}
@@ -190,6 +193,15 @@
     max-width: var(--content-max);
     margin: 0 auto;
     padding: var(--content-pad-top) var(--content-pad-x) var(--content-pad-bottom);
+  }
+
+  /*
+   * A code file gets the wider of the text measure and the code measure (DESIGN §6). With
+   * the "Full" line width, --content-max is `none`: the max() is then invalid, and an
+   * invalid max-width computes to its initial value, which is `none` as well.
+   */
+  .doc-column.code {
+    max-width: max(var(--content-max), var(--code-max));
   }
 
   .editor-slot.hidden {

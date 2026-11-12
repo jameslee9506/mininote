@@ -4,7 +4,7 @@ The UI should feel like a sheet of paper with a quiet gray margin. Every rule be
 
 ## 1. Principles
 
-1. **Monotone.** Every color is a gray from `src/styles/tokens.css`. There is no accent color. Emphasis comes from weight, size, and contrast, never from hue. That includes links, selection, focus, and "danger" actions.
+1. **Monotone.** Every color is a gray from `src/styles/tokens.css`. There is no accent color. Emphasis comes from weight, size, and contrast, never from hue. That includes links, selection, focus, and "danger" actions. The one exception is the text of a code file (§6), whose syntax colors are content, not chrome.
 2. **No unnecessary text.** No visible labels on toolbars, no "Saved" indicator, no status bar, no placeholder copy unless the input would otherwise be unusable. Icons carry `aria-label`, not visible captions or `title` tooltips. Text appears only where it *is* the content: note names, document text, settings labels, confirmations, and errors.
 3. **Content first.** The document column is centered with a readable measure (`--content-max`, 720px by default). Chrome recedes: icons sit at `--c-text-faint` and only darken on hover or focus.
 4. **Quiet motion.** Only short fades or background transitions (`--dur-fast`, `--dur`). No sliding panels, no bouncing, no skeleton shimmer.
@@ -20,8 +20,10 @@ The UI should feel like a sheet of paper with a quiet gray margin. Every rule be
 | Lines | `--c-border`, `--c-border-strong` |
 | Text | `--c-text-strong` > `--c-text` > `--c-text-muted` > `--c-text-faint`; `--c-icon-tree` sits between the last two, for the tree's row icons |
 | Interaction | `--c-selection`, `--c-caret`, `--c-focus`, `--shadow-elev` |
-| Type | `--font-text`, `--font-mono`, `--fs-content` (15px, user setting), `--lh-content` 1.7, `--fs-h1…h6`, `--fs-code`, `--fs-ui` 13px, `--fs-tree-folder` 14px, `--fs-ui-small` 12px |
+| Syntax | `--c-syn-*`: the colors of code files, and of nothing else (§6) |
+| Type | `--font-text`, `--font-mono` (the code font, a user setting, in front of `--font-mono-default`), `--fs-content` (15px, user setting), `--lh-content` 1.7, `--fs-h1…h6`, `--fs-code`, `--fs-ui` 13px, `--fs-tree-folder` 14px, `--fs-ui-small` 12px |
 | Markdown components | `--md-list-indent`, `--md-quote-bar`, `--md-quote-step`, `--md-code-lh`, `--md-code-pad-x`, `--md-code-pad-y`, `--md-task-size`, `--md-task-gap`, `--md-cell-pad`: every measure both views draw (§5) |
+| Code view | `--code-max`, `--code-gutter-gap`, `--code-gutter-edge` (§6) |
 | Layout | `--sidebar-width`, `--header-h` 40px, `--content-max`, `--content-pad-x`, `--inline-title-gap` 24px, `--row-h` 28px, `--tree-pad-x` 10px, `--tree-icon-gap` 6px, `--indent` 16px, `--icon` 16px, radii |
 
 Dark mode swaps the same variable names, either through `:root[data-theme="dark"]` or through `prefers-color-scheme` when the theme is "system". Nothing else needs to know about themes; CodeMirror's theme also reads the variables.
@@ -105,16 +107,16 @@ The editor is line-based, and its blank source lines are real, editable text. It
 |---|---|
 | Window | macOS: overlay title bar, hidden title, traffic lights inside the 40px sidebar header (`trafficLightPosition` aligned to its vertical center). Windows/Linux: native frame. |
 | Sidebar | `--c-bg-alt` background, 1px `--c-border` right edge, resizable 180–480px. Header (40px) is the drag region with faint icon buttons (new note, new folder, collapse all folders). Below it the search field (a `.field`, always shown, with a faint magnifier at the left where the tree's icons sit and a faint × while it holds text), then the file tree; while the field holds a query, the search results take the tree's place, and Escape or the × clears it. Footer holds the vault name (`--fs-ui-small`, muted; opens the vault menu) and a settings gear. |
-| Tree row | `--row-h` 28px, `padding-left: --tree-pad-x + depth × --indent`, `padding-right: --tree-pad-x`. Every row starts with a 16px `--c-icon-tree` icon, `--tree-icon-gap` before the name: a folder that switches between closed and open, a page for notes, a picture for images, a blank page for any other file. Folders use `--fs-tree-folder` 14px, files `--fs-ui` 13px. Hover `--c-bg-hover`, selected `--c-bg-active`, open note at weight 500 in `--c-text-strong`. Notes show without ".md". Images and other files show their full name in `--c-text-muted`. |
+| Tree row | `--row-h` 28px, `padding-left: --tree-pad-x + depth × --indent`, `padding-right: --tree-pad-x`. Every row starts with a 16px `--c-icon-tree` icon, `--tree-icon-gap` before the name: a folder that switches between closed and open, a page for notes, a picture for images, a page with angle brackets for code files, a blank page for any other file. Folders use `--fs-tree-folder` 14px, files `--fs-ui` 13px. Hover `--c-bg-hover`, selected `--c-bg-active`, open note at weight 500 in `--c-text-strong`. Notes show without ".md". Code files show their full name in `--c-text`, like notes: they open as text. Images and unsupported files show theirs in `--c-text-muted`. |
 | Tree guide lines | An open folder is joined to its children by straight 1px `--c-border-strong` lines with square corners, no curves or dashes. A vertical line starts right under the folder's icon and runs down its icon's middle; each child gets a horizontal arm at the row's middle that stops 1px before its icon (├, or └ for the last child). Top-level rows have no line to the root. A dragged row dims its item, not the lines. |
 | Inline rename | The row text becomes an input at the same position and size, with a 1px `--c-border-strong` outline and no layout shift. |
-| Main top strip | 40px drag region. Faint icons: sidebar toggle (always shown, so the mouse can hide and show the sidebar), back/forward, reading-view toggle; a faint lock when the note is read-only. Only while a newer release is known, the update button sits left of the view toggle: a muted download-tray icon (`--c-text-muted`, one step past the faint chrome) that becomes the whole download percentage (`--fs-ui-small`, tabular numerals) while it downloads, turns faint while it installs or restarts, and becomes a clockwise arrow when only the restart is left. No badge, no text. |
+| Main top strip | 40px drag region. Faint icons: sidebar toggle (always shown, so the mouse can hide and show the sidebar), back/forward, reading-view toggle; a faint lock when the note is read-only, and for every code file (§6). Only while a newer release is known, the update button sits left of the view toggle: a muted download-tray icon (`--c-text-muted`, one step past the faint chrome) that becomes the whole download percentage (`--fs-ui-small`, tabular numerals) while it downloads, turns faint while it installs or restarts, and becomes a clockwise arrow when only the restart is left. No badge, no text. |
 | Welcome screen | A centered open-folder icon button over the names of the recent vaults. The update button, when there is one, sits in the top-right corner of the 40px strip, where the main strip keeps it once a vault opens. |
 | Inline title | `--fs-h1`, weight 600, `--c-text-strong`, aligned with the content column. Fixed `--inline-title-gap` 24px to the body, independent of the content font size. |
-| Editor column | `max-width: var(--content-max)`, centered, horizontal padding `--content-pad-x`, bottom padding `--content-pad-bottom`. |
+| Editor column | `max-width: var(--content-max)`, centered, horizontal padding `--content-pad-x`, bottom padding `--content-pad-bottom`. A code file gets a wider column (§6). |
 | Unsupported file | Below the inline title, 12vh down and centered: the blank-page icon in `--c-text-faint` over one `--c-text-muted` line at `--fs-ui` that names the extension ("“.pdf” files aren’t supported."; a name without one gets "This file type isn’t supported."). Nothing else. |
 | Modal (switcher, palette) | 560px wide, 14vh from top, `--c-bg-elev`, `--radius-l`, `--shadow-elev`, no backdrop tint (clicking outside closes it). Input is 44px tall at 15px with no border, separated from results by a 1px `--c-border`. Result rows are 32px. The selected row is `--c-bg-active`. Matched characters are `--c-text-strong` weight 600. Folder path is muted on the right. |
-| Settings modal | 520px wide, label left and control right, rows 40px. Controls are a segmented control (theme), a stepper (font size), switches (toggles), and a select (locations). The "Shortcuts" row, with a faint chevron, swaps the panel to the shortcuts page: a 44px header (back chevron, the page name at weight 600) over a scrolling list. A quiet last row shows the app version: label and value both muted at `--fs-ui-small`. |
+| Settings modal | 520px wide, label left and control right, rows 40px. Controls are a segmented control (theme), a stepper (font size), switches (toggles), and a select (locations, the code font). The code font select lists "Default", the installed monospaced families and "Custom", which adds an indented row with a field for a family name, like the attachment folder's; a refused name gets a dashed border. The "Shortcuts" row, with a faint chevron, swaps the panel to the shortcuts page: a 44px header (back chevron, the page name at weight 600) over a scrolling list. A quiet last row shows the app version: label and value both muted at `--fs-ui-small`. |
 | Shortcut row | Command name left; on the right, one 24px key chip per key (1px `--c-border-strong`, `--radius-s`, `--fs-ui-small`, a faint × to remove), a faint "+" and a faint ↺ that keeps its place but shows only when the keys differ from the defaults. While "+" listens it becomes a dashed slot that shows the held modifiers. The general and editor groups are split by a 1px `--c-border`. No descriptions, no hints. |
 | Context menu | Min width 180px, `--c-bg-elev`, `--radius-m`, `--shadow-elev`, 4px padding, 28px items, 1px separators. Text only: no icons, no shortcut hints. |
 | Toast | Errors only. Bottom-center, `--c-bg-elev`, `--fs-ui`, auto-dismisses after 4s. |
@@ -141,3 +143,37 @@ Both views also read the same Markdown (ARCHITECTURE §10.1, §11): the same blo
 | `==mark==` | `--c-bg-mark` background, text color inherited. |
 | Frontmatter | Shown as a muted monospace block, fences included (reading view: `<pre class="frontmatter">`; live preview: `cm-fm` lines in `--c-text-muted` mono). |
 | Syntax marks (live preview, revealed) | `--c-text-faint`. |
+
+## 6. Code view
+
+A code file opens as a viewer in the document column (ARCHITECTURE §10.4): read, selected, copied and searched, never edited. It is the reading view's code block grown to a whole page, with the two things a page of code needs: line numbers and syntax colors.
+
+| Part | Spec |
+|---|---|
+| Measure | The column takes the wider of the text measure (`--content-max`) and `--code-max`, 60 × `--fs-code`: about 100 columns. With the "Full" line width it is full too. |
+| Text | `--font-mono` (the code font, SET-07) at `--fs-code`, line height `--md-code-lh`, on the page's own background: no box. Tab stops every 4 columns. |
+| Long lines | They wrap. Later rows start under the line's own first character, up to 32 columns in, so the indentation still reads down the page. |
+| Line numbers | `--c-text-faint`, tabular, right-aligned, `--code-gutter-gap` 12px before the code, no background or rule. They hang in the page margin, so the code's first column stands under the inline title. Where the margin is narrower than the numbers (a narrow window, a very long file), they keep `--code-gutter-edge` 4px from the edge and the code moves right. |
+| Selection, find | As in the editor: `--c-selection`, the same find panel without its replace row. No caret, and the pointer is a text cursor. |
+| Title, chrome | The inline title shows the full file name. A faint lock in the top strip says that the view does not edit, as for a read-only note. |
+
+**Syntax colors.** This is the one place with hue (§1): the colors are the content here. They are tokens like every other color, `--c-syn-*`, used by nothing but the code view's highlight style (`editor/code/highlight.ts`). The light values are the default highlight style of the editor component, unchanged; each dark value keeps its hue at a lightness that reads on `--c-bg`.
+
+| Token | Marks | Light | Dark |
+|---|---|---|---|
+| `--c-syn-keyword` | keywords | `#770088` | `#c88be0` |
+| `--c-syn-atom` | `true`, `null`, labels, URLs | `#221199` | `#8ea6f6` |
+| `--c-syn-number` | numbers | `#116644` | `#7fc99a` |
+| `--c-syn-string` | strings | `#aa1111` | `#e98c86` |
+| `--c-syn-escape` | escapes, regular expressions | `#ee4400` | `#f0975c` |
+| `--c-syn-def` | names where they are defined | `#0000ff` | `#62a9f1` |
+| `--c-syn-local` | local and built-in names | `#3300aa` | `#b3a4f5` |
+| `--c-syn-type` | types, tags | `#008855` | `#4fc9a4` |
+| `--c-syn-class` | class names | `#116677` | `#5cb9c8` |
+| `--c-syn-macro` | macros, special variables | `#225566` | `#86b9cc` |
+| `--c-syn-property` | keys where they are defined | `#0000cc` | `#6ea7ee` |
+| `--c-syn-comment` | comments | `#994400` | `#b48a62` |
+| `--c-syn-meta` | annotations, preprocessor lines | `#404740` | `#9aa39a` |
+| `--c-syn-invalid` | invalid text | `#ff0000` | `#ff6b6b` |
+
+Everything else stays `--c-text`: plain names, operators and punctuation. Headings and emphasis in a Markdown source file take weight and slant, not color. Code blocks inside notes keep no syntax colors (§5).

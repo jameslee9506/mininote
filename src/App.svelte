@@ -208,7 +208,12 @@
 
   // ── Native context menu (PLAT-13) ────────────────────────────────────────
 
-  const EDITABLE = 'input, textarea, .cm-content, [contenteditable]:not([contenteditable="false"])';
+  /**
+   * Text that can be edited. An editor that cannot be (a read-only note, a code file) is
+   * `contenteditable="false"`, so it is none: its menu appears over selected text only,
+   * and nothing drops into it.
+   */
+  const EDITABLE = 'input, textarea, [contenteditable]:not([contenteditable="false"])';
 
   function inSelection(x: number, y: number): boolean {
     const sel = window.getSelection();

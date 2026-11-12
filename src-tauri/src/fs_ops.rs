@@ -34,6 +34,56 @@ const READ_RETRIES: u32 = 3;
 const BOM: [u8; 3] = [0xEF, 0xBB, 0xBF];
 const NOTE_EXTS: [&str; 2] = ["md", "markdown"];
 const IMAGE_EXTS: [&str; 8] = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"];
+/// Code and plain-text files, as the frontend's read-only code view knows them
+/// (TREE-17): the extensions, whole names and name prefixes of
+/// src/lib/utils/codeFiles.ts, which also says what language each one is. A
+/// test there (codeFiles.test.ts) fails when the two sides differ.
+#[rustfmt::skip]
+const CODE_EXTS: &[&str] = &[
+    "adoc", "asciidoc", "asm", "astro", "atom", "axaml", "bas", "bash", "bat", "bats", "bazel",
+    "bib", "bzl", "c", "c++", "cbl", "cc", "cfg", "cg", "cginc", "cjs", "clj", "cljc", "cljs",
+    "cls", "cmake", "cmd", "cnf", "cob", "code-workspace", "coffee", "command", "comp",
+    "compute", "conf", "containerfile", "cpp", "cpy", "cs", "csproj", "css", "csv", "csx",
+    "cts", "cu", "cuh", "cxx", "dae", "dart", "desktop", "dialogue", "diff", "dockerfile",
+    "dpr", "dtl", "edn", "ejs", "el", "elm", "entitlements", "env", "erb", "erl", "escn", "ex",
+    "exs", "f", "f03", "f08", "f90", "f95", "filters", "fish", "for", "frag", "fs", "fsh",
+    "fsi", "fsproj", "fsx", "fx", "gd", "gdextension", "gdnlib", "gdns", "gdshader",
+    "gdshaderinc", "gemspec", "geojson", "geom", "glsl", "gltf", "go", "godot", "gpx", "gql",
+    "gradle", "graphql", "graphqls", "groovy", "gvy", "gyp", "gypi", "h", "h++", "handlebars",
+    "hbs", "hcl", "hh", "hlsl", "hpp", "hrl", "hs", "htm", "html", "hx", "hxx", "iml", "import",
+    "ini", "ink", "inl", "ino", "ipp", "ipynb", "j2", "jade", "java", "jbuilder", "jinja",
+    "jinja2", "jl", "js", "json", "json5", "jsonc", "jsonl", "jsx", "kml", "ksh", "kt", "kts",
+    "less", "liquid", "lisp", "lock", "log", "lpr", "lsp", "ltx", "lua", "luau", "m", "mak",
+    "make", "map", "mdx", "metal", "mjs", "mk", "ml", "mli", "mm", "mts", "mustache", "ndjson",
+    "nix", "njk", "nuspec", "opml", "org", "pas", "patch", "pbxproj", "pcss", "php", "phtml",
+    "pl", "plist", "pm", "po", "podspec", "postcss", "pot", "prisma", "pro", "properties",
+    "props", "proto", "ps1", "psd1", "psm1", "pug", "pxd", "py", "pyi", "pyw", "pyx", "qmd",
+    "qrc", "r", "rake", "rb", "resx", "rkt", "rmd", "rockspec", "rs", "rss", "rst", "ru", "s",
+    "sass", "sbt", "sc", "scala", "scm", "scss", "service", "sh", "shader", "sln", "slnx",
+    "sol", "sql", "srt", "ss", "storyboard", "strings", "sty", "styl", "sv", "svelte", "svh",
+    "swift", "targets", "tcl", "tesc", "tese", "tex", "text", "tf", "tfstate", "tfvars", "tmx",
+    "toml", "tpp", "tres", "ts", "tscn", "tsv", "tsx", "twig", "txt", "ui", "uid", "v", "vb",
+    "vbproj", "vbs", "vcproj", "vcxproj", "vert", "vh", "vhd", "vhdl", "vsh", "vtt", "vue",
+    "wast", "wat", "webmanifest", "wgsl", "wsdl", "xaml", "xcconfig", "xcscheme",
+    "xcworkspacedata", "xhtml", "xib", "xlf", "xliff", "xml", "xsd", "xsl", "xslt", "yaml",
+    "yarn", "yml", "zig", "zon", "zsh",
+];
+/// Whole file names in lower case, with or without an extension.
+#[rustfmt::skip]
+const CODE_NAMES: &[&str] = &[
+    "appfile", "authors", "brewfile", "caddyfile", "cargo.lock", "cartfile",
+    "changelog", "changes", "cmakelists.txt", "cname", "codeowners", "composer.lock",
+    "containerfile", "contributors", "copying", "copyright", "dangerfile", "dockerfile",
+    "fastfile", "flake.lock", "gemfile", "gnumakefile", "go.mod", "go.sum", "go.work",
+    "gradlew", "guardfile", "history", "install", "jenkinsfile", "justfile", "licence",
+    "license", "maintainers", "makefile", "matchfile", "meson.build", "mvnw", "news",
+    "nginx.conf", "notice", "owners", "patents", "pipfile", "pipfile.lock", "podfile",
+    "poetry.lock", "procfile", "pubspec.lock", "rakefile", "readme", "sconscript", "sconstruct",
+    "scsub", "snakefile", "thanks", "tiltfile", "todo", "uv.lock", "vagrantfile", "version",
+    "wscript",
+];
+/// Lower-case name prefixes: `Dockerfile.dev`, `Makefile.am`.
+const CODE_NAME_PREFIXES: &[&str] = &["dockerfile.", "makefile."];
 /// Prefix and suffix of our atomic-write temp files: `.mn~<pid>-<n>.tmp`.
 const TEMP_PREFIX: &str = ".mn~";
 const TEMP_SUFFIX: &str = ".tmp";
@@ -201,11 +251,30 @@ pub fn is_note_name(name: &str) -> bool {
 }
 
 /// A note or an image: the files links and completion know (LINK-04), and the
-/// only ones whose content or modification time the frontend uses (listing,
-/// watcher). The tree lists every file; the others only by name.
+/// only ones whose modification time the frontend uses (listing). The tree
+/// lists every file; the others only by name.
 pub fn is_linkable_name(name: &str) -> bool {
     extension(name)
         .is_some_and(|e| NOTE_EXTS.contains(&e.as_str()) || IMAGE_EXTS.contains(&e.as_str()))
+}
+
+/// A code file, which the frontend opens in its read-only code view (TREE-17).
+/// The rule of `codeLanguageOf` in src/lib/utils/codeFiles.ts: a whole name, then
+/// a name prefix, then the extension, all in lower case.
+pub fn is_code_name(name: &str) -> bool {
+    let name = name.to_lowercase();
+    if CODE_NAMES.contains(&name.as_str()) || CODE_NAME_PREFIXES.iter().any(|p| name.starts_with(p))
+    {
+        return true;
+    }
+    name.rsplit_once('.')
+        .is_some_and(|(stem, ext)| !stem.is_empty() && CODE_EXTS.contains(&ext))
+}
+
+/// A file the frontend reads and keeps current while it is open: a note, an
+/// image or a code file. The watcher reports content changes of these only.
+pub fn is_content_name(name: &str) -> bool {
+    is_linkable_name(name) || is_code_name(name)
 }
 
 fn invalid(message: impl Into<String>) -> AppError {
@@ -1576,5 +1645,25 @@ mod tests {
         assert!(cut.truncated && cut.paths.len() == all.paths.len() - 1);
         assert!(!cut.paths.iter().any(|p| p == "a/b/c/deep.md"));
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn code_files_are_told_by_name_prefix_or_extension() {
+        for name in [
+            "main.RS",
+            "player.gd",
+            "level.tscn",
+            "Makefile",
+            "CMakeLists.txt",
+            "Dockerfile.dev",
+        ] {
+            assert!(is_code_name(name), "{name}");
+        }
+        for name in ["photo.png", "model.glb", "gd", ".gd", "Makefiles"] {
+            assert!(!is_code_name(name), "{name}");
+        }
+        // The watcher's content changes: notes, images and code files.
+        assert!(is_content_name("n.md") && is_content_name("p.PNG") && is_content_name("x.cfg"));
+        assert!(!is_content_name("model.glb"));
     }
 }

@@ -9,12 +9,16 @@
  * view shows now". Clean controllers form a 20-entry LRU; dirty ones are pinned
  * and keep retrying. Nothing here dispatches into the editor mid-composition
  * except the user's own edits; saves only read.
+ *
+ * A code file (TREE-17) has a controller too, of kind "code": the same view shows
+ * it, cached and reloaded like a note, but its state is read-only, so it is never
+ * dirty and nothing here ever writes it.
  */
 import { tick, untrack } from "svelte";
 import { SvelteSet } from "svelte/reactivity";
-import { Transaction, type EditorState } from "@codemirror/state";
+import { Transaction, type EditorState, type Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
-import { forceParsing } from "@codemirror/language";
+import { forceParsing, language as languageFacet } from "@codemirror/language";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type {
   Baseline,
@@ -37,6 +41,8 @@ import {
 } from "../editor/setup";
 import { isTaskLine, toggleTaskAtLine as toggleTaskLine } from "../editor/commands";
 import { openFindPanel } from "../editor/searchPanel";
+import { loadCodeLanguage } from "../editor/code/languages";
+import { createCodeState } from "../editor/code/state";
 import {
   currentEpoch,
   isIpcError,
@@ -63,6 +69,7 @@ import {
   rebase,
   relativeTo,
 } from "../utils/path";
+import { codeLanguageOf, type CodeLanguage } from "../utils/codeFiles";
 import { fileKindOf, titleOf } from "../utils/names";
 import { LARGE_DEBOUNCE_MS, LARGE_MAX_WAIT_MS, LARGE_NOTE_BYTES, retryDelay, saveDelay, sleep, within } from "./autosave";
 import { conflictCopyName } from "./conflict";
@@ -98,6 +105,14 @@ const RECENT_LIMIT = 50;
 const EXTERNAL_SCHEMES = /^(https?|mailto|tel):/i;
 /** Two baselines' mtimes are the same within this many ms (Rust's MTIME_EPS_MS). */
 const MTIME_EPS_MS = 0.001;
+/** Created files read at most to find where a vanished code file went (#moveCandidates). */
+const CODE_MOVE_CANDIDATES = 16;
+/** A shorter code file is too easily the twin of another (an empty `__init__.py`) to be followed by its text. */
+const CODE_MOVE_MIN_CHARS = 200;
+/** A code file's read that has not answered for this long no longer holds back the next one (#refreshCode). */
+const CODE_READ_STALE_MS = 10_000;
+/** Reads of one reconcile at most, when the note keeps moving or saving under it. */
+const RECONCILE_READS = 3;
 
 /** Where the user left a note (VAULT-03), as stored in the vault session. */
 export type NotePosition = NonNullable<VaultSession["last"]>;
@@ -121,6 +136,17 @@ type OpenResult = "ok" | "failed" | "stale";
 /** Per-note save controller plus its cached editor state (ARCHITECTURE §8.1). */
 interface Note {
   path: VaultPath;
+  /** A note is edited and saved. A code file is only shown: never dirty, never written (TREE-17). */
+  kind: TextKind;
+  /**
+   * The language a code file's state is colored as (`codeLanguageOf`), "text" when it has
+   * none or its grammar did not load; null for a note.
+   */
+  language: CodeLanguage | null;
+  /** Code file: the read under way for a change on disk, when it began, and the changes that came during it (#refreshCode). */
+  refresh: Promise<void> | null;
+  refreshSince: number;
+  refreshAgain: readonly VaultPath[] | null;
   /** Cached state; while the note is shown, the view's state is authoritative. */
   state: EditorState;
   /** `state` still carries the options it was created with and was never in the view. */
@@ -194,6 +220,10 @@ interface Snapshot {
   moves: number;
 }
 
+/** The kinds of file the editor view shows, each through a controller; the other kinds only set `kind`. */
+type TextKind = "note" | "code";
+const isTextKind = (kind: FileKind | null): kind is TextKind => kind === "note" || kind === "code";
+
 const dirty = (n: Note): boolean => n.version !== n.savedVersion;
 const baselineOf = (b: Baseline): Baseline => ({ mtime: b.mtime, size: b.size, hash: b.hash });
 /** Name used in toasts: NFC, notes without their extension. */
@@ -210,7 +240,10 @@ class EditorStore {
   revision = $state(0);
   canBack = $state(false);
   canForward = $state(false);
-  /** The open note's file is not writable (opened read-only; faint lock icon). */
+  /**
+   * The open file is not writable: a note opens read-only, with a faint lock icon, and
+   * the title of any file is locked. A code file is view-only whatever this says.
+   */
   readOnly = $state(false);
   /** Unsaved changes older than 2 s (stuck/failing save): titles render a lighter gray (SAVE-09). */
   saveStuck = $state(false);
@@ -344,23 +377,24 @@ class EditorStore {
   };
 
   /**
-   * Text of the main selection while a note is shown for editing, else "". Read from
-   * the editor state, which stays right while the DOM selection is still being
-   * restored (a command run from the palette).
+   * Text of the main selection while the editor view shows the file (a note being
+   * edited, or a code file), else "". Read from the editor state, which stays right
+   * while the DOM selection is still being restored (a command run from the palette).
    */
   selectedText = (): string =>
     untrack(() => {
       const view = this.#view;
-      if (!view || !this.#installed || this.kind !== "note" || this.viewMode !== "edit") return "";
+      if (!view || !this.#installed || !this.#editorShown()) return "";
       const { from, to } = view.state.selection.main;
       return view.state.sliceDoc(from, to);
     });
 
   /**
-   * Opens `path`: flush current → read (notes) → swap EditorState (cached state
-   * when the disk text still matches, else a fresh one) → update history/recent
-   * /session.lastFile → focus per opts. Images and other files only set `kind`:
-   * their views read nothing here (TREE-15, TREE-16). Folders do not open.
+   * Opens `path`: flush current → read (notes and code files) → swap EditorState
+   * (cached state when the disk text still matches, else a fresh one) → update
+   * history/recent/session.lastFile → focus per opts. A code file gets a read-only
+   * state in its language (TREE-17). Images and other files only set `kind`: their
+   * views read nothing here (TREE-15, TREE-16). Folders do not open.
    * On read failure: toast (errOpen/errNotText/errTooLarge) and keep the
    * previous document bound to its own path. Returns success.
    */
@@ -438,19 +472,20 @@ class EditorStore {
     });
 
   /**
-   * Opens the note's find panel from outside the editor (EDIT-09): reading view
-   * switches to editing first. Inside the editor, its own Mod-F binding handles it.
+   * Opens the find panel of the note or code file from outside the editor (EDIT-09):
+   * reading view switches to editing first. Inside the editor, its own Mod-F binding
+   * handles it.
    */
   openFind = (): Promise<void> =>
     untrack(async () => {
-      if (this.kind !== "note" || !this.#view || !this.#installed) return;
-      if (this.viewMode === "read") {
+      if (!isTextKind(this.kind) || !this.#view || !this.#installed) return;
+      if (this.kind === "note" && this.viewMode === "read") {
         this.viewMode = "edit";
         await tick(); // the editor slot is visible again
         this.#view?.requestMeasure();
       }
       const view = this.#view;
-      if (view && this.#installed && this.kind === "note" && this.viewMode === "edit") openFindPanel(view);
+      if (view && this.#installed && this.#editorShown()) openFindPanel(view);
     });
 
   /** Follows a link from the current note (see ARCHITECTURE §9.2). */
@@ -472,6 +507,7 @@ class EditorStore {
    * as a conflict copy, and if it was on screen the moved note is shown instead.
    * `sameEntry`: only the spelling changed, and the old one was proven to name the same
    * entry (a case-insensitive volume), so a save in flight under it reached the note's file.
+   * A shown file whose new name opens differently is opened again as what it is now.
    */
   onPathMoved = (from: VaultPath, to: VaultPath, sameEntry = false): void =>
     untrack(() => {
@@ -506,10 +542,10 @@ class EditorStore {
       this.#rewriteSession((p) => rebase(p, from, to) ?? p);
       if (replacement) {
         // The note on screen gave way: never leave the view on a disposed controller.
-        this.#setShown(replacement.path, "note", replacement);
+        this.#setShown(replacement.path, replacement.kind, replacement);
         this.#bind(replacement);
         this.#restoreScroll(replacement.scrollTop);
-        if (!replacement.virtual) this.#remember(replacement.path, true);
+        if (!replacement.virtual) this.#remember(replacement.path, replacement.kind === "note");
       }
       this.#syncStuck();
       // Live notes that were at the destination without a moved controller of their own (a
@@ -517,6 +553,9 @@ class EditorStore {
       const movedNotes = new Set(moved.map(([n]) => n));
       for (const n of [...this.#notes.values()])
         if (!movedNotes.has(n) && isSameOrAncestor(to, n.path)) void this.#reconcile(n);
+      // The shown file got a new name, or another file's controller took its place: either may open differently.
+      if (this.#shownIsStale())
+        this.#reopenShown().catch((e) => console.error("editor: showing a moved file again failed", e));
     });
 
   /**
@@ -531,11 +570,26 @@ class EditorStore {
    * to confirm): ignore our own echo, reload when clean, conflict copy when dirty,
    * follow a delete+create move to one of `movedTo` (same text), else apply the
    * external-delete rule (SAVE-05/06/07). `path` is matched exactly, then by key().
+   * A code file is never dirty: it is reloaded, follows a move, or closes.
    */
   onExternalChange = (path: VaultPath, movedTo?: readonly VaultPath[]): Promise<void> =>
     untrack(() => {
       const n = this.#find(path);
-      return n ? this.#reconcile(n, { candidates: movedTo }) : Promise.resolve();
+      if (!n) return Promise.resolve();
+      return n.kind === "code" ? this.#refreshCode(n, movedTo) : this.#reconcile(n, { candidates: movedTo });
+    });
+
+  /**
+   * The window came forward (TREE-12): watchers miss changes on network volumes, so the
+   * open note or code file is read again. A big code file is not: megabytes read on every
+   * focus cost more than they give, and the watcher still reports its changes.
+   */
+  recheckOpen = (): Promise<void> =>
+    untrack(() => {
+      const n = this.#current;
+      if (!n || n.disposed || n.virtual || n.path !== this.path) return Promise.resolve();
+      if (n.kind === "code" && (n.baseline?.size ?? 0) > LARGE_NOTE_BYTES) return Promise.resolve();
+      return this.onExternalChange(n.path);
     });
 
   /**
@@ -670,11 +724,11 @@ class EditorStore {
   async #open(path: VaultPath, opts: OpenOptions): Promise<OpenResult> {
     if (!vault.info) return "failed";
     const node = vault.node(path);
-    const kind = fileKindOf(path);
+    const kind = this.#kindOf(path);
     // Nothing is read for another kind of file, so only a listed one opens: never a folder.
     if (node?.kind === "dir" || (kind === "other" && node === undefined)) return "failed";
     const seq = ++this.#openSeq;
-    if (path === this.path && kind === this.kind && (kind !== "note" || this.#current?.path === path)) {
+    if (path === this.path && kind === this.kind && (!isTextKind(kind) || this.#current?.path === path)) {
       if (opts.history !== false) this.#history.push({ path, virtual: this.virtual });
       this.#syncHistory();
       if (opts.line !== undefined) this.#revealLine(opts.line, "center", opts.select);
@@ -687,7 +741,10 @@ class EditorStore {
     if (prev) await within(this.#flushNote(prev), SWITCH_FLUSH_MS);
     if (seq !== this.#openSeq) return "stale";
 
-    if (kind !== "note") {
+    if (!isTextKind(kind)) {
+      // A controller left at this path, from when its name was a note's or a code file's, has nothing to show.
+      const left = this.#notes.get(path);
+      if (left && !dirty(left)) this.#drop(left);
       this.#setShown(path, kind, null);
       this.#bind(null);
       this.#finishOpen(path, false, opts);
@@ -696,19 +753,39 @@ class EditorStore {
 
     this.loading = true;
     try {
-      return await this.#openNote(path, opts, seq);
+      return await this.#openNote(path, kind, opts, seq);
     } finally {
       if (seq === this.#openSeq) this.loading = false;
     }
   }
 
-  async #openNote(path: VaultPath, opts: OpenOptions, seq: number): Promise<OpenResult> {
+  /**
+   * What `path` opens as: what its name says, except that a note whose unsaved text an
+   * external rename carried to another name stays a note until that text is saved.
+   */
+  #kindOf(path: VaultPath): FileKind {
+    const live = this.#notes.get(path);
+    return live && live.kind === "note" && dirty(live) ? "note" : fileKindOf(path);
+  }
+
+  /** The editor view shows the open file: a note being edited, or a code file. */
+  #editorShown(): boolean {
+    return this.kind === "code" || (this.kind === "note" && this.viewMode === "edit");
+  }
+
+  async #openNote(path: VaultPath, kind: TextKind, opts: OpenOptions, seq: number): Promise<OpenResult> {
     const cached = this.#notes.get(path);
     if (cached?.inFlight) await within(cached.inFlight, SWITCH_FLUSH_MS);
     let disk: FileContent;
     let recovery: RecoveryCopy | null;
+    let language: Extension | null;
     try {
-      [disk, recovery] = await Promise.all([noteRead(path), recoveryGet(path).catch(() => null)]);
+      // A code file is never written, so it has no recovery copy; its language loads beside the read.
+      [disk, recovery, language] = await Promise.all([
+        noteRead(path),
+        kind === "note" ? recoveryGet(path).catch(() => null) : null,
+        kind === "code" ? loadCodeLanguage(path) : null,
+      ]);
     } catch (e) {
       if (seq !== this.#openSeq) return "stale";
       this.#openFailed(path, e);
@@ -722,6 +799,12 @@ class EditorStore {
     let n = this.#notes.get(path) ?? null;
     const remembered = n?.eol ?? "\n";
     let reconcile = false;
+    // A clean controller built for another kind or language (the file was renamed since, or
+    // its grammar did not load last time) is built anew.
+    if (n && !dirty(n) && (n.kind !== kind || n.language !== (kind === "code" ? codeLanguageOf(path) : null))) {
+      this.#drop(n);
+      n = null;
+    }
     if (n) {
       const buf = this.#stateOf(n).doc.toString();
       if (text === n.lastSaved || text === buf) {
@@ -737,16 +820,16 @@ class EditorStore {
       if (recovery) n.recovery = true; // the live buffer is newer; its next save clears the copy
     } else {
       const eol = detected ?? remembered;
-      n = this.#createNote(path, text, disk, eol);
+      n = this.#createNote(path, text, disk, eol, kind === "code" ? { language } : undefined);
       if (recovery) this.#applyRecovery(n, recovery, disk, text, eol);
     }
 
-    this.#setShown(path, "note", n);
+    this.#setShown(path, n.kind, n);
     this.#bind(n);
     if (opts.line !== undefined) this.#revealLine(opts.line, "center", opts.select);
     else if (opts.position) this.#restorePosition(n, opts.position);
     else this.#restoreScroll(n.scrollTop);
-    this.#finishOpen(path, true, opts);
+    this.#finishOpen(path, n.kind === "note", opts);
     if (reconcile) void this.#reconcile(n);
     return "ok";
   }
@@ -811,7 +894,7 @@ class EditorStore {
       void tick().then(() => {
         if (seq === this.#openSeq && this.kind === "note" && this.viewMode === "edit") this.focusEditor("start");
       });
-    } else if (focus === "editor" && this.kind === "note" && this.viewMode === "edit") this.#view?.focus();
+    } else if (focus === "editor" && this.#editorShown()) this.#view?.focus();
   }
 
   /** Reactive fields describing what is shown; set before the view swaps state so the host sees the new path. */
@@ -860,8 +943,14 @@ class EditorStore {
     this.#installed = n;
     if (!n.pristine) reconfigureEditor(view, this.#optsFor(n));
     n.pristine = false;
-    // LIVE-16: parse the visible region before the first paint.
-    forceParsing(view, Math.min(view.state.doc.length, view.viewport.to + 2500), 100);
+    // LIVE-16: parse the visible region before the first paint. A plain-text state has
+    // nothing to parse, and a parser that fails must not fail the open.
+    if (view.state.facet(languageFacet) === null) return;
+    try {
+      forceParsing(view, Math.min(view.state.doc.length, view.viewport.to + 2500), 100);
+    } catch (e) {
+      console.error("editor: parsing the first screen failed", e);
+    }
   }
 
   #blank(): EditorState {
@@ -883,16 +972,28 @@ class EditorStore {
     if (this.#view === view && n && !n.disposed) reconfigureEditor(view, this.#optsFor(n));
   }
 
-  #createNote(path: VaultPath, text: string, disk: FileContent | null, eol: LineEnding): Note {
+  /** `code`: a controller for a code file, its state read-only in `language` (null: plain text). */
+  #createNote(
+    path: VaultPath,
+    text: string,
+    disk: FileContent | null,
+    eol: LineEnding,
+    code?: { language: Extension | null },
+  ): Note {
     const readOnly = disk?.readOnly ?? false;
-    const large = (disk?.size ?? 0) > LARGE_NOTE_BYTES;
-    const state = createEditorState(text, this.host, {
-      livePreview: settings.values.editorMode === "live" && !large,
-      spellcheck: settings.values.spellcheck,
-      readOnly,
-    });
+    // Source mode and the slow autosave are for notes (SAVE-11); a code file has neither to give up.
+    const large = !code && (disk?.size ?? 0) > LARGE_NOTE_BYTES;
+    const state = code
+      ? createCodeState(text, code.language)
+      : createEditorState(text, this.host, {
+          livePreview: settings.values.editorMode === "live" && !large,
+          spellcheck: settings.values.spellcheck,
+          readOnly,
+        });
     const n: Note = {
       path,
+      kind: code ? "code" : "note",
+      language: !code ? null : code.language === null ? "text" : codeLanguageOf(path),
       state,
       pristine: true,
       baseline: disk ? baselineOf(disk) : null,
@@ -923,6 +1024,9 @@ class EditorStore {
       readSeq: 0,
       moves: 0,
       conflict: null,
+      refresh: null,
+      refreshSince: 0,
+      refreshAgain: null,
     };
     this.#notes.set(path, n);
     return n;
@@ -988,6 +1092,81 @@ class EditorStore {
     n.recovery = true;
     this.#schedule(n);
     this.#updateStuck(n);
+  }
+
+  /** The shown file's name now says another kind of file, or another language, than its view was built for. */
+  #shownIsStale(): boolean {
+    const path = this.path;
+    if (path === null) return false;
+    const n = this.#current;
+    // Unsaved note text keeps its editor, whatever the file is called now.
+    if (n && dirty(n)) return false;
+    const kind = fileKindOf(path);
+    if (kind !== this.kind) return true;
+    return kind === "code" && n !== null && n.language !== codeLanguageOf(path);
+  }
+
+  /**
+   * Shows the open file again as what its name now says, after a move: a text file renamed
+   * to `.md` becomes an editable note, a script renamed to another language is recolored,
+   * a name without a view gets the notice of TREE-16. The selection and the scroll position
+   * carry over, because the text is the same.
+   *
+   * This is not a navigation. It takes no turn in `#openSeq`, so it never cancels an open
+   * the user started, and it gives up as soon as one starts or the file moves again (that
+   * move calls it anew). History and the tree are left as they are.
+   */
+  async #reopenShown(): Promise<void> {
+    const path = this.path;
+    if (path === null) return;
+    const seq = this.#openSeq;
+    const outdated = (): boolean => seq !== this.#openSeq || this.path !== path;
+    const kind = fileKindOf(path);
+    const old = this.#current;
+    let position: NotePosition | undefined;
+    if (old && !old.disposed) {
+      const { anchor, head } = this.#stateOf(old).selection.main;
+      const scrollTop = old === this.#installed && this.#scroller ? this.#scroller.scrollTop : old.scrollTop;
+      position = { anchor, head, scrollTop, mode: this.viewMode };
+    }
+    const active = document.activeElement;
+    const focus: OpenOptions["focus"] = this.#view && active !== null && this.#view.dom.contains(active) ? "editor" : "none";
+
+    let disk: FileContent | null = null;
+    let recovery: RecoveryCopy | null = null;
+    let language: Extension | null = null;
+    if (isTextKind(kind)) {
+      try {
+        // As in #openNote: a note's recovery copy, a code file's language.
+        [disk, recovery, language] = await Promise.all([
+          noteRead(path),
+          kind === "note" ? recoveryGet(path).catch(() => null) : null,
+          kind === "code" ? loadCodeLanguage(path) : null,
+        ]);
+      } catch (e) {
+        if (!outdated()) this.#openFailed(path, e);
+        return;
+      }
+      if (outdated()) return;
+    }
+    const left = this.#notes.get(path) ?? null;
+    if (left && dirty(left)) return;
+    const remembered = left?.eol ?? "\n";
+    if (left) this.#drop(left);
+    let n: Note | null = null;
+    if (disk !== null) {
+      const text = toLF(disk.content);
+      const eol = detectLineEnding(disk.content) ?? remembered;
+      n = this.#createNote(path, text, disk, eol, kind === "code" ? { language } : undefined);
+      // Unsaved text once left for this path is not lost under the file that took its name (§8.4).
+      if (recovery) this.#applyRecovery(n, recovery, disk, text, eol);
+    }
+    this.#setShown(path, kind, n);
+    this.#bind(n);
+    if (n && position) this.#restorePosition(n, position);
+    else if (n) this.#restoreScroll(n.scrollTop);
+    this.#remember(path, kind === "note");
+    this.#focus(focus);
   }
 
   // ── History ──────────────────────────────────────────────────────────────
@@ -1093,7 +1272,7 @@ class EditorStore {
   #rememberPosition(): void {
     const root = vault.info?.root;
     const n = this.#current;
-    if (!root || !n || n.disposed || this.kind !== "note" || this.path !== n.path) return;
+    if (!root || !n || n.disposed || !isTextKind(this.kind) || this.path !== n.path) return;
     const s = settings.session(root);
     if (s.lastFile !== n.path) return; // virtual notes are never lastFile
     const { anchor, head } = this.#stateOf(n).selection.main;
@@ -1113,7 +1292,7 @@ class EditorStore {
     const view = this.#view;
     if (view && this.#installed === n) view.dispatch({ selection });
     else n.state = n.state.update({ selection }).state;
-    if (pos.mode === "edit" || pos.mode === "read") this.viewMode = pos.mode;
+    if (n.kind === "note" && (pos.mode === "edit" || pos.mode === "read")) this.viewMode = pos.mode;
     n.scrollTop = Math.max(0, num(pos.scrollTop));
     this.#restoreScroll(n.scrollTop);
   }
@@ -1122,7 +1301,7 @@ class EditorStore {
 
   #onDocChanged(): void {
     const n = this.#installed;
-    if (!n || n.disposed) return;
+    if (!n || n.disposed || n.kind !== "note") return;
     n.version++;
     const now = Date.now();
     n.firstDirtyAt ??= now;
@@ -1160,7 +1339,8 @@ class EditorStore {
     }
     if (n.conflicting) return n.conflicting;
     this.#clearTimer(n);
-    if (n.disposed || n.frozen || n.readOnly || !dirty(n)) return Promise.resolve();
+    // Only a note is ever written: a code file's controller saves nothing, whatever its state.
+    if (n.disposed || n.frozen || n.readOnly || n.kind !== "note" || !dirty(n)) return Promise.resolve();
     const snap: Snapshot = {
       path: n.path,
       text: this.#stateOf(n).doc.toString(),
@@ -1336,6 +1516,42 @@ class EditorStore {
 
   // ── External changes (§8.2) ──────────────────────────────────────────────
 
+  /**
+   * A code file changed on disk, or may have. Its view is only ever reloaded or closed, so
+   * its reads need not race the way a note's do: one runs at a time, and a change that
+   * arrives meanwhile is read once more after it. A big file written faster than it can be
+   * read then still shows each version it was read at, instead of none.
+   */
+  #refreshCode(n: Note, movedTo?: readonly VaultPath[]): Promise<void> {
+    // A read that has not answered for long (a hung volume) is given up on: it must not park the file for good.
+    if (n.refresh && Date.now() - n.refreshSince < CODE_READ_STALE_MS) {
+      // Whatever the changes waiting were told about where the file may have gone stays known.
+      n.refreshAgain = [...(n.refreshAgain ?? []), ...(movedTo ?? [])];
+      return n.refresh;
+    }
+    const again = (): readonly VaultPath[] | null => n.refreshAgain;
+    // Declared before it is assigned: the run asks whether the slot still holds it.
+    let run: Promise<void> | null = null;
+    run = (async () => {
+      try {
+        for (let candidates = movedTo; ; ) {
+          n.refreshAgain = null;
+          n.refreshSince = Date.now();
+          await this.#reconcile(n, { candidates });
+          const next = again();
+          if (n.disposed || n.refresh !== run || next === null) break;
+          candidates = next;
+        }
+      } finally {
+        // In the same step as the loop's last look at `refreshAgain`: no change can slip in between.
+        if (n.refresh === run) n.refresh = null;
+      }
+    })();
+    n.refresh = run;
+    n.refreshSince = Date.now();
+    return run;
+  }
+
   async #reconcile(
     n: Note,
     opts: { afterFailedSave?: boolean; candidates?: readonly VaultPath[]; emptyConfirmed?: boolean } = {},
@@ -1354,8 +1570,9 @@ class EditorStore {
       }
       seq = ++n.readSeq;
       disk = null;
+      const path = n.path;
       try {
-        disk = await noteRead(n.path, n.epoch);
+        disk = await noteRead(path, n.epoch);
       } catch (e) {
         if (n.disposed || seq !== n.readSeq) return;
         if (!isIpcError(e, "not_found")) {
@@ -1364,8 +1581,13 @@ class EditorStore {
         }
       }
       if (n.disposed || seq !== n.readSeq) return;
+      if (n.path !== path) {
+        // Moved during the read: the answer, "gone" above all, is about the old path. Ask at the new one.
+        if (attempt + 1 < RECONCILE_READS) continue;
+        return;
+      }
       // A save that started during the read may already be on disk without `lastSaved` knowing it.
-      if (opts.afterFailedSave || (!n.inFlight && !n.conflicting) || attempt >= 2) break;
+      if (opts.afterFailedSave || (!n.inFlight && !n.conflicting) || attempt + 1 >= RECONCILE_READS) break;
     }
     if (disk === null) {
       await this.#vanished(n, opts.candidates ?? []);
@@ -1418,8 +1640,10 @@ class EditorStore {
           annotations: [External.of(true), Transaction.addToHistory.of(false)],
         }).state;
     }
-    n.large = disk.size > LARGE_NOTE_BYTES;
-    this.tooLarge = n.large; // attach()'s options effect reconfigures the view when this flips
+    if (n.kind === "note") {
+      n.large = disk.size > LARGE_NOTE_BYTES;
+      this.tooLarge = n.large; // attach()'s options effect reconfigures the view when this flips
+    }
     this.revision++;
   }
 
@@ -1501,7 +1725,7 @@ class EditorStore {
     // `buf`: keystrokes typed during the reads below stay unsaved.
     const buf = this.#stateOf(n).doc.toString();
     const version = n.version;
-    for (const c of candidates) {
+    for (const c of this.#moveCandidates(n, candidates, buf.length)) {
       if (c === n.path || this.#notes.has(c)) continue;
       let other: FileContent;
       try {
@@ -1527,6 +1751,21 @@ class EditorStore {
     }
     const path = n.path;
     this.#forget((p) => p === path);
+  }
+
+  /**
+   * The created files that may be `n` under a new name. A note follows notes. A code file
+   * of `chars` characters follows code files that kept its name or its folder, and only a
+   * few of them: nothing is lost when its view just closes, and a checkout creates files by
+   * the hundred. A short one follows none, because short files have twins.
+   */
+  #moveCandidates(n: Note, created: readonly VaultPath[], chars: number): VaultPath[] {
+    const alike = created.filter((c) => fileKindOf(c) === n.kind);
+    if (n.kind === "note") return alike;
+    if (chars < CODE_MOVE_MIN_CHARS) return [];
+    const name = key(basename(n.path));
+    const dir = dirname(n.path);
+    return alike.filter((c) => key(basename(c)) === name || dirname(c) === dir).slice(0, CODE_MOVE_CANDIDATES);
   }
 
   /** Adopts the file's metadata and style (EDIT-02: line-ending/BOM-only changes stick). */

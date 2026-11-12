@@ -5,10 +5,12 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { settingsLoad, settingsSave } from "../ipc/commands";
 import type { Settings, VaultSession } from "../types";
+import { monoFontValue, sanitizeFontFamily } from "../utils/fonts";
 import { sanitizeShortcuts } from "../utils/keys";
 
 export const DEFAULT_SETTINGS: Settings = {
   fontSize: 15,
+  codeFont: "",
   lineWidth: 720,
   theme: "system",
   editorMode: "live",
@@ -47,6 +49,7 @@ function sanitize(raw: Partial<Settings> | undefined): Settings {
   const bool = (v: unknown, fallback: boolean): boolean => (typeof v === "boolean" ? v : fallback);
   return {
     fontSize: clamp(Number(s.fontSize) || d.fontSize, FONT_SIZE_MIN, FONT_SIZE_MAX),
+    codeFont: sanitizeFontFamily(s.codeFont),
     lineWidth: Math.max(0, Number(s.lineWidth) || 0),
     theme: pick(s.theme, ["system", "light", "dark"] as const, "system"),
     editorMode: pick(s.editorMode, ["live", "source"] as const, "live"),
@@ -137,6 +140,10 @@ class SettingsStore {
     const v = this.values;
     const root = document.documentElement;
     root.style.setProperty("--fs-content", `${v.fontSize}px`);
+    // The chosen family comes first; the default stack stays behind it as the fallback.
+    const mono = monoFontValue(v.codeFont);
+    if (mono === null) root.style.removeProperty("--font-mono");
+    else root.style.setProperty("--font-mono", mono);
     root.style.setProperty("--content-max", v.lineWidth > 0 ? `${v.lineWidth}px` : "none");
     root.style.setProperty("--sidebar-width", `${v.sidebarWidth}px`);
     if (v.theme === "system") root.removeAttribute("data-theme");

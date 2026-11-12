@@ -1,6 +1,6 @@
 # mininote
 
-mininote is a lightweight local Markdown notes app, Obsidian-like: a folder ("vault") of `.md` files with sub-folders, live-preview editing, and autosave.
+mininote is a lightweight local Markdown notes app, Obsidian-like: a folder ("vault") of `.md` files with sub-folders, live-preview editing, and autosave. Code files in the folder open in a read-only viewer with syntax colors.
 
 **Stack:** Tauri 2 (Rust) + Svelte 5 (runes) + TypeScript + Vite + CodeMirror 6 + markdown-it + DOMPurify. Targets Windows, macOS, and Linux.
 
@@ -48,6 +48,8 @@ npm run release:prepare    # validate the versions and write the updater overlay
   - `src/lib/ipc/*` mirrors the Rust command and event names.
   - `src/lib/editor/host.ts` is the only bridge from CodeMirror extensions to app state; editor modules never import stores.
   - Lezer node names (`WikiLink`, `WikiLinkMark`, `WikiLinkTarget`, `WikiLinkAlias`, `WikiEmbed`, `Highlight`, `HighlightMark`) are defined in `src/lib/editor/syntax.ts`.
+  - What counts as a code file, and its language, is the table in `src/lib/utils/codeFiles.ts`. Its extensions, names and name prefixes are mirrored in `src-tauri/src/fs_ops.rs` (`CODE_EXTS`, `CODE_NAMES`, `CODE_NAME_PREFIXES`); change both together, and give a new language a loader in `src/lib/editor/code/languages.ts`. `codeFiles.test.ts` fails when the two sides differ.
+  - A code file is never written: its editor state is read-only (`editor/code/state.ts`), and the editor store saves only controllers of kind `"note"`.
   - The block dialect (no setext headings, no lazy continuation lines) has two halves that must agree: `Dialect` in `src/lib/editor/syntax.ts` and `src/lib/markdown/plugins/dialect.ts`. Change both, and their tests, together.
   - Command ids (`src/lib/appCommands.ts`) and `EDITOR_SHORTCUTS` ids (`src/lib/editor/commands.ts`) are persisted: the user's shortcuts are stored under them. Never rename one.
 - **Paths.**
@@ -60,7 +62,7 @@ npm run release:prepare    # validate the versions and write the updater overlay
   - Show no visible labels unless essential. Icons carry `aria-label`, not `title`.
   - Report errors only, through `ui.notify`.
 - **CSS.**
-  - Use only the variables in `src/styles/tokens.css`, and only grays.
+  - Use only the variables in `src/styles/tokens.css`, and only grays. The one exception is the `--c-syn-*` syntax colors, used by the code view's highlight style and nothing else (DESIGN §6).
   - A Markdown construct looks the same in the reading view (`markdown.css`) and the editor (`editor.css`): both take its measures from the `--md-*` tokens. Change the token, never one stylesheet.
   - In the editor a blank line is a body line. Never shrink or restyle it; block gaps are padding on a block's first line (`livePreview/flow.ts`, DESIGN §3.2).
   - Inside rendered Markdown, blocks have **no margins**. Vertical space comes only from sibling-pair rules (`CONTAINER > :where(A + B)`).

@@ -56,10 +56,11 @@
   }: Props = $props();
 
   const node = $derived(row.node);
-  /** A folder that opens and closes, a page for notes, a picture for images, a blank page for anything else. */
+  /** A folder that opens and closes, a page for notes, a picture for images, a page of code, a blank page for anything else. */
   const icon: IconName = $derived.by(() => {
     if (node.kind === "dir") return row.expanded ? "folder-open" : "folder";
     if (node.fileKind === "note") return "note";
+    if (node.fileKind === "code") return "code";
     return node.fileKind === "image" ? "image" : "file";
   });
 
@@ -253,7 +254,7 @@
   {id}
   class="row"
   class:folder={node.kind === "dir"}
-  class:muted={node.kind === "file" && node.fileKind !== "note"}
+  class:muted={node.fileKind === "image" || node.fileKind === "other"}
   class:selected
   class:open
   class:stuck
@@ -336,7 +337,7 @@
     background: var(--c-bg-active);
   }
 
-  /* Images and other files: secondary to the notes (DESIGN §4). */
+  /* Images and unsupported files: secondary to the notes and the code, which open as text (DESIGN §4). */
   .row.muted {
     color: var(--c-text-muted);
   }

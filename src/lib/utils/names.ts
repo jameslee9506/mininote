@@ -1,20 +1,22 @@
 /** File-name rules shared by the tree, inline title and note creation. */
 import type { FileKind } from "../types";
+import { codeLanguageOf } from "./codeFiles";
 import { extname, key } from "./path";
 
 export const NOTE_EXTS = ["md", "markdown"] as const;
 export const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"] as const;
 
 /**
- * What a file name (or a path: its last segment) names, by its extension: a note,
- * an image, or another file. The tree lists every file; only notes and images open
- * in a view of their own (TREE-15, TREE-16).
+ * What a file name (or a path: its last segment) names: a note or an image by its
+ * extension, a code file by the table of `codeFiles.ts`, or another file. The tree
+ * lists every file; notes, images and code open in a view of their own (TREE-15,
+ * TREE-16, TREE-17).
  */
 export function fileKindOf(name: string): FileKind {
   const e = extname(name);
   if ((NOTE_EXTS as readonly string[]).includes(e)) return "note";
   if ((IMAGE_EXTS as readonly string[]).includes(e)) return "image";
-  return "other";
+  return codeLanguageOf(name) === null ? "other" : "code";
 }
 
 /** Display title: notes drop ".md"/".markdown"; everything else keeps its name. */
