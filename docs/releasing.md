@@ -126,6 +126,27 @@ npm run tauri -- build --target aarch64-apple-darwin --config src-tauri/tauri.up
 Use `x86_64-apple-darwin` for Intel. A local build publishes nothing and does not update
 `latest.json`; only the workflow does.
 
+## Install a local build
+
+To run the working tree as the installed app on this Mac, without a release: build only the `.app`,
+sign it ad hoc, and put it in place of the installed one.
+
+```sh
+npm run tauri -- build --bundles app
+ditto src-tauri/target/release/bundle/macos/mininote.app /Applications/mininote-new.app
+codesign --force --sign - /Applications/mininote-new.app
+# Quit mininote, then:
+rm -rf /Applications/mininote.app
+mv /Applications/mininote-new.app /Applications/mininote.app
+open -g /Applications/mininote.app
+```
+
+The bundler signs nothing in an ordinary local build: the binary carries only the linker's ad-hoc
+signature. `codesign --sign -` seals the bundle and binds it to the app identifier
+(`com.mininote.desktop`). Quit with Cmd+Q, which writes every note first (ARCHITECTURE §6.6). When
+the quit is scripted, do it only while the mininote window is not focused: losing focus has
+already saved everything (ARCHITECTURE §8.1). The version and the tags stay as they are.
+
 ## Apple signing and notarization
 
 The updater signature and Apple's Developer ID signature serve different purposes. The updater key

@@ -33,6 +33,7 @@ npm run release:prepare    # validate the versions and write the updater overlay
 - Use stable `X.Y.Z` versions and matching `vX.Y.Z` tags; no prerelease or build suffixes. Nothing has been published yet: the first release must be installed by hand once, and every later one installs from inside the app.
 - Keep `package.json`, `package-lock.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml` and `src-tauri/Cargo.lock` on the same version (`npm install --package-lock-only`, then `cargo check` in `src-tauri`), and commit the lockfiles with the bump. `npm run release:prepare` checks this.
 - Pass the checks above before pushing a release commit and its tag. The tag starts `.github/workflows/release.yml`, which creates a **draft** release; publish it only after every platform job is green.
+- A local reinstall is not a release: build the `.app`, sign it ad hoc and replace `/Applications/mininote.app`, with no version bump and no tag (`docs/releasing.md`, "Install a local build").
 - Never move or reuse a published tag; bump the version instead. Keep the app identifier and the updater signing key stable, or installed apps stop trusting updates. Setup and details: `docs/releasing.md`.
 - The signing key is set up: `~/.tauri/mininote.key` (+ `.pub`), its password in the login keychain under the service `mininote-tauri-updater-key`, and the repository's Actions variable `TAURI_UPDATER_PUBLIC_KEY` plus secrets `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Back them up; never generate a second key.
 
