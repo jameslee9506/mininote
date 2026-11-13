@@ -13,6 +13,7 @@ export const DEFAULT_SETTINGS: Settings = {
   codeFont: "",
   lineWidth: 720,
   theme: "system",
+  iconTheme: "filled",
   editorMode: "live",
   spellcheck: false,
   inlineTitle: true,
@@ -52,6 +53,7 @@ function sanitize(raw: Partial<Settings> | undefined): Settings {
     codeFont: sanitizeFontFamily(s.codeFont),
     lineWidth: Math.max(0, Number(s.lineWidth) || 0),
     theme: pick(s.theme, ["system", "light", "dark"] as const, "system"),
+    iconTheme: pick(s.iconTheme, ["outline", "filled", "color"] as const, d.iconTheme),
     editorMode: pick(s.editorMode, ["live", "source"] as const, "live"),
     spellcheck: bool(s.spellcheck, d.spellcheck),
     inlineTitle: bool(s.inlineTitle, d.inlineTitle),
@@ -135,7 +137,7 @@ class SettingsStore {
     await this.#saving;
   };
 
-  /** Pushes settings into CSS variables / theme attribute on <html>. */
+  /** Pushes settings into CSS variables and the theme and icon-set attributes on <html>. */
   apply = (): void => {
     const v = this.values;
     const root = document.documentElement;
@@ -148,6 +150,8 @@ class SettingsStore {
     root.style.setProperty("--sidebar-width", `${v.sidebarWidth}px`);
     if (v.theme === "system") root.removeAttribute("data-theme");
     else root.setAttribute("data-theme", v.theme);
+    // The icon set is CSS only: tokens.css maps the attribute to the tree's folder color and fill.
+    root.setAttribute("data-icons", v.iconTheme);
     // One IPC call per actual change: Resizer drags call update() every frame.
     if (v.theme === this.#windowTheme) return;
     this.#windowTheme = v.theme;

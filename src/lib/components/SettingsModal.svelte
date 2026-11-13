@@ -1,6 +1,7 @@
 <script lang="ts">
   // Settings (SET-02): one row per setting, label left and control right, no
-  // descriptions. Every change applies at once through settings.update. The code
+  // descriptions. Every change applies at once through settings.update. An icon set
+  // is chosen by its own folder and note, drawn instead of named (SET-08). The code
   // font is a monospaced family installed here, listed or typed by hand (SET-07).
   // The shortcuts row opens the shortcut list in the same panel (SET-06); a quiet
   // last row shows the app version.
@@ -11,8 +12,8 @@
   import { FONT_SIZE_MAX, FONT_SIZE_MIN, settings } from "../state/settings.svelte";
   import { ui } from "../state/ui.svelte";
   import { updater } from "../state/updater.svelte";
-  import { t, type MessageKey } from "../i18n";
-  import type { Settings, ThemeMode } from "../types";
+  import { t } from "../i18n";
+  import type { IconTheme, Settings, ThemeMode } from "../types";
   import { installedMonoFonts, monoFontProbe, sanitizeFontFamily } from "../utils/fonts";
   import { validateName } from "../utils/names";
   import { nfc } from "../utils/path";
@@ -24,10 +25,16 @@
   }
 
   const LINE_WIDTHS = [640, 720, 800, 960];
-  const THEMES: { value: ThemeMode; label: MessageKey }[] = [
-    { value: "system", label: "themeSystem" },
-    { value: "light", label: "themeLight" },
-    { value: "dark", label: "themeDark" },
+  const THEMES: Option[] = [
+    { value: "system", label: t("themeSystem") },
+    { value: "light", label: t("themeLight") },
+    { value: "dark", label: t("themeDark") },
+  ];
+  /** The icon sets (SET-08). A segment shows its set; the label is only its accessible name. */
+  const ICON_THEMES: Option[] = [
+    { value: "outline", label: t("iconsOutline") },
+    { value: "filled", label: t("iconsFilled") },
+    { value: "color", label: t("iconsColor") },
   ];
   const NEW_NOTE_LOCATIONS: Option[] = [
     { value: "current", label: t("locationCurrent") },
@@ -60,7 +67,6 @@
   );
 
   let page = $state<"general" | "shortcuts">("general");
-  let themeGroup: HTMLElement | undefined = $state();
   let shortcutsRow: HTMLButtonElement | undefined = $state();
   let backButton: HTMLButtonElement | undefined = $state();
   let folderDraft = $state(settings.values.attachmentFolder);
@@ -75,15 +81,20 @@
     if (size >= FONT_SIZE_MIN && size <= FONT_SIZE_MAX) settings.update({ fontSize: size });
   }
 
-  /** Radio-group keys: arrows move the choice and the focus together. */
-  function onThemeKeydown(e: KeyboardEvent): void {
+  /** Radio-group keys, on the segment at `at`: arrows move the choice and the focus together. */
+  function onSegmentKeydown(
+    e: KeyboardEvent & { currentTarget: HTMLElement },
+    options: Option[],
+    at: number,
+    set: (value: string) => void,
+  ): void {
     if (isComposing(e)) return;
     const delta = e.key === "ArrowRight" || e.key === "ArrowDown" ? 1 : e.key === "ArrowLeft" || e.key === "ArrowUp" ? -1 : 0;
     if (delta === 0) return;
     e.preventDefault();
-    const next = (THEMES.findIndex((o) => o.value === v.theme) + delta + THEMES.length) % THEMES.length;
-    settings.update({ theme: THEMES[next].value });
-    (themeGroup?.children[next] as HTMLElement | undefined)?.focus();
+    const next = (at + delta + options.length) % options.length;
+    set(String(options[next].value));
+    (e.currentTarget.parentElement?.children[next] as HTMLElement | undefined)?.focus();
   }
 
   /** "a\b/ c /" → "a/b/c" (NFC); null when empty or when a segment is not a valid folder name. */
@@ -176,6 +187,35 @@
   });
 </script>
 
+<!-- A radio group of segments. With `icons`, the options are icon sets: each segment draws its own. -->
+{#snippet segmented(id: string, label: string, value: string, options: Option[], set: (value: string) => void, icons = false)}
+  <div class="row">
+    <span class="label" id="{uid}-{id}">{label}</span>
+    <div class="segmented" role="radiogroup" aria-labelledby="{uid}-{id}">
+      {#each options as o, i (o.value)}
+        <button
+          type="button"
+          class:icons
+          role="radio"
+          aria-checked={o.value === value}
+          aria-label={icons ? o.label : undefined}
+          tabindex={o.value === value ? 0 : -1}
+          data-icons={icons ? o.value : undefined}
+          onclick={() => set(String(o.value))}
+          onkeydown={(e) => onSegmentKeydown(e, options, i, set)}
+        >
+          {#if icons}
+            <span class="sample folder"><Icon name="folder" /></span>
+            <span class="sample"><Icon name="note" /></span>
+          {:else}
+            {o.label}
+          {/if}
+        </button>
+      {/each}
+    </div>
+  </div>
+{/snippet}
+
 {#snippet toggle(id: string, label: string, checked: boolean, set: (on: boolean) => void)}
   <label class="row">
     <span class="label" id="{uid}-{id}">{label}</span>
@@ -208,21 +248,15 @@
     <ShortcutSettings />
   {:else}
     <div class="settings">
-      <div class="row">
-        <span class="label" id="{uid}-theme">{t("theme")}</span>
-        <div bind:this={themeGroup} class="segmented" role="radiogroup" aria-labelledby="{uid}-theme">
-          {#each THEMES as option (option.value)}
-            <button
-              type="button"
-              role="radio"
-              aria-checked={v.theme === option.value}
-              tabindex={v.theme === option.value ? 0 : -1}
-              onclick={() => settings.update({ theme: option.value })}
-              onkeydown={onThemeKeydown}>{t(option.label)}</button
-            >
-          {/each}
-        </div>
-      </div>
+      {@render segmented("theme", t("theme"), v.theme, THEMES, (theme) => settings.update({ theme: theme as ThemeMode }))}
+      {@render segmented(
+        "icons",
+        t("iconTheme"),
+        v.iconTheme,
+        ICON_THEMES,
+        (icons) => settings.update({ iconTheme: icons as IconTheme }),
+        true,
+      )}
 
       <div class="row">
         <span class="label" id="{uid}-font">{t("fontSize")}</span>
@@ -391,7 +425,7 @@
     font-weight: var(--fw-strong);
   }
 
-  /* Segmented control (theme). */
+  /* Segmented control (theme, icon set). */
   .segmented {
     display: inline-flex;
     flex: none;
@@ -419,6 +453,26 @@
   .segmented button[aria-checked="true"] {
     background: var(--c-bg-active);
     color: var(--c-text-strong);
+  }
+
+  /* An icon set's segment: its folder and its note, colored as in the tree (TreeRow.svelte). */
+  .segmented .icons {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--tree-icon-gap);
+  }
+
+  .segmented .icons:not([aria-checked="true"]):hover {
+    background: var(--c-bg-hover);
+  }
+
+  .sample {
+    color: var(--c-icon-tree);
+  }
+
+  .sample.folder {
+    color: var(--tree-folder);
+    --icon-fill: var(--tree-folder-fill);
   }
 
   /* Stepper (font size). */

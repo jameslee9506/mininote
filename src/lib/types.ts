@@ -139,6 +139,8 @@ export interface SearchResponse {
 }
 
 export type ThemeMode = "system" | "light" | "dark";
+/** How the tree draws a folder (SET-08): in outline like the files, solid in gray, or solid in a color. */
+export type IconTheme = "outline" | "filled" | "color";
 /** "live" = Obsidian-style live preview; "source" = plain highlighted markdown. */
 export type EditorMode = "live" | "source";
 /** Per-session toggle (Mod-E): edit with CodeMirror or read rendered HTML. */
@@ -155,6 +157,8 @@ export interface Settings {
   /** Max content column width in px; 0 means full width. Default 720. */
   lineWidth: number;
   theme: ThemeMode;
+  /** The tree's icon set (SET-08). Default "filled". */
+  iconTheme: IconTheme;
   editorMode: EditorMode;
   spellcheck: boolean;
   /** Show the editable file name above the document. */

@@ -18,7 +18,7 @@ The current build covers every P0 requirement, plus these P1 items:
 - SAVE-09, SAVE-11
 - NAV-02 (Hangul extras, already in `utils/fuzzy.ts`), NAV-03, NAV-06
 - SRCH-01, SRCH-02
-- SET-02, SET-06, SET-07, PLAT-05, PLAT-12
+- SET-02, SET-06, SET-07, SET-08, PLAT-05, PLAT-12
 
 **Deferred** to the next round:
 - SAVE-06 P1 (three-way merge); the conflict copy is the P0 behavior
@@ -282,7 +282,7 @@ The stores are singleton classes with `$state` fields:
 
 | Store | Responsibility |
 |---|---|
-| `settings` | Loads and saves `{ settings, sessions }` through `settings_load`/`settings_save`, debounced and written only after loading finishes. Settings are sanitized on load and update, so unknown keys are dropped (SET-01). `shortcuts` holds only the user's changes, command id → keys (§9.1). `VaultSession` holds `expanded`, `lastFile`, `recent`, and `last`: the selection, scroll position and view mode for `lastFile` (VAULT-03), recorded on window blur or hide and before close or quit, and restored when the vault reopens. Applies the CSS variables (the content font size, the code font as `--font-mono`, the widths), `data-theme` and the window theme. |
+| `settings` | Loads and saves `{ settings, sessions }` through `settings_load`/`settings_save`, debounced and written only after loading finishes. Settings are sanitized on load and update, so unknown keys are dropped (SET-01). `shortcuts` holds only the user's changes, command id → keys (§9.1). `VaultSession` holds `expanded`, `lastFile`, `recent`, and `last`: the selection, scroll position and view mode for `lastFile` (VAULT-03), recorded on window blur or hide and before close or quit, and restored when the vault reopens. Applies the CSS variables (the content font size, the code font as `--font-mono`, the widths), `data-theme`, `data-icons` and the window theme. `data-icons` is the icon set (SET-08): `tokens.css` maps it to the tree's folder color and fill, so no component reads that setting. |
 | `vault` | Active `VaultInfo`, the raw `listing` and the derived tree, node map, notes list, `linkables` (notes and images, for `[[` completion) and the link index over them (links never resolve to other files, TREE-16), plus tree UI state: `selected`, `renaming`, and `creating`, the new-folder draft (§8.3). File operations follow §8.3. Owns the `vault:changed` subscription (§8.2). Link resolution wraps `markdown/resolve.ts`. |
 | `editor` | The open file, view mode, history, autosave engine, external-change reconciliation, the EditorState cache (20 notes and code files; dirty ones are pinned), virtual notes and recovery. A code file has a controller of kind `"code"`: cached and reloaded like a note, never dirty, never written (§10.4). Each controller keeps the vault epoch it was created in (§5). Publishes `lineRequest` `{ path, line, seq }` for every line reveal, which the reading view follows (§11). `blur()` takes focus out of the editor before slow commands (§8.3); `busyUnder` and `unsavedAt` let the vault refuse operations that would race a write or displace unsaved text. Owns the single `EditorView` after `Editor.svelte` attaches it. Implements `EditorHost`. |
 | `ui` | Modal, context menu, confirm dialog, toasts, the search query (while it is set, the sidebar shows results instead of the tree), and focus requests. |
@@ -394,7 +394,7 @@ App.svelte
 ├─ QuickSwitcher · CommandPalette · SettingsModal (on Modal.svelte; its shortcuts page is ShortcutSettings.svelte; a last row shows the app version)
 ├─ UpdateButton.svelte       the update control of §6.7: download tray → percentage → restart arrow
 ├─ ContextMenu · ConfirmDialog · Toasts
-└─ Icon.svelte               inline SVG icon set
+└─ Icon.svelte               inline SVG icon set; a folder is solid where its parent sets --icon-fill (tree rows, by icon set)
 ```
 
 **Document scrolling.** `.doc-scroll` is the scroll container. Inside it, `.doc-column` (max-width `--content-max`, centered, horizontal padding `--content-pad-x`, bottom padding `--content-pad-bottom`) holds `InlineTitle` and then `Editor` or `Reader`. The title scrolls with the text. CodeMirror is auto-height and relies on that ancestor scroll. The editor store saves and restores `.doc-scroll.scrollTop` per note.

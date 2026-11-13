@@ -1149,6 +1149,7 @@ Math and diagrams are out of scope.
 #### SET-02 · Settings window · P1
 - **Behavior.** Mod+, opens a modal with one row per setting (label on the left, control on the right) and no descriptions. Changes apply immediately.
   - Theme: System, Light or Dark.
+  - Icons: the tree's icon set, Outline, Filled or Color (SET-08).
   - Font size: 12–24 px, default 15.
   - Code font: the default, an installed monospaced family, or a typed one (SET-07).
   - Readable width: on or off (720 px).
@@ -1195,6 +1196,21 @@ Math and diagrams are out of scope.
   - The default fonts stay behind the chosen family as its fallback, so a font removed later, or a character it lacks, still shows monospaced.
   - A stored name is cleaned on load (one family, no quotes or control characters), so a hand-edited settings file cannot inject CSS.
 - **Sources.** DESIGN.md §2, §6.
+
+#### SET-08 · Icon sets · P1
+- **Behavior.**
+  - One setting picks how the tree draws a folder, so that a folder never reads as one more file:
+    - **Outline**: in outline, in the gray of the file icons.
+    - **Filled**, the default: solid, in a gray one step stronger than the file icons.
+    - **Color**: solid, in a muted blue.
+  - Files are the same in every set: outline icons in gray.
+  - A solid closed folder is filled whole. An open one keeps its back as a line and fills only its front flap, so it still shows as open.
+  - The settings show each set by its own folder and note instead of a name. A choice applies at once.
+- **Edge cases.**
+  - Only the tree's rows follow the set. The folders on buttons (new folder, open folder) stay in outline, like all other chrome.
+  - An unknown stored value falls back to the default (SET-01).
+- **Decision.** In outline, a folder and a note are two rounded shapes of the same gray and weight, and take a second look to tell apart. A solid folder differs in form at a glance, before its tone or color does. The earlier look stays as a set, and color is offered, never imposed: the default stays gray (DESIGN.md §1).
+- **Sources.** DESIGN.md §1, §4.
 
 ---
 
@@ -1440,7 +1456,7 @@ The current plan already matches most of this spec. Where it differs, this spec 
 - SRCH-01, SRCH-02.
 - LINK-04 (headings), LINK-07, LINK-08.
 - READ-08.
-- SET-02, SET-06, SET-07.
+- SET-02, SET-06, SET-07, SET-08.
 - PLAT-01 (Linux), PLAT-11, PLAT-12. ([critic] PLAT-05 single instance moved to P0.)
 - PERF-04–07.
 

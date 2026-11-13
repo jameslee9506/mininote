@@ -56,7 +56,10 @@
   }: Props = $props();
 
   const node = $derived(row.node);
-  /** A folder that opens and closes, a page for notes, a picture for images, a page of code, a blank page for anything else. */
+  /**
+   * A folder that opens and closes, a page for notes, a picture for images, a page of code, a blank
+   * page for anything else. The icon set (SET-08) restyles the folder in CSS; the glyphs stay these.
+   */
   const icon: IconName = $derived.by(() => {
     if (node.kind === "dir") return row.expanded ? "folder-open" : "folder";
     if (node.fileKind === "note") return "note";
@@ -396,6 +399,12 @@
     width: var(--icon);
     height: var(--icon);
     color: var(--c-icon-tree);
+  }
+
+  /* A folder takes its color, and whether it is solid, from the icon set (SET-08, tokens.css). */
+  .folder .icon {
+    color: var(--tree-folder);
+    --icon-fill: var(--tree-folder-fill);
   }
 
   .title {

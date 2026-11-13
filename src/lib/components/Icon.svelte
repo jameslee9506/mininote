@@ -30,7 +30,8 @@
 
 <script lang="ts">
   // Minimal 16×16 stroke icon set (1.5px, currentColor). Purely decorative:
-  // the interactive parent carries the aria-label.
+  // the interactive parent carries the aria-label. A folder's `body` can be drawn
+  // solid: the parent asks for it with `--icon-fill`, as the tree does (DESIGN §4).
   let { name, size = 16 }: { name: IconName; size?: number } = $props();
 </script>
 
@@ -59,10 +60,11 @@
     <path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.6l1.4 1.5h5A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5Z" />
     <path d="M8 7v3.5M6.25 8.75h3.5" />
   {:else if name === "folder"}
-    <path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.6l1.4 1.5h5A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5Z" />
+    <path class="body" d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.6l1.4 1.5h5A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5Z" />
   {:else if name === "folder-open"}
+    <!-- The back stays a line and only the front flap fills, so an open folder shows its inside. -->
     <path d="M2 13V4.5A1.5 1.5 0 0 1 3.5 3h2.6l1.4 1.5h5A1.5 1.5 0 0 1 14 6v1" />
-    <path d="M4 7h10.5l-2 6H2Z" />
+    <path class="body" d="M4 7h10.5l-2 6H2Z" />
   {:else if name === "note"}
     <path d="M9 2H4.5A1.5 1.5 0 0 0 3 3.5v9A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V6Z" />
     <path d="M9 2v4h4" />
@@ -135,5 +137,10 @@
   .icon {
     display: block;
     flex: none;
+  }
+
+  /* Solid where the parent sets --icon-fill, in outline everywhere else. */
+  .body {
+    fill: var(--icon-fill, none);
   }
 </style>
