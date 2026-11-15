@@ -30,7 +30,7 @@ npm test               # Unit tests (Vitest)
 |---|---|
 | Vaults | Open a folder, revisit recent vaults, and restore the last note and scroll position. Open another window to work in another folder; every window comes back at the next launch. Settings live in the app's configuration folder, outside the vault. |
 | File tree | Natural sorting with folders first, inline creation and renaming, drag to move, deletion through the OS trash, keyboard navigation, and virtual scrolling. |
-| Editor | Obsidian-style live preview powered by CodeMirror 6, hiding syntax away from the cursor. Supports tables, images, checkboxes, `[[wikilinks]]` with completion, `==highlights==`, find and replace, and images pasted or dropped as attachments. Handles Korean IME composition safely. |
+| Editor | Obsidian-style live preview powered by CodeMirror 6, hiding syntax away from the cursor. Supports tables, images, checkboxes, `[[wikilinks]]` with completion, `==highlights==`, find and replace, and images pasted or dropped as attachments. A typed arrow such as `->` becomes `→`. Handles Korean IME composition safely. |
 | Saving | Atomic saves 0.4 seconds after typing stops, or at least every 2 seconds while typing continues. External changes reload automatically; if there are unsaved edits, the disk version is kept as a conflict copy. Failed saves leave a recovery copy. |
 | Reading view | Toggle with `Mod+E`. Markdown is rendered with markdown-it and sanitized with DOMPurify. |
 | Code files | Source, configuration and plain-text files open in a read-only viewer with syntax colors for the common languages, line numbers and find. The code font is a setting. |

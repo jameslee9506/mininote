@@ -359,7 +359,7 @@ Live-preview rendering is specified separately, in §4 (LIVE).
 #### EDIT-01 · The text is the document · P0
 - **Behavior.**
   - CodeMirror edits the raw Markdown. Saving writes exactly the buffer, with the original line endings and BOM restored (EDIT-02).
-  - The editor never reformats: no smart quotes, no autocorrect, no trailing-whitespace trimming, no forced final newline, and no list renumbering beyond what an explicit command does.
+  - The editor never reformats: no smart quotes, no autocorrect, no trailing-whitespace trimming, no forced final newline, and no list renumbering beyond what an explicit command does. Its one substitution is the typed arrow of EDIT-18.
 - **Acceptance.** Opening and saving an untouched note leaves the file byte-identical.
 - **Edge cases.** [critic] The editor's content element sets `autocorrect="off"`, `autocapitalize="off"` and `writingsuggestions="false"` (WebKit's inline predictions on macOS 14 and later), with `spellcheck` from EDIT-14. The OS then never rewrites text either.
 - **Sources.** OT §4.2 (SRC-001…013), MS §11 (avoid), MT §3.1 (avoid).
@@ -536,6 +536,20 @@ Live-preview rendering is specified separately, in §4 (LIVE).
 - Renumbering ordered lists after indent or outdent.
 - Opening legacy EUC-KR/CP949 files read-only.
 - Wrapping a selection in Markdown symbols when one is typed.
+
+#### EDIT-18 · Typed arrows · P1
+- **Behavior.**
+  - A sequence that spells an arrow becomes the arrow character when its last character is typed: `->` gives `→`, `<-` gives `←`, `<->` gives `↔`, `=>` gives `⇒`, and `<=>` gives `⇔`.
+  - The arrow is an ordinary character in the file, so the reading view and every other program show it too.
+  - Undo right after it gives back the typed characters, and they stay as typed: the replacement is an undo step of its own.
+- **Edge cases.**
+  - Only typing converts. Pasted, dropped and existing text is never changed, so an untouched note still saves byte-identical (EDIT-01). Nothing converts during IME composition (EDIT-11).
+  - Text that is not prose keeps its characters: code, including a code span whose closing backtick is not typed yet; HTML; frontmatter; URLs and link destinations; and the target of a wikilink, which is a file name (its heading and its alias convert).
+  - A backslash keeps a sequence too: `\->` stays, and reads as `->`.
+  - A longer shaft is not an arrow: `-->` ends an HTML comment, and `==>` would take the `==` of a highlight. `<=` alone stays, because it usually means "less than or equal".
+  - With several cursors, each one converts (EDIT-12).
+- **Decision.** The one exception to "the editor never reformats" (EDIT-01), at the owner's request: arrows are the notation that notes use most and a keyboard cannot type. It stays narrow so that the rule keeps its meaning: a sequence the user types on purpose, one undo away from what was typed, and no setting.
+- **Sources.** ARCHITECTURE.md §10.1.
 
 ---
 
@@ -1462,7 +1476,7 @@ The current plan already matches most of this spec. Where it differs, this spec 
 **P1**
 - VAULT-05, VAULT-06.
 - TREE-10, TREE-11, TREE-13.
-- EDIT-05 (the other shortcuts), EDIT-06, EDIT-07, EDIT-08, EDIT-09 (replace), EDIT-12, EDIT-14, EDIT-16.
+- EDIT-05 (the other shortcuts), EDIT-06, EDIT-07, EDIT-08, EDIT-09 (replace), EDIT-12, EDIT-14, EDIT-16, EDIT-18.
 - LIVE-02 (highlight), LIVE-11, LIVE-12, LIVE-13.
 - SAVE-06 (merge), SAVE-09, SAVE-11. ([critic] SAVE-10 moved to P0.)
 - NAV-02 (Hangul extras), NAV-03, NAV-06.

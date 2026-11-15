@@ -26,6 +26,7 @@ import { GFM } from "@lezer/markdown";
 import type { EditorHost } from "./host";
 import { External, invalidateResolutions, refreshEffect } from "./shared";
 import { markdownExtensions } from "./syntax";
+import { arrowTyping } from "./arrows";
 import { editingKeymap, editorShortcuts, listTabKeymap, markupEnterKeymap } from "./commands";
 import { completionBindings, wikiCompletion } from "./complete";
 import { imeKeys } from "./ime";
@@ -269,6 +270,7 @@ const compositionWatcher = EditorView.domEventObservers({
 const staticExtensions: Extension = [
   imeKeys,
   plainHtmlTyping,
+  arrowTyping,
   markdownSupport,
   closeBracketsConfig,
   closeBrackets(),

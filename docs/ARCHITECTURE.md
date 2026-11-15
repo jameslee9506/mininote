@@ -13,7 +13,7 @@ Where they disagree, REQUIREMENTS.md wins, unless §0.2 below says otherwise.
 The current build covers every P0 requirement, plus these P1 items:
 - VAULT-05, VAULT-08
 - TREE-10, TREE-11, TREE-13
-- EDIT-05 (all shortcuts), EDIT-06, EDIT-07 (URL paste), EDIT-08, EDIT-09 (replace), EDIT-12, EDIT-14, EDIT-16
+- EDIT-05 (all shortcuts), EDIT-06, EDIT-07 (URL paste), EDIT-08, EDIT-09 (replace), EDIT-12, EDIT-14, EDIT-16, EDIT-18
 - LIVE-02 (highlight), LIVE-11, LIVE-12, LIVE-13
 - SAVE-09, SAVE-11
 - NAV-02 (Hangul extras, already in `utils/fuzzy.ts`), NAV-03, NAV-06
@@ -96,7 +96,7 @@ src/
     ipc/events.ts            vault:changed, app:flush-request
     utils/                   path · names · codeFiles · fonts · fuzzy · platform · keys · timing
     state/                   settings · vault · editor · ui · commands · updater (*.svelte.ts), tree.ts, settingsSync.ts
-    editor/                  setup · theme · syntax · commands · complete · paste · search panel
+    editor/                  setup · theme · syntax · commands · arrows · complete · paste · search panel
                              · ime.ts · host.ts (bridge interface) · shared.ts · livePreview/*
                              · code/* (the read-only code view: languages, state, highlight, modes/)
     markdown/                render.ts (+ plugins/) · resolve.ts
@@ -499,6 +499,7 @@ These are the defaults. Settings → Shortcuts rebinds every global command and 
   9. the custom minimal search panel's keymap
 - **Other extensions:**
   - `imeKeys` (`ime.ts`): a keydown with `keyCode` 229 was handled by the input method, which has already made its edit, so it is stopped on the editor's root in the capture phase and no keymap sees it. CodeMirror's own guard only covers keys between composition events, and WKWebView fires none for Hangul; without this, Backspace on a syllable in progress removed one jamo (the IME) and then the rest of the syllable (the keymap). EDIT-11;
+  - `arrowTyping` (`arrows.ts`, EDIT-18): an input handler that turns a typed arrow sequence (`->`, `<-`, `<->`, `=>`, `<=>`) into its character, the editor's one substitution (EDIT-01). The typed character goes in as the default insert, and the arrow replaces the sequence in a second transaction of the same update, isolated in the history: one undo gives the typed characters back. It declines while an input method composes, and where the text is not prose: code (also behind an unclosed backtick on the line, since backticks are not paired), HTML, frontmatter, URLs and link destinations, wikilink targets, and escaped characters. The context is read from the state after the typed character, so a `>` that closes an HTML tag counts;
   - `history`, `drawSelection`, `dropCursor`, `EditorView.lineWrapping`;
   - `indentUnit.of("\t")`, `tabSize 4`;
   - `allowMultipleSelections`, plus `clickAddsSelectionRange` set to Alt-click;
