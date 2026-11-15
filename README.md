@@ -28,7 +28,7 @@ npm test               # Unit tests (Vitest)
 
 | Area | Features |
 |---|---|
-| Vaults | Open a folder, revisit recent vaults, and restore the last note and scroll position. Settings live in the app's configuration folder, outside the vault. |
+| Vaults | Open a folder, revisit recent vaults, and restore the last note and scroll position. Open another window to work in another folder; every window comes back at the next launch. Settings live in the app's configuration folder, outside the vault. |
 | File tree | Natural sorting with folders first, inline creation and renaming, drag to move, deletion through the OS trash, keyboard navigation, and virtual scrolling. |
 | Editor | Obsidian-style live preview powered by CodeMirror 6, hiding syntax away from the cursor. Supports tables, images, checkboxes, `[[wikilinks]]` with completion, `==highlights==`, find and replace, and images pasted or dropped as attachments. Handles Korean IME composition safely. |
 | Saving | Atomic saves 0.4 seconds after typing stops, or at least every 2 seconds while typing continues. External changes reload automatically; if there are unsaved edits, the disk version is kept as a conflict copy. Failed saves leave a recovery copy. |
@@ -42,6 +42,7 @@ npm test               # Unit tests (Vitest)
 | Shortcut | Action |
 |---|---|
 | `Mod+N` / `Mod+Shift+N` | New note / new folder |
+| `⌥⌘N` (macOS) · `Ctrl+M` | New window |
 | `Esc` | Move an untouched new note with its default title and empty body to the trash |
 | `Mod+O` · `Mod+P` · `Mod+Shift+F` | Quick switcher · command palette · full-text search |
 | `Mod+E` | Toggle reading and editing views |

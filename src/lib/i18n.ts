@@ -7,6 +7,7 @@ const en = {
   newFolderName: "New folder",
   openFolder: "Open folder",
   openAnotherFolder: "Open another folder",
+  newWindow: "New window",
 
   newNote: "New note",
   newFolder: "New folder",
@@ -77,6 +78,7 @@ const en = {
   cmdBack: "Go back",
   cmdForward: "Go forward",
   cmdOpenVault: "Open folder…",
+  cmdNewWindow: "New window",
   cmdRenameActive: "Rename current note",
   cmdDeleteActive: "Delete current note",
   cmdRevealActive: "Reveal current note",

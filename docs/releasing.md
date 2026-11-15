@@ -143,9 +143,10 @@ open -g /Applications/mininote.app
 
 The bundler signs nothing in an ordinary local build: the binary carries only the linker's ad-hoc
 signature. `codesign --sign -` seals the bundle and binds it to the app identifier
-(`com.mininote.desktop`). Quit with Cmd+Q, which writes every note first (ARCHITECTURE §6.6). When
-the quit is scripted, do it only while the mininote window is not focused: losing focus has
-already saved everything (ARCHITECTURE §8.1). The version and the tags stay as they are.
+(`com.mininote.desktop`). Quit with Cmd+Q, which writes every note in every window first
+(ARCHITECTURE §6.6), and the open windows come back at the next launch. When the quit is scripted,
+do it only while no mininote window is focused: losing focus has already saved everything
+(ARCHITECTURE §8.1). The version and the tags stay as they are.
 
 ## Apple signing and notarization
 

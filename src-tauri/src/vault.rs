@@ -1,18 +1,20 @@
-//! The window's single vault: state, epoch, the path guard and `vault_open`
-//! (ARCHITECTURE §6.1, PLAT-08).
+//! Each window's vault: state, epoch, the path guard, and `vault_open`, `vault_close`
+//! and `vault_focus` (ARCHITECTURE §6.1, PLAT-08, VAULT-07). A folder is the vault of
+//! one window at most.
 
+use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Mutex, MutexGuard, PoisonError, RwLock};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, WebviewWindow};
 
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::fs_ops::SelfWrites;
-use crate::{store, watcher};
+use crate::{store, watcher, windows};
 
 /// Result of `vault_open` (`VaultInfo` in src/lib/types.ts).
 #[derive(Debug, Clone, Serialize)]
@@ -35,7 +37,7 @@ struct Root {
     mount_point: bool,
 }
 
-/// Process-wide vault state, managed by Tauri. No lock is ever held across file I/O.
+/// One window's vault state, kept in [`Vaults`]. No lock is ever held across file I/O.
 pub struct VaultState {
     /// Guarded together with `epoch`: both change under the write lock, and
     /// `root_for` reads both under the read lock, so a command can never pair an
@@ -46,30 +48,22 @@ pub struct VaultState {
     registry: Mutex<SelfWrites>,
     /// Bumped by every search (and vault switch); a running search stops when it changes.
     pub search_gen: AtomicU64,
-    /// Set when the frontend has flushed (or the fallback fired); exit is no longer prevented.
-    pub exit_ready: AtomicBool,
-    /// Set once the exit fallback timer is armed, so repeated quit requests arm it once.
-    pub exit_pending: AtomicBool,
-    /// Serializes `vault_open` calls.
+    /// Serializes this window's `vault_open` and `vault_close` calls.
     open_lock: Mutex<()>,
 }
 
-impl Default for VaultState {
-    fn default() -> Self {
+impl VaultState {
+    fn new() -> Self {
         Self {
             root: RwLock::new(None),
             epoch: AtomicU64::new(0),
             watcher: Mutex::new(None),
             registry: Mutex::new(SelfWrites::default()),
             search_gen: AtomicU64::new(0),
-            exit_ready: AtomicBool::new(false),
-            exit_pending: AtomicBool::new(false),
             open_lock: Mutex::new(()),
         }
     }
-}
 
-impl VaultState {
     /// Epoch of the active vault (0 before the first `vault_open`).
     pub fn epoch(&self) -> u64 {
         self.epoch.load(Ordering::SeqCst)
@@ -139,18 +133,25 @@ impl VaultState {
         lock(&self.registry)
     }
 
-    /// Makes `root` the active vault: bumps the epoch, clears the registry, cancels
-    /// running searches and hands back the previous watcher for the caller to drop.
-    fn activate(&self, root: Root) -> (u64, Option<watcher::VaultWatcher>) {
+    /// The open vault folder, if any.
+    pub fn root_path(&self) -> Option<PathBuf> {
+        let root = self.root.read().unwrap_or_else(PoisonError::into_inner);
+        root.as_ref().map(|root| root.path.clone())
+    }
+
+    /// Makes `root` the active vault (`None`: no vault) under `epoch`: clears the
+    /// registry, cancels running searches and hands back the previous watcher for
+    /// the caller to drop.
+    fn activate(&self, root: Option<Root>, epoch: u64) -> Option<watcher::VaultWatcher> {
         let mut slot = lock(&self.watcher);
-        let epoch = {
+        {
             let mut current = self.root.write().unwrap_or_else(PoisonError::into_inner);
-            *current = Some(root);
-            self.epoch.fetch_add(1, Ordering::SeqCst) + 1
-        };
+            *current = root;
+            self.epoch.store(epoch, Ordering::SeqCst);
+        }
         self.registry().clear();
         self.search_gen.fetch_add(1, Ordering::SeqCst);
-        (epoch, slot.take())
+        slot.take()
     }
 
     /// Installs a freshly started watcher unless a newer vault was opened meanwhile.
@@ -167,11 +168,105 @@ impl VaultState {
         drop(stale);
     }
 
-    /// Stops the watcher (app exit).
+    /// Stops the watcher (window closed, app exit).
     pub fn stop_watcher(&self) {
         let old = lock(&self.watcher).take();
         drop(old);
     }
+}
+
+/// Every window's [`VaultState`] by window label, managed by Tauri. Its lock also
+/// makes taking a folder atomic: a folder is the vault of one window at most
+/// (VAULT-07). Lock order: this map, then a state's own locks.
+#[derive(Default)]
+pub struct Vaults {
+    windows: Mutex<HashMap<String, Arc<VaultState>>>,
+    /// Source of every epoch, so that one never repeats in the process, whatever
+    /// the window (a label can come back after its window closed).
+    epochs: AtomicU64,
+}
+
+impl Vaults {
+    /// Window `label`'s state, created on first use.
+    pub fn of(&self, label: &str) -> Arc<VaultState> {
+        lock(&self.windows)
+            .entry(label.to_owned())
+            .or_insert_with(|| Arc::new(VaultState::new()))
+            .clone()
+    }
+
+    /// Window `label`'s state, if it has one.
+    pub fn get(&self, label: &str) -> Option<Arc<VaultState>> {
+        lock(&self.windows).get(label).cloned()
+    }
+
+    /// Forgets a closed window and stops its watcher. Work still running for it
+    /// finishes against its own state, which nothing reaches any more.
+    pub fn remove(&self, label: &str) {
+        let state = lock(&self.windows).remove(label);
+        if let Some(state) = state {
+            state.stop_watcher();
+        }
+    }
+
+    /// The window other than `except` whose vault is `root`.
+    pub fn owner(&self, root: &Path, except: &str) -> Option<String> {
+        owner_in(&lock(&self.windows), root, except)
+    }
+
+    /// Each open vault folder with its window's label.
+    pub fn roots(&self) -> Vec<(String, PathBuf)> {
+        lock(&self.windows)
+            .iter()
+            .filter_map(|(label, state)| state.root_path().map(|root| (label.clone(), root)))
+            .collect()
+    }
+
+    /// Stops every watcher (app exit).
+    pub fn stop_all(&self) {
+        let states: Vec<_> = lock(&self.windows).values().cloned().collect();
+        for state in states {
+            state.stop_watcher();
+        }
+    }
+
+    /// `state`, window `label`'s, takes `root` as its vault unless another window
+    /// has it: the new epoch, and the previous watcher for the caller to drop.
+    /// `Err` names the window that has the folder.
+    fn claim(
+        &self,
+        label: &str,
+        state: &VaultState,
+        root: Root,
+    ) -> Result<(u64, Option<watcher::VaultWatcher>), String> {
+        let windows = lock(&self.windows);
+        if let Some(owner) = owner_in(&windows, &root.path, label) {
+            return Err(owner);
+        }
+        let epoch = self.epochs.fetch_add(1, Ordering::SeqCst) + 1;
+        Ok((epoch, state.activate(Some(root), epoch)))
+    }
+
+    /// `state` has no vault any more: every request for the old one fails with
+    /// `no_vault`, and another window may open the folder. Hands back its watcher.
+    fn release(&self, state: &VaultState) -> Option<watcher::VaultWatcher> {
+        let _claims = lock(&self.windows);
+        let epoch = self.epochs.fetch_add(1, Ordering::SeqCst) + 1;
+        state.activate(None, epoch)
+    }
+}
+
+fn owner_in(
+    windows: &HashMap<String, Arc<VaultState>>,
+    root: &Path,
+    except: &str,
+) -> Option<String> {
+    windows
+        .iter()
+        .find(|(label, state)| {
+            label.as_str() != except && state.root_path().as_deref() == Some(root)
+        })
+        .map(|(label, _)| label.clone())
 }
 
 /// Locks a mutex, ignoring poisoning (state stays usable after an unexpected panic).
@@ -197,18 +292,33 @@ fn is_mount_point(dir: &Path, meta: &fs::Metadata) -> Option<bool> {
     }
 }
 
-/// Runs blocking work on Tauri's blocking pool with access to the vault state.
-pub async fn blocking<T, F>(app: AppHandle, work: F) -> AppResult<T>
+/// The vault state of the window a command came from.
+pub fn state_of(window: &WebviewWindow) -> AppResult<Arc<VaultState>> {
+    window
+        .try_state::<Vaults>()
+        .map(|vaults| vaults.of(window.label()))
+        .ok_or_else(|| AppError::new(ErrorKind::Io, "vault state is not available"))
+}
+
+/// Runs blocking work on Tauri's blocking pool with the calling window's vault state.
+pub async fn blocking<T, F>(window: &WebviewWindow, work: F) -> AppResult<T>
 where
     T: Send + 'static,
     F: FnOnce(&VaultState) -> AppResult<T> + Send + 'static,
 {
-    tauri::async_runtime::spawn_blocking(move || match app.try_state::<VaultState>() {
-        Some(state) => work(&state),
-        None => Err(AppError::new(ErrorKind::Io, "vault state is not available")),
-    })
-    .await
-    .map_err(|e| AppError::new(ErrorKind::Io, format!("background task failed: {e}")))?
+    let state = state_of(window)?;
+    background(move || work(&state)).await
+}
+
+/// Runs blocking work on Tauri's blocking pool.
+pub async fn background<T, F>(work: F) -> AppResult<T>
+where
+    T: Send + 'static,
+    F: FnOnce() -> AppResult<T> + Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(|e| AppError::new(ErrorKind::Io, format!("background task failed: {e}")))?
 }
 
 fn invalid_path(rel: &str) -> AppError {
@@ -337,24 +447,69 @@ pub fn to_rel(root: &Path, abs: &Path) -> Option<String> {
     Some(rel)
 }
 
-/// Opens a folder as the vault (ARCHITECTURE §5): canonicalize, require a readable
-/// directory, bump the epoch, allow the asset scope, restart the watcher, prune
-/// old recovery copies.
-#[tauri::command]
-pub async fn vault_open(app: AppHandle, path: String) -> AppResult<VaultInfo> {
-    let handle = app.clone();
-    blocking(app, move |state| open(&handle, state, &path)).await
-}
-
-fn open(app: &AppHandle, state: &VaultState, path: &str) -> AppResult<VaultInfo> {
-    let _serial = lock(&state.open_lock);
+/// The canonical form of an absolute folder path, the identity of a vault.
+fn canonical_root(path: &str) -> AppResult<PathBuf> {
     if !Path::new(path).is_absolute() {
         return Err(AppError::new(
             ErrorKind::InvalidPath,
             "the vault path must be absolute",
         ));
     }
-    let root = dunce::canonicalize(path).map_err(|e| AppError::from_io(e, "open vault"))?;
+    dunce::canonicalize(path).map_err(|e| AppError::from_io(e, "open vault"))
+}
+
+/// Opens a folder as the calling window's vault (ARCHITECTURE §5): canonicalize,
+/// require a readable directory, take it unless another window has it (that window
+/// comes forward and this fails with `exists`), bump the epoch, allow the asset
+/// scope, restart the watcher, prune old recovery copies.
+#[tauri::command]
+pub async fn vault_open(window: WebviewWindow, path: String) -> AppResult<VaultInfo> {
+    let app = window.app_handle().clone();
+    let label = window.label().to_owned();
+    let info = blocking(&window, move |state| open(&app, &label, state, &path)).await?;
+    windows::remember_vaults(window.app_handle());
+    Ok(info)
+}
+
+/// `vault_close`: the calling window shows no vault any more (the Welcome screen),
+/// so its folder may open in another window. Called after the frontend flushed.
+#[tauri::command]
+pub async fn vault_close(window: WebviewWindow) -> AppResult<()> {
+    let app = window.app_handle().clone();
+    blocking(&window, move |state| {
+        let _serial = lock(&state.open_lock);
+        let watcher = app.state::<Vaults>().release(state);
+        drop(watcher);
+        Ok(())
+    })
+    .await?;
+    windows::remember_vaults(window.app_handle());
+    Ok(())
+}
+
+/// `vault_focus`: whether another window has the folder `path` open as its vault;
+/// if so, that window comes forward (VAULT-07). A folder that cannot be resolved is
+/// not open anywhere; `vault_open` reports what is wrong with it.
+#[tauri::command]
+pub async fn vault_focus(window: WebviewWindow, path: String) -> AppResult<bool> {
+    let app = window.app_handle().clone();
+    let label = window.label().to_owned();
+    background(move || {
+        let Ok(root) = canonical_root(&path) else {
+            return Ok(false);
+        };
+        let owner = app.state::<Vaults>().owner(&root, &label);
+        if let Some(owner) = &owner {
+            windows::focus(&app, owner);
+        }
+        Ok(owner.is_some())
+    })
+    .await
+}
+
+fn open(app: &AppHandle, label: &str, state: &VaultState, path: &str) -> AppResult<VaultInfo> {
+    let _serial = lock(&state.open_lock);
+    let root = canonical_root(path)?;
     let meta = fs::metadata(&root).map_err(|e| AppError::from_io(e, "open vault"))?;
     if !meta.is_dir() {
         return Err(AppError::new(
@@ -380,10 +535,24 @@ fn open(app: &AppHandle, state: &VaultState, path: &str) -> AppResult<VaultInfo>
             }
         });
 
-    let (epoch, previous) = state.activate(Root {
-        path: root.clone(),
-        mount_point: is_mount_point(&root, &meta) == Some(true),
-    });
+    let claimed = app.state::<Vaults>().claim(
+        label,
+        state,
+        Root {
+            path: root.clone(),
+            mount_point: is_mount_point(&root, &meta) == Some(true),
+        },
+    );
+    let (epoch, previous) = match claimed {
+        Ok(claimed) => claimed,
+        Err(owner) => {
+            windows::focus(app, &owner);
+            return Err(AppError::new(
+                ErrorKind::Exists,
+                "the folder is open in another window",
+            ));
+        }
+    };
     drop(previous);
 
     if let Err(e) = app.asset_protocol_scope().allow_directory(&root, true) {
@@ -394,18 +563,22 @@ fn open(app: &AppHandle, state: &VaultState, path: &str) -> AppResult<VaultInfo>
     // backend starts watching before that walk, and events queue meanwhile.
     let watch_app = app.clone();
     let watch_root = root.clone();
+    let watch_label = label.to_owned();
     let spawned = std::thread::Builder::new()
         .name("mininote-watcher-start".into())
-        .spawn(
-            move || match watcher::start(watch_app.clone(), &watch_root, epoch) {
+        .spawn(move || {
+            match watcher::start(watch_app.clone(), &watch_root, epoch, watch_label.clone()) {
                 Ok(w) => {
-                    if let Some(state) = watch_app.try_state::<VaultState>() {
+                    let state = watch_app
+                        .try_state::<Vaults>()
+                        .and_then(|vaults| vaults.get(&watch_label));
+                    if let Some(state) = state {
                         state.install_watcher(epoch, w);
                     }
                 }
                 Err(e) => log::warn!("file watcher unavailable: {e}"),
-            },
-        );
+            }
+        });
     if let Err(e) = spawned {
         log::warn!("file watcher thread: {e}");
     }

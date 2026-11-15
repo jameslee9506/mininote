@@ -20,6 +20,8 @@ import {
   pathRename,
   pathReveal,
   pathTrash,
+  vaultClose,
+  vaultFocus,
   vaultList,
   vaultOpen,
 } from "../ipc/commands";
@@ -92,7 +94,6 @@ class VaultStore {
   revealTick = $state(0);
 
   #subscribed = false;
-  #everOpened = false;
   /** Serializes open/close so two vault switches never interleave. */
   #chain: Promise<unknown> = Promise.resolve();
   /** The listing in progress (refreshes never overlap)… */
@@ -114,19 +115,23 @@ class VaultStore {
   #lostSelection: VaultPath | null = null;
 
   /**
-   * Opens `root` as the vault: vaultOpen → vaultList → restore session
+   * Opens `root` as this window's vault: vaultOpen → vaultList → restore session
    * (expanded, lastFile via editor.open) → settings.rememberVault → subscribe
-   * to vault:changed (once). Returns false (and toasts errVault) on failure;
-   * a missing lastVault at startup is forgotten silently (VAULT-02).
+   * to vault:changed (once). A folder that another window has open comes forward
+   * there instead, and this window stays as it is (VAULT-07). Returns false (and
+   * toasts errVault) on failure; a folder reopened at `startup` fails silently, and
+   * the last vault is forgotten (VAULT-02).
    */
-  open = (root: string): Promise<boolean> => untrack(() => this.#serial(() => this.#open(root)));
+  open = (root: string, opts?: { startup?: boolean }): Promise<boolean> =>
+    untrack(() => this.#serial(() => this.#open(root, opts?.startup ?? false)));
 
-  /** Back to the Welcome screen (flush editor first). */
+  /** Back to the Welcome screen (flush editor first); another window may open the folder then. */
   close = (): Promise<void> =>
     untrack(() =>
       this.#serial(async () => {
         if (!this.info) return;
         await this.#teardown();
+        await this.#release();
         settings.update({ lastVault: null });
       }),
     );
@@ -361,20 +366,30 @@ class VaultStore {
     return run;
   }
 
-  async #open(root: string): Promise<boolean> {
+  async #open(root: string, startup: boolean): Promise<boolean> {
     if (this.info && this.info.root === root) return true;
+    // VAULT-07: before anything is flushed or closed here, a folder open in another window.
+    if (await this.#shownElsewhere(root)) return true;
     // While one vault replaces another the shell shows nothing, not a flash of the Welcome screen.
     this.switching = this.info !== null;
     try {
-      return await this.#replace(root);
+      return await this.#replace(root, startup);
     } finally {
       this.switching = false;
     }
   }
 
-  async #replace(root: string): Promise<boolean> {
-    const startup = !this.#everOpened && root === settings.values.lastVault;
-    this.#everOpened = true;
+  /** Another window has `root` open and has come forward. A folder that does not resolve is open nowhere. */
+  async #shownElsewhere(root: string): Promise<boolean> {
+    try {
+      return await vaultFocus(root);
+    } catch (e) {
+      console.error("vault: window check failed", e);
+      return false;
+    }
+  }
+
+  async #replace(root: string, startup: boolean): Promise<boolean> {
     this.#subscribe();
     // VAULT-05: the old vault's saves are flushed (or kept in recovery copies) before switching.
     if (this.info) await this.#teardown();
@@ -382,16 +397,21 @@ class VaultStore {
     try {
       info = await vaultOpen(root);
     } catch (e) {
+      // Another window opened the folder meanwhile; it has come forward, and this one shows Welcome.
+      if (isIpcError(e, "exists")) return true;
       console.error("vault: open failed", e);
-      this.#openFailed(startup);
+      this.#openFailed(root, startup);
       return false;
     }
     this.info = info;
     this.#truncationNoticed = false;
     this.#lastListMs = 0;
     if (!(await this.#refresh()) || this.info !== info) {
-      if (this.info === info) await this.#teardown();
-      this.#openFailed(startup);
+      if (this.info === info) {
+        await this.#teardown();
+        await this.#release();
+      }
+      this.#openFailed(root, startup);
       return false;
     }
     // VAULT-03: restore expanded folders (missing ones dropped) and the last open file, with
@@ -407,9 +427,18 @@ class VaultStore {
     return true;
   }
 
-  #openFailed(startup: boolean): void {
-    if (startup) settings.update({ lastVault: null });
-    else ui.notify(t("errVault"));
+  #openFailed(root: string, startup: boolean): void {
+    if (!startup) ui.notify(t("errVault"));
+    else if (settings.values.lastVault === root) settings.update({ lastVault: null });
+  }
+
+  /** The backend lets go of this window's vault, after the teardown flushed it. */
+  async #release(): Promise<void> {
+    try {
+      await vaultClose();
+    } catch (e) {
+      console.error("vault: close failed", e);
+    }
   }
 
   async #teardown(): Promise<void> {

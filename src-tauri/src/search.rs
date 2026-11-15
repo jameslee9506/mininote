@@ -7,12 +7,12 @@ use std::path::Path;
 use std::sync::atomic::Ordering;
 
 use serde::Serialize;
-use tauri::{AppHandle, State};
+use tauri::WebviewWindow;
 use unicode_normalization::{is_nfc_quick, IsNormalized, UnicodeNormalization};
 
 use crate::error::AppResult;
 use crate::fs_ops::{self, Walked};
-use crate::vault::{blocking, VaultState};
+use crate::vault;
 
 /// Notes larger than this are not read (SAVE-11); they can still match by name.
 const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
@@ -57,15 +57,15 @@ pub struct SearchResponse {
 /// older searches still running (they return `truncated: true`).
 #[tauri::command]
 pub async fn search_text(
-    app: AppHandle,
-    state: State<'_, VaultState>,
+    window: WebviewWindow,
     epoch: u64,
     query: String,
     case_sensitive: bool,
     limit: u32,
 ) -> AppResult<SearchResponse> {
+    let state = vault::state_of(&window)?;
     let generation = state.search_gen.fetch_add(1, Ordering::SeqCst) + 1;
-    blocking(app, move |state| {
+    vault::background(move || {
         let root = state.check(epoch)?;
         let cancelled = || state.search_gen.load(Ordering::SeqCst) != generation;
         let limit = limit.clamp(1, MAX_LIMIT) as usize;

@@ -10,10 +10,10 @@ use notify::event::{ModifyKind, RenameMode};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode};
 use notify_debouncer_full::{new_debouncer_opt, DebounceEventResult, DebouncedEvent, Debouncer};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, EventTarget, Manager};
 
 use crate::fs_ops;
-use crate::vault::{self, VaultState};
+use crate::vault::{self, VaultState, Vaults};
 
 /// Event name; mirrors `EVENT_VAULT_CHANGED` in src/lib/ipc/events.ts.
 pub const EVENT_VAULT_CHANGED: &str = "vault:changed";
@@ -166,12 +166,18 @@ mod ids {
     }
 }
 
-/// Starts a recursive, symlink-ignoring watcher on `root`. Its batches are dropped
-/// once a vault newer than `epoch` is open.
-pub fn start(app: AppHandle, root: &Path, epoch: u64) -> notify::Result<VaultWatcher> {
+/// Starts a recursive, symlink-ignoring watcher on `root`, window `label`'s vault.
+/// Its batches go to that window only, and are dropped once it opened another vault
+/// (an epoch newer than `epoch`) or closed.
+pub fn start(
+    app: AppHandle,
+    root: &Path,
+    epoch: u64,
+    label: String,
+) -> notify::Result<VaultWatcher> {
     let batch_root = root.to_path_buf();
     let handler = move |result: DebounceEventResult| match result {
-        Ok(events) => on_events(&app, &batch_root, epoch, &events),
+        Ok(events) => on_events(&app, &label, &batch_root, epoch, &events),
         Err(errors) => {
             for error in errors {
                 log::warn!("watcher: {error}");
@@ -190,8 +196,11 @@ pub fn start(app: AppHandle, root: &Path, epoch: u64) -> notify::Result<VaultWat
     Ok(debouncer)
 }
 
-fn on_events(app: &AppHandle, root: &Path, epoch: u64, events: &[DebouncedEvent]) {
-    let Some(state) = app.try_state::<VaultState>() else {
+fn on_events(app: &AppHandle, label: &str, root: &Path, epoch: u64, events: &[DebouncedEvent]) {
+    let Some(state) = app
+        .try_state::<Vaults>()
+        .and_then(|vaults| vaults.get(label))
+    else {
         return;
     };
     if state.epoch() != epoch {
@@ -210,7 +219,9 @@ fn on_events(app: &AppHandle, root: &Path, epoch: u64, events: &[DebouncedEvent]
     if changes.len() > FLOOD {
         changes = vec![VaultChange::relist()];
     }
-    if let Err(e) = app.emit(EVENT_VAULT_CHANGED, VaultChangedPayload { changes }) {
+    // Paths are relative to this vault: no other window may hear them.
+    let target = EventTarget::webview_window(label);
+    if let Err(e) = app.emit_to(target, EVENT_VAULT_CHANGED, VaultChangedPayload { changes }) {
         log::warn!("emit {EVENT_VAULT_CHANGED}: {e}");
     }
 }

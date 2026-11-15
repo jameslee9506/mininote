@@ -1,12 +1,16 @@
 /**
  * User settings + per-vault sessions, persisted as one JSON document in the
- * app-config folder (atomic write in Rust; never inside the vault).
+ * app-config folder (atomic write in Rust; never inside the vault). Every window
+ * keeps a copy: it writes only what it changed (a patch), and takes over what the
+ * other windows change (ARCHITECTURE §7), except their window layout.
  */
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { settingsLoad, settingsSave } from "../ipc/commands";
-import type { Settings, VaultSession } from "../types";
+import { settingsLoad, settingsUpdate } from "../ipc/commands";
+import { onSettingsChanged } from "../ipc/events";
+import type { Settings, SettingsChangedPayload, SettingsPatch, VaultSession } from "../types";
 import { monoFontValue, sanitizeFontFamily } from "../utils/fonts";
 import { sanitizeShortcuts } from "../utils/keys";
+import { SyncLedger } from "./settingsSync";
 
 export const DEFAULT_SETTINGS: Settings = {
   fontSize: 15,
@@ -35,6 +39,11 @@ export const SIDEBAR_MAX = 480;
 
 const EMPTY_SESSION: VaultSession = { expanded: [], lastFile: null, recent: [] };
 const SAVE_DELAY_MS = 300;
+/**
+ * Each window's own layout: written like any setting (new windows and the next launch start
+ * from the last one changed), never taken over from another window.
+ */
+const WINDOW_KEYS: ReadonlySet<string> = new Set<keyof Settings>(["sidebarVisible", "sidebarWidth"]);
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 
@@ -74,6 +83,13 @@ class SettingsStore {
   loaded = $state(false);
 
   #sessions: Record<string, VaultSession> = {};
+  /** Settings keys and session roots changed here and not yet seen applied (settingsSync.ts). */
+  #keys = new SyncLedger();
+  #roots = new SyncLedger();
+  /** This window's label: the origin of its own writes when they come back. */
+  #label = "";
+  /** Other windows' changes that arrived while the file was being read; null once loaded. */
+  #early: SettingsChangedPayload[] | null = [];
   #timer: ReturnType<typeof setTimeout> | null = null;
   #saving: Promise<void> = Promise.resolve();
   /** Theme last sent to the window; undefined until the first apply. */
@@ -81,9 +97,16 @@ class SettingsStore {
 
   /**
    * Loads persisted settings (defaults on first run; Rust sets an unparsable file
-   * aside) and applies them. Nothing is written before loading finishes.
+   * aside) and applies them. Nothing is written before loading finishes. Listens to
+   * the other windows' changes first, so one written while the file is read still lands.
    */
   load = async (): Promise<void> => {
+    this.#label = getCurrentWindow().label;
+    try {
+      await onSettingsChanged(this.#onChanged);
+    } catch (e) {
+      console.error("settings: other windows' changes will not show here", e);
+    }
     try {
       const raw = await settingsLoad();
       if (raw) {
@@ -95,11 +118,15 @@ class SettingsStore {
       console.error("settings: load failed, using defaults", e);
     }
     this.loaded = true;
+    const early = this.#early ?? [];
+    this.#early = null;
+    for (const p of early) this.#onChanged(p);
     this.apply();
   };
 
   update = (patch: Partial<Settings>): void => {
     this.values = sanitize({ ...this.values, ...patch });
+    for (const k of Object.keys(patch)) this.#keys.touch(k);
     this.apply();
     this.#schedule();
   };
@@ -107,13 +134,13 @@ class SettingsStore {
   /** Records a vault as most recently used. Vaults pushed off the list lose their session (VAULT-04). */
   rememberVault = (root: string): void => {
     const recentVaults = [root, ...this.values.recentVaults.filter((v) => v !== root)].slice(0, 10);
-    for (const key of Object.keys(this.#sessions)) if (!recentVaults.includes(key)) delete this.#sessions[key];
+    for (const key of Object.keys(this.#sessions)) if (!recentVaults.includes(key)) this.#dropSession(key);
     this.update({ recentVaults, lastVault: root });
   };
 
   /** Removes a vault from the recent list together with its session (VAULT-04, VAULT-05); never touches files. */
   forgetVault = (root: string): void => {
-    delete this.#sessions[root];
+    this.#dropSession(root);
     this.update({
       recentVaults: this.values.recentVaults.filter((v) => v !== root),
       lastVault: this.values.lastVault === root ? null : this.values.lastVault,
@@ -124,16 +151,17 @@ class SettingsStore {
 
   updateSession = (root: string, patch: Partial<VaultSession>): void => {
     this.#sessions[root] = { ...this.session(root), ...patch };
+    this.#roots.touch(root);
     this.#schedule();
   };
 
-  /** Writes pending changes now (called on quit/close). */
+  /** Writes pending changes now (called on quit/close), with any a failed write left behind. */
   flush = async (): Promise<void> => {
     if (this.#timer) {
       clearTimeout(this.#timer);
       this.#timer = null;
-      this.#persist();
     }
+    if (this.loaded) this.#persist();
     await this.#saving;
   };
 
@@ -160,6 +188,45 @@ class SettingsStore {
       .catch(() => {});
   };
 
+  #dropSession(root: string): void {
+    delete this.#sessions[root];
+    this.#roots.touch(root);
+  }
+
+  /**
+   * A patch some window wrote, as the backend applied it. This window's own marks its keys
+   * written; another's replaces what this window has not changed itself, except the layout.
+   */
+  #onChanged = (p: SettingsChangedPayload): void => {
+    if (this.#early !== null) {
+      this.#early.push(p);
+      return;
+    }
+    const settings: Record<string, unknown> = p.settings ?? {};
+    const sessions = p.sessions ?? {};
+    if (p.origin === this.#label) {
+      this.#keys.landed(Object.keys(settings));
+      this.#roots.landed(Object.keys(sessions));
+      return;
+    }
+    const adopted: Record<string, unknown> = {};
+    let changed = false;
+    for (const [k, v] of Object.entries(settings)) {
+      if (WINDOW_KEYS.has(k) || !this.#keys.adopts(k)) continue;
+      adopted[k] = v;
+      changed = true;
+    }
+    if (changed) {
+      this.values = sanitize({ ...this.values, ...(adopted as Partial<Settings>) });
+      this.apply();
+    }
+    for (const [root, session] of Object.entries(sessions)) {
+      if (!this.#roots.adopts(root)) continue;
+      if (session && typeof session === "object") this.#sessions[root] = session;
+      else delete this.#sessions[root];
+    }
+  };
+
   #schedule(): void {
     if (!this.loaded) return;
     if (this.#timer) clearTimeout(this.#timer);
@@ -169,11 +236,25 @@ class SettingsStore {
     }, SAVE_DELAY_MS);
   }
 
+  /** Writes what changed since the last write as one patch; writes never overlap. */
   #persist(): void {
-    const json = JSON.stringify({ settings: $state.snapshot(this.values), sessions: this.#sessions });
+    const keys = this.#keys.send();
+    const roots = this.#roots.send();
+    if (keys.length === 0 && roots.length === 0) return;
+    const values = $state.snapshot(this.values) as Record<string, unknown>;
+    const settings: Record<string, unknown> = {};
+    for (const k of keys) if (k in values) settings[k] = values[k];
+    const sessions: Record<string, VaultSession | null> = {};
+    for (const root of roots) sessions[root] = this.#sessions[root] ?? null;
+    const patch: SettingsPatch = { settings: settings as Partial<Settings>, sessions };
     this.#saving = this.#saving
-      .then(() => settingsSave(json))
-      .catch((e) => console.error("settings: save failed", e));
+      .then(() => settingsUpdate(patch))
+      .catch((e) => {
+        console.error("settings: save failed", e);
+        // Written again with the next change or flush; until then no other window's change replaces them.
+        this.#keys.failed(keys);
+        this.#roots.failed(roots);
+      });
   }
 }
 

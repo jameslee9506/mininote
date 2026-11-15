@@ -13,7 +13,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use tauri::ipc::{InvokeBody, Request};
-use tauri::AppHandle;
+use tauri::WebviewWindow;
 use unicode_normalization::UnicodeNormalization;
 
 use crate::error::{AppError, AppResult, ErrorKind};
@@ -529,8 +529,8 @@ struct FolderRead {
 /// `vault_list` (scoped): metadata-only listing of every visible folder and file
 /// (ARCHITECTURE §6.3).
 #[tauri::command]
-pub async fn vault_list(app: AppHandle, epoch: u64) -> AppResult<ListResult> {
-    blocking(app, move |state| {
+pub async fn vault_list(window: WebviewWindow, epoch: u64) -> AppResult<ListResult> {
+    blocking(&window, move |state| {
         let root = state.check(epoch)?;
         list_vault(&root, MAX_ENTRIES)
     })
@@ -722,8 +722,8 @@ fn is_stale_temp(item: &fs::DirEntry) -> bool {
 /// `note_read` (scoped): UTF-8 text with the BOM stripped, plus `readOnly` and the
 /// baseline. A file that changes while being read is read again.
 #[tauri::command]
-pub async fn note_read(app: AppHandle, epoch: u64, path: String) -> AppResult<FileContent> {
-    blocking(app, move |state| {
+pub async fn note_read(window: WebviewWindow, epoch: u64, path: String) -> AppResult<FileContent> {
+    blocking(&window, move |state| {
         let root = state.check(epoch)?;
         let abs = vault::resolve(&root, &path)?;
         read_note(&abs, &path)
@@ -1148,12 +1148,12 @@ fn ensure_unchanged(
 /// `note_write` (scoped, raw body): atomic write with the save-time conflict check
 /// (ARCHITECTURE §6.2).
 #[tauri::command]
-pub async fn note_write(app: AppHandle, request: Request<'_>) -> AppResult<Baseline> {
+pub async fn note_write(window: WebviewWindow, request: Request<'_>) -> AppResult<Baseline> {
     let epoch = header_epoch(&request)?;
     let rel = header_path(&request)?;
     let expected = header_expected(&request)?;
     let bytes = body_bytes(&request)?;
-    blocking(app, move |state| {
+    blocking(&window, move |state| {
         let root = state.check(epoch)?;
         let abs = vault::resolve(&root, &rel)?;
         write_note(state, &root, &abs, &rel, &bytes, expected.as_ref())
@@ -1254,12 +1254,12 @@ fn write_note(
 /// the root are created). Used for new notes and conflict copies.
 #[tauri::command]
 pub async fn note_create(
-    app: AppHandle,
+    window: WebviewWindow,
     epoch: u64,
     path: String,
     content: String,
 ) -> AppResult<Baseline> {
-    blocking(app, move |state| {
+    blocking(&window, move |state| {
         let root = state.check(epoch)?;
         let abs = vault::resolve(&root, &path)?;
         if path.is_empty() {
@@ -1281,11 +1281,11 @@ pub async fn note_create(
 
 /// `binary_write` (scoped, raw body): a new file only (pasted or dropped images).
 #[tauri::command]
-pub async fn binary_write(app: AppHandle, request: Request<'_>) -> AppResult<()> {
+pub async fn binary_write(window: WebviewWindow, request: Request<'_>) -> AppResult<()> {
     let epoch = header_epoch(&request)?;
     let rel = header_path(&request)?;
     let bytes = body_bytes(&request)?;
-    blocking(app, move |state| {
+    blocking(&window, move |state| {
         let root = state.check(epoch)?;
         let abs = vault::resolve(&root, &rel)?;
         if rel.is_empty() {
@@ -1301,8 +1301,8 @@ pub async fn binary_write(app: AppHandle, request: Request<'_>) -> AppResult<()>
 
 /// `dir_create` (scoped): creates a folder and its missing parents.
 #[tauri::command]
-pub async fn dir_create(app: AppHandle, epoch: u64, path: String) -> AppResult<()> {
-    blocking(app, move |state| {
+pub async fn dir_create(window: WebviewWindow, epoch: u64, path: String) -> AppResult<()> {
+    blocking(&window, move |state| {
         let root = state.check(epoch)?;
         let abs = vault::resolve(&root, &path)?;
         if path.is_empty() || fs::symlink_metadata(&abs).is_ok() {
@@ -1325,8 +1325,13 @@ pub async fn dir_create(app: AppHandle, epoch: u64, path: String) -> AppResult<(
 /// the root, a folder into itself, and taken targets, except a case- or
 /// normalization-only rename of the same entry.
 #[tauri::command]
-pub async fn path_rename(app: AppHandle, epoch: u64, from: String, to: String) -> AppResult<()> {
-    blocking(app, move |state| {
+pub async fn path_rename(
+    window: WebviewWindow,
+    epoch: u64,
+    from: String,
+    to: String,
+) -> AppResult<()> {
+    blocking(&window, move |state| {
         let root = state.check(epoch)?;
         rename_entry(state, &root, &from, &to)
     })
@@ -1486,8 +1491,8 @@ fn case_rename_temp(from: &Path) -> io::Result<PathBuf> {
 
 /// `path_trash` (scoped): moves to the OS trash; `trash_failed` when unsupported.
 #[tauri::command]
-pub async fn path_trash(app: AppHandle, epoch: u64, path: String) -> AppResult<()> {
-    blocking(app, move |state| {
+pub async fn path_trash(window: WebviewWindow, epoch: u64, path: String) -> AppResult<()> {
+    blocking(&window, move |state| {
         let root = state.check(epoch)?;
         if path.is_empty() {
             return Err(invalid("the vault folder cannot be deleted"));
@@ -1512,8 +1517,8 @@ pub async fn path_trash(app: AppHandle, epoch: u64, path: String) -> AppResult<(
 
 /// `path_delete` (scoped): permanent, recursive; only after confirmation.
 #[tauri::command]
-pub async fn path_delete(app: AppHandle, epoch: u64, path: String) -> AppResult<()> {
-    blocking(app, move |state| {
+pub async fn path_delete(window: WebviewWindow, epoch: u64, path: String) -> AppResult<()> {
+    blocking(&window, move |state| {
         let root = state.check(epoch)?;
         if path.is_empty() {
             return Err(invalid("the vault folder cannot be deleted"));
@@ -1532,8 +1537,8 @@ pub async fn path_delete(app: AppHandle, epoch: u64, path: String) -> AppResult<
 
 /// `path_exists` (scoped).
 #[tauri::command]
-pub async fn path_exists(app: AppHandle, epoch: u64, path: String) -> AppResult<bool> {
-    blocking(app, move |state| {
+pub async fn path_exists(window: WebviewWindow, epoch: u64, path: String) -> AppResult<bool> {
+    blocking(&window, move |state| {
         let root = state.check(epoch)?;
         let abs = vault::resolve(&root, &path)?;
         match fs::symlink_metadata(&abs) {
@@ -1554,8 +1559,8 @@ pub async fn path_exists(app: AppHandle, epoch: u64, path: String) -> AppResult<
 
 /// `path_reveal` (scoped): selects the item in Finder / Explorer / the file manager.
 #[tauri::command]
-pub async fn path_reveal(app: AppHandle, epoch: u64, path: String) -> AppResult<()> {
-    blocking(app, move |state| {
+pub async fn path_reveal(window: WebviewWindow, epoch: u64, path: String) -> AppResult<()> {
+    blocking(&window, move |state| {
         let root = state.check(epoch)?;
         let abs = vault::resolve(&root, &path)?;
         lstat(&abs, &path)?;

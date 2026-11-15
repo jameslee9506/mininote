@@ -1,14 +1,14 @@
 /**
  * The concrete global command list (ARCHITECTURE §9.1: shortcuts + command
  * palette) and the app-level actions it shares with the shell and the Welcome
- * screen: opening a vault, and the close/quit flush (§8.4).
+ * screen: opening a vault or another window, and the close/quit flush (§8.4).
  */
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { tick } from "svelte";
 import { SvelteSet } from "svelte/reactivity";
 import { t } from "./i18n";
-import { appExitReady } from "./ipc/commands";
+import { appExitReady, appQuit, windowNew } from "./ipc/commands";
 import { commands, type Command } from "./state/commands.svelte";
 import { editor } from "./state/editor.svelte";
 import { canDiscardNewNote, type NewNoteSnapshot } from "./state/newNote";
@@ -24,14 +24,15 @@ import { isMac } from "./utils/platform";
 export const unavailableVaults = new SvelteSet<string>();
 
 /**
- * Opens `root` as the vault and records whether it was reachable. vault.open
- * reports failures itself, except the automatic reopen of the last vault at
- * startup, which fails silently and forgets only `lastVault` (VAULT-02).
+ * Opens `root` as this window's vault (or brings forward the window that has it,
+ * VAULT-07) and records whether it was reachable. vault.open reports failures
+ * itself, except the automatic reopen at `startup`, which fails silently and
+ * forgets only `lastVault` (VAULT-02).
  */
-export async function openVault(root: string): Promise<boolean> {
+export async function openVault(root: string, opts?: { startup?: boolean }): Promise<boolean> {
   let ok = false;
   try {
-    ok = await vault.open(root);
+    ok = await vault.open(root, opts);
   } catch (e) {
     console.error("open vault failed", e); // a bug: vault.open handles its expected failures
     ui.notify(t("errVault"));
@@ -39,6 +40,16 @@ export async function openVault(root: string): Promise<boolean> {
   if (ok) unavailableVaults.delete(root);
   else unavailableVaults.add(root);
   return ok;
+}
+
+/** Opens another window, on the Welcome screen, to show another folder (VAULT-07). */
+export async function newWindow(): Promise<void> {
+  try {
+    await windowNew();
+  } catch (e) {
+    console.error("new window failed", e);
+    ui.notify(t("errGeneric"));
+  }
 }
 
 /** Asks for a folder with the native dialog and opens it as the vault. */
@@ -100,7 +111,7 @@ export function flushBeforeExit(): Promise<void> {
   return exitFlush;
 }
 
-/** Flushes, then lets the backend exit (Ctrl+Q on Windows/Linux, and `app:flush-request`). */
+/** Flushes this window, then tells the backend, which exits once every window has (`app:flush-request`). */
 export async function quitApp(): Promise<void> {
   await flushBeforeExit();
   try {
@@ -111,6 +122,16 @@ export async function quitApp(): Promise<void> {
     await getCurrentWindow()
       .destroy()
       .catch(() => {});
+  }
+}
+
+/** Quit (Ctrl+Q on Windows/Linux): the backend asks every window to flush first (ARCHITECTURE §6.6). */
+async function requestQuit(): Promise<void> {
+  try {
+    await appQuit();
+  } catch (e) {
+    console.error("app_quit failed", e);
+    await quitApp();
   }
 }
 
@@ -396,6 +417,15 @@ export function registerAppCommands(): void {
       run: safe(openFolderDialog),
     },
     {
+      // VAULT-07: another window, on the Welcome screen. ⌥⌘N is Mail's new window, beside ⌘N and
+      // ⇧⌘N for a new note and folder. Ctrl+Alt+N would be AltGr+N, which types a character on
+      // many Windows layouts, so elsewhere it is Ctrl+M, OneNote's new window.
+      id: "new-window",
+      label: "cmdNewWindow",
+      keys: [isMac ? "Mod-Alt-n" : "Mod-m"],
+      run: newWindow,
+    },
+    {
       // TREE-11: from anywhere, focus the tree at the open file's row, revealing it.
       id: "focus-files",
       label: "cmdFocusFiles",
@@ -437,7 +467,7 @@ export function registerAppCommands(): void {
       // macOS quits through the app menu's custom Quit item and its ⌘Q (ARCHITECTURE §6.6).
       keys: isMac ? [] : ["Mod-q"],
       fixed: isMac,
-      run: quitApp,
+      run: requestQuit,
     },
     {
       // Matching is enough: the registry cancels the key. Hidden and fixed, so the label never shows.

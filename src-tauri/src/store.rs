@@ -1,5 +1,6 @@
 //! Settings JSON and recovery copies, kept in the OS app folders, never in the
-//! vault (ARCHITECTURE §5, SET-01, SAVE-10, VAULT-04).
+//! vault (ARCHITECTURE §5, SET-01, SAVE-10, VAULT-04). Every window writes the
+//! settings as patches, which the others hear (ARCHITECTURE §7).
 
 use std::fs;
 use std::io;
@@ -8,19 +9,42 @@ use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager};
+use serde_json::{Map, Value};
+use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::fs_ops::{self, Baseline};
-use crate::vault::{self, blocking, lock};
+use crate::vault::{self, background, blocking, lock};
 
+/// Event name; mirrors `EVENT_SETTINGS_CHANGED` in src/lib/ipc/events.ts.
+const EVENT_SETTINGS_CHANGED: &str = "settings:changed";
 const SETTINGS_FILE: &str = "settings.json";
 const RECOVERY_DIR: &str = "recovery";
 /// Recovery copies whose note is gone are pruned after this long (SAVE-10).
 const RECOVERY_MAX_AGE: Duration = Duration::from_secs(30 * 24 * 60 * 60);
 
-/// Serializes settings writes, including the corrupt-file check before each one.
+/// Serializes settings writes, including the corrupt-file check before each one,
+/// and the `settings:changed` events, which therefore go out in the order applied.
 static SETTINGS_LOCK: Mutex<()> = Mutex::new(());
+
+/// `SettingsPatch` in src/lib/types.ts: the settings a window changed, and the
+/// vault sessions it replaced (`null` removes one), by vault root.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct SettingsPatch {
+    #[serde(default)]
+    pub settings: Map<String, Value>,
+    #[serde(default)]
+    pub sessions: Map<String, Value>,
+}
+
+/// `SettingsChangedPayload` in src/lib/types.ts: an applied patch and the window
+/// that wrote it.
+#[derive(Debug, Clone, Serialize)]
+struct SettingsChanged<'a> {
+    origin: &'a str,
+    settings: &'a Map<String, Value>,
+    sessions: &'a Map<String, Value>,
+}
 
 /// `RecoveryCopy` in src/lib/types.ts; also the on-disk format.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,7 +84,7 @@ fn set_aside(path: &Path, dir: &Path) -> AppResult<()> {
 #[tauri::command]
 pub async fn settings_load(app: AppHandle) -> AppResult<Option<String>> {
     let dir = config_dir(&app)?;
-    blocking(app, move |_| {
+    background(move || {
         let _serial = lock(&SETTINGS_LOCK);
         let path = dir.join(SETTINGS_FILE);
         let bytes = match fs::read(&path) {
@@ -79,28 +103,76 @@ pub async fn settings_load(app: AppHandle) -> AppResult<Option<String>> {
     .await
 }
 
-/// `settings_save`: atomically replaces the settings file; refuses text that is
-/// not JSON. An existing file that does not parse (or cannot be read) is set
-/// aside first, never overwritten.
+/// `settings_update`: applies a window's patch to the settings file (atomically),
+/// then tells every window, the sender included, so each keeps an up-to-date copy
+/// (`settings:changed`, ARCHITECTURE §7). An existing file that is not a JSON
+/// object (or cannot be read) is set aside first, never overwritten.
 #[tauri::command]
-pub async fn settings_save(app: AppHandle, json: String) -> AppResult<()> {
-    if !parses_as_json(json.as_bytes()) {
-        return Err(AppError::new(ErrorKind::Io, "settings are not valid JSON"));
-    }
+pub async fn settings_update(window: WebviewWindow, patch: SettingsPatch) -> AppResult<()> {
+    let app = window.app_handle().clone();
+    let origin = window.label().to_owned();
     let dir = config_dir(&app)?;
-    blocking(app, move |_| {
+    background(move || {
         let _serial = lock(&SETTINGS_LOCK);
         fs::create_dir_all(&dir).map_err(|e| AppError::from_io(e, "create app config folder"))?;
         let path = dir.join(SETTINGS_FILE);
-        match fs::read(&path) {
-            Ok(existing) if parses_as_json(&existing) => {}
-            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
-            // Unparsable or unreadable: keep it, out of the way.
-            _ => set_aside(&path, &dir)?,
+        let mut doc = match fs::read(&path) {
+            Ok(bytes) => match serde_json::from_slice::<Value>(&bytes) {
+                Ok(Value::Object(doc)) => doc,
+                // Not a settings document: keep it, out of the way.
+                _ => {
+                    set_aside(&path, &dir)?;
+                    Map::new()
+                }
+            },
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Map::new(),
+            Err(_) => {
+                set_aside(&path, &dir)?;
+                Map::new()
+            }
+        };
+        apply_patch(&mut doc, &patch);
+        let json = serde_json::to_vec(&Value::Object(doc))
+            .map_err(|e| AppError::new(ErrorKind::Io, format!("encode settings: {e}")))?;
+        fs_ops::write_atomic(&path, &json, None, false, None)?;
+        let changed = SettingsChanged {
+            origin: &origin,
+            settings: &patch.settings,
+            sessions: &patch.sessions,
+        };
+        if let Err(e) = app.emit(EVENT_SETTINGS_CHANGED, changed) {
+            log::warn!("emit {EVENT_SETTINGS_CHANGED}: {e}");
         }
-        fs_ops::write_atomic(&path, json.as_bytes(), None, false, None).map(|_| ())
+        Ok(())
     })
     .await
+}
+
+/// Merges `patch` into the settings document `{ settings, sessions }`: each
+/// setting replaces its own key, each session its vault's, and a `null` session
+/// removes it. A part that is not an object starts over empty.
+fn apply_patch(doc: &mut Map<String, Value>, patch: &SettingsPatch) {
+    let mut settings = take_object(doc, "settings");
+    for (key, value) in &patch.settings {
+        settings.insert(key.clone(), value.clone());
+    }
+    doc.insert("settings".into(), Value::Object(settings));
+    let mut sessions = take_object(doc, "sessions");
+    for (root, session) in &patch.sessions {
+        if session.is_null() {
+            sessions.remove(root);
+        } else {
+            sessions.insert(root.clone(), session.clone());
+        }
+    }
+    doc.insert("sessions".into(), Value::Object(sessions));
+}
+
+fn take_object(doc: &mut Map<String, Value>, key: &str) -> Map<String, Value> {
+    match doc.remove(key) {
+        Some(Value::Object(map)) => map,
+        _ => Map::new(),
+    }
 }
 
 /// `app_data/recovery/<fnv(root)>`.
@@ -137,14 +209,14 @@ fn recovery_target(
 /// `recovery_write` (scoped): stores unsaved text for a note; newest wins.
 #[tauri::command]
 pub async fn recovery_write(
-    app: AppHandle,
+    window: WebviewWindow,
     epoch: u64,
     path: String,
     content: String,
     baseline: Option<Baseline>,
 ) -> AppResult<()> {
-    let handle = app.clone();
-    blocking(app, move |state| {
+    let handle = window.app_handle().clone();
+    blocking(&window, move |state| {
         let file = recovery_target(&handle, state, epoch, &path)?;
         if let Some(dir) = file.parent() {
             fs::create_dir_all(dir).map_err(|e| AppError::from_io(e, "create recovery folder"))?;
@@ -165,12 +237,12 @@ pub async fn recovery_write(
 /// `recovery_get` (scoped): the note's recovery copy, if any (not deleted).
 #[tauri::command]
 pub async fn recovery_get(
-    app: AppHandle,
+    window: WebviewWindow,
     epoch: u64,
     path: String,
 ) -> AppResult<Option<RecoveryCopy>> {
-    let handle = app.clone();
-    blocking(app, move |state| {
+    let handle = window.app_handle().clone();
+    blocking(&window, move |state| {
         let file = recovery_target(&handle, state, epoch, &path)?;
         let bytes = match fs::read(&file) {
             Ok(bytes) => bytes,
@@ -187,9 +259,9 @@ pub async fn recovery_get(
 
 /// `recovery_clear` (scoped): deletes the note's recovery copy.
 #[tauri::command]
-pub async fn recovery_clear(app: AppHandle, epoch: u64, path: String) -> AppResult<()> {
-    let handle = app.clone();
-    blocking(app, move |state| {
+pub async fn recovery_clear(window: WebviewWindow, epoch: u64, path: String) -> AppResult<()> {
+    let handle = window.app_handle().clone();
+    blocking(&window, move |state| {
         let file = recovery_target(&handle, state, epoch, &path)?;
         match fs::remove_file(&file) {
             Err(e) if e.kind() != io::ErrorKind::NotFound => {
@@ -263,6 +335,42 @@ fn note_is_gone(root: &Path, rel: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn patches_replace_their_own_keys_and_sessions() {
+        let mut doc = serde_json::from_str::<Value>(
+            r#"{"settings":{"fontSize":15,"theme":"dark","future":1},"sessions":{"/a":{"lastFile":"x.md"},"/b":{"lastFile":null}}}"#,
+        )
+        .unwrap();
+        let Value::Object(doc_map) = &mut doc else {
+            panic!("not an object")
+        };
+        let patch: SettingsPatch = serde_json::from_str(
+            r#"{"settings":{"fontSize":17},"sessions":{"/a":null,"/c":{"lastFile":"y.md"}}}"#,
+        )
+        .unwrap();
+        apply_patch(doc_map, &patch);
+        assert_eq!(
+            doc,
+            serde_json::from_str::<Value>(
+                r#"{"settings":{"fontSize":17,"theme":"dark","future":1},"sessions":{"/b":{"lastFile":null},"/c":{"lastFile":"y.md"}}}"#,
+            )
+            .unwrap()
+        );
+
+        // A part that is not an object, or missing, starts over empty.
+        let mut odd = Map::new();
+        odd.insert("settings".into(), Value::from(3));
+        apply_patch(
+            &mut odd,
+            &serde_json::from_str(r#"{"settings":{"theme":"light"}}"#).unwrap(),
+        );
+        assert_eq!(
+            Value::Object(odd),
+            serde_json::from_str::<Value>(r#"{"settings":{"theme":"light"},"sessions":{}}"#)
+                .unwrap()
+        );
+    }
 
     #[test]
     fn prune_keeps_copies_unless_the_note_is_provably_gone() {

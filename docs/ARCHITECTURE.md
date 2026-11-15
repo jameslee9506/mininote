@@ -11,7 +11,7 @@ Where they disagree, REQUIREMENTS.md wins, unless §0.2 below says otherwise.
 ### 0.1 Scope of the current build
 
 The current build covers every P0 requirement, plus these P1 items:
-- VAULT-05
+- VAULT-05, VAULT-08
 - TREE-10, TREE-11, TREE-13
 - EDIT-05 (all shortcuts), EDIT-06, EDIT-07 (URL paste), EDIT-08, EDIT-09 (replace), EDIT-12, EDIT-14, EDIT-16
 - LIVE-02 (highlight), LIVE-11, LIVE-12, LIVE-13
@@ -55,27 +55,31 @@ The current build covers every P0 requirement, plus these P1 items:
 | Editor | **CodeMirror 6** | Incremental Lezer parser and viewport-only rendering handle multi-MB notes. It is the same engine as Obsidian's live preview. |
 | Code view | The same CodeMirror view + **`@codemirror/legacy-modes`** | Code files are shown read-only with syntax colors (§10.4). The stream modes of CodeMirror 5 cover some fifty languages in one small package without dependencies of its own, each loaded when first needed. |
 | Reading view | **markdown-it** + **DOMPurify** | Fast and extensible. Sanitizing is mandatory, because injected script could reach Tauri IPC. |
-| Settings | Own Rust commands (`settings_load` / `settings_save`) | Atomic JSON in the app-config dir. `tauri-plugin-store` writes non-atomically and silently drops unparsable files. |
+| Settings | Own Rust commands (`settings_load` / `settings_update`) | Atomic JSON in the app-config dir, written as patches that every window hears (§7). `tauri-plugin-store` writes non-atomically and silently drops unparsable files. |
 | Plugins | `single-instance`, `process`, `updater`, `dialog`, `opener`, `window-state` | No `fs` plugin. Every file operation is a vault-scoped custom command. `updater` and `process` only replace the app bundle and restart (§6.7). |
 
 ## 2. Process model
 
 ```
 ┌──────────────── Rust (src-tauri) ─────────────────┐      ┌──────────── Webview (src) ─────────────┐
-│ vault.rs    root, epoch, path guard, asset scope  │      │ ipc/       typed invoke + events       │
-│ fs_ops.rs   list / read / atomic write / rename   │◄────►│ state/     runes stores (settings,     │
-│             trash / delete / binary / reveal      │ IPC  │            vault, editor, ui, commands)│
-│ watcher.rs  notify debouncer → "vault:changed"    │─────►│ editor/    CodeMirror 6 + live preview │
-│ search.rs   full-text scan, cancellable           │      │ markdown/  markdown-it reading view,   │
-│ store.rs    settings JSON, recovery copies        │      │            link resolution             │
-│ lib.rs      plugins, menu, exit-flush protocol    │      │ components/ Svelte UI                  │
+│ vault.rs    each window's root, epoch, path guard │      │ ipc/       typed invoke + events       │
+│             (one window per folder), asset scope  │      │ state/     runes stores (settings,     │
+│ fs_ops.rs   list / read / atomic write / rename   │◄────►│            vault, editor, ui, commands)│
+│             trash / delete / binary / reveal      │ IPC  │ editor/    CodeMirror 6 + live preview │
+│ watcher.rs  notify debouncer → "vault:changed"    │─────►│ markdown/  markdown-it reading view,   │
+│ search.rs   full-text scan, cancellable           │      │            link resolution             │
+│ store.rs    settings JSON (patches), recovery     │      │ components/ Svelte UI                  │
+│ windows.rs  new windows, restore list, focus      │      │                                        │
+│ lib.rs      plugins, menu, exit-flush protocol    │      │ (one webview per window)               │
 └───────────────────────────────────────────────────┘      └────────────────────────────────────────┘
 ```
 
+- Each window is its own webview running the whole frontend, with a vault of its own (§6.1). Windows share the settings document (§7) and nothing else.
 - The frontend never touches the filesystem directly.
 - Every path crossing IPC is **vault-relative** with `/` separators (`VaultPath`).
 - Rust joins it onto the active root and rejects anything that could escape: `..`, absolute or prefix components, and symlinked components.
 - Every vault-scoped command carries the **vault epoch**. Rust rejects stale epochs with `no_vault`, so a late write meant for vault A can never land in vault B.
+- Rust finds the vault of a command through the window that sent it (its label). Events about one vault go to its window only (`emit_to`), and the frontend listens with `getCurrentWebviewWindow().listen()`: a global `listen()` also hears the events sent to other windows (Tauri delivers every event to listeners whose target is `Any`).
 
 ## 3. Directory map
 
@@ -91,14 +95,14 @@ src/
     ipc/commands.ts          typed wrappers for every Rust command (epoch injected)
     ipc/events.ts            vault:changed, app:flush-request
     utils/                   path · names · codeFiles · fonts · fuzzy · platform · keys · timing
-    state/                   settings · vault · editor · ui · commands · updater (*.svelte.ts), tree.ts
+    state/                   settings · vault · editor · ui · commands · updater (*.svelte.ts), tree.ts, settingsSync.ts
     editor/                  setup · theme · syntax · commands · complete · paste · search panel
                              · ime.ts · host.ts (bridge interface) · shared.ts · livePreview/*
                              · code/* (the read-only code view: languages, state, highlight, modes/)
     markdown/                render.ts (+ plugins/) · resolve.ts
     components/              Svelte components (§9)
 src-tauri/src/
-  lib.rs  error.rs  vault.rs  fs_ops.rs  watcher.rs  search.rs  store.rs
+  lib.rs  error.rs  vault.rs  fs_ops.rs  watcher.rs  search.rs  store.rs  windows.rs
 docs/
   ARCHITECTURE.md  DESIGN.md  releasing.md  research/ (OSS analyses, REQUIREMENTS.md, TECHNIQUES.md)
 scripts/prepare-release.mjs  validates the versions and writes the updater overlay for release builds (§6.7)
@@ -130,7 +134,9 @@ Every command marked "scoped" also takes `epoch: u64`, either as an argument or 
 
 | Command | Args | Returns | Notes |
 |---|---|---|---|
-| `vault_open` | `path` (absolute) | `VaultInfo` | Steps: (1) canonicalize with dunce; (2) require a directory; (3) set the root (recording whether it is a mount point, §6.1), `epoch += 1`, and clear the self-write registry; (4) allow the asset-protocol scope for the directory (recursive); (5) restart the watcher; (6) prune this vault's recovery copies that are older than 30 days and whose note no longer exists (SAVE-10). Errors: `not_found` (also for a file), `invalid_path` (relative or non-UTF-8 path), `io`. |
+| `vault_open` | `path` (absolute) | `VaultInfo` | Opens the folder as the calling window's vault. Steps: (1) canonicalize with dunce; (2) require a directory; (3) unless another window has the folder open (§6.1), set the root (recording whether it is a mount point), take a new epoch, and clear the self-write registry; (4) allow the asset-protocol scope for the directory (recursive); (5) restart the watcher; (6) prune this vault's recovery copies that are older than 30 days and whose note no longer exists (SAVE-10); (7) update the window list (§6.6). Errors: `not_found` (also for a file), `invalid_path` (relative or non-UTF-8 path), `exists` (another window has it open, and that window comes forward), `io`. |
+| `vault_close` | – | – | The calling window has no vault any more (back to Welcome, after the frontend flushed): every request for the old epoch fails with `no_vault`, its watcher stops, and another window may open the folder. Updates the window list. |
+| `vault_focus` | `path` (absolute) | `bool` | True when another window has the folder open as its vault; that window comes forward (VAULT-07). A path that does not canonicalize gives false, and `vault_open` reports what is wrong with it. |
 | `vault_list` (scoped) | – | `ListResult` | §6.3: one column per field, `{ paths, kinds, mtimes, truncated }`. |
 | `note_read` (scoped) | `path` | `FileContent` | Strips a UTF-8 BOM (`bom: true`). Reports `readOnly` (the writability test `note_write` uses, §6.2 step 3), plus the baseline `{mtime,size,hash}` taken from stats around the read; a change while reading triggers a re-read (SAVE-06 "partial files"). Also reads a code file for its viewer (TREE-17). Errors: `not_found`, `not_utf8`, `too_large` (over 20 MB). |
 | `note_write` (scoped, **raw body**) | body = UTF-8 bytes (BOM included if wanted); headers `x-path` (URI-encoded), `x-expected` (JSON baseline or empty), `x-epoch` | `WriteResult` | §6.2. The `x-expected` check covers external changes since the baseline: a changed file gives `conflict`, a vanished one `not_found`. With an empty `x-expected` there is no baseline check, and missing parent folders **inside** the root are recreated. Either way the target is re-checked right before it is replaced: a file that appeared or changed during the write gives `conflict`, one that vanished `not_found`. Also returns `read_only` and `root_unavailable`. |
@@ -147,34 +153,42 @@ Every command marked "scoped" also takes `epoch: u64`, either as an argument or 
 | `recovery_get` (scoped) | `path` | `RecoveryCopy \| null` | |
 | `recovery_clear` (scoped) | `path` | – | |
 | `settings_load` | – | `string \| null` | Reads `app_config/settings.json`. If it is unparsable JSON, renames it to `settings.corrupt-<ms>.json` and returns null. |
-| `settings_save` | `json` | – | Atomic write. Rejects text that does not parse as JSON. |
-| `app_exit_ready` | – | – | §6.6. |
+| `settings_update` | `patch: SettingsPatch` | – | Merges `{ settings?, sessions? }` into the document under one lock: each setting replaces its key, each session its vault root's (`null` removes it). Atomic write; an existing file that is not a JSON object, or cannot be read, is set aside first. Then emits `settings:changed` (§7). |
+| `window_new` | – | – | Opens another window on the Welcome screen, over the calling one (§6.6). |
+| `window_startup` | – | `WindowStartup` | `{ vault, last }`: the folder the calling window opens when its page starts (given out once), or `last: true` for the first window while no window list was saved yet (§6.6). A page that starts again in a window gets the vault that window has open. |
+| `app_quit` | – | – | Ctrl+Q on Windows and Linux: the flush protocol of §6.6, as the macOS Quit item. |
+| `app_exit_ready` | – | – | The calling window has flushed for a quit (§6.6). |
 
 | Event (Rust → JS) | Payload | When |
 |---|---|---|
-| `vault:changed` | `VaultChangedPayload` | Debounced batches (about 200 ms) of changes inside the root. Hidden paths, our temp files and self-writes are excluded. A notify `Rescan` flag, an event on the vault folder itself, or a batch of more than 1000 changes becomes one `{kind:"any", path:""}`: re-list and re-check every open or cached note. |
-| `app:flush-request` | `null` | The app wants to quit: custom Cmd+Q, the last window closing, or an `ExitRequested`. |
+| `vault:changed` | `VaultChangedPayload` | To the window whose vault changed: debounced batches (about 200 ms) of changes inside the root. Hidden paths, our temp files and self-writes are excluded. A notify `Rescan` flag, an event on the vault folder itself, or a batch of more than 1000 changes becomes one `{kind:"any", path:""}`: re-list and re-check every open or cached note. |
+| `app:flush-request` | `null` | To every window: the app wants to quit (custom Cmd+Q, Ctrl+Q, or an `ExitRequested`). |
+| `settings:changed` | `SettingsChangedPayload` | To every window, the writer included: a patch `settings_update` applied, with the writer's label as `origin`, in the order applied (§7). |
 
 ## 6. Backend design (src-tauri)
 
-### 6.1 State and path guard (`vault.rs`, PLAT-08)
+### 6.1 State and path guard (`vault.rs`, PLAT-08, VAULT-07)
 
-- `VaultState` is managed with `app.manage`:
+- Each window has a `VaultState`, kept by `Vaults` (managed with `app.manage`) under the window's label and created by its first command:
 
   ```
+  Vaults {
+      windows: Mutex<HashMap<label, Arc<VaultState>>>,  // also serializes taking a folder
+      epochs: AtomicU64,          // every epoch, whatever the window: one never repeats
+  }
   VaultState {
       root: RwLock<Option<Root>>,  // Root { path: PathBuf, mount_point: bool }
       epoch: AtomicU64,
       watcher: Mutex<Option<Debouncer>>,
       registry: Mutex<SelfWrites>,
       search_gen: AtomicU64,
-      exit_ready: AtomicBool,
-      exit_pending: AtomicBool,   // the 4 s exit fallback is armed only once
-      open_lock: Mutex<()>,       // serializes vault_open
+      open_lock: Mutex<()>,       // serializes this window's vault_open and vault_close
   }
   ```
 
-  Never hold a lock across file I/O.
+  Never hold a lock across file I/O. Lock order: the `Vaults` map, then a state's own locks.
+- Commands take the calling `WebviewWindow`, and `blocking(&window, …)` runs their work with that window's state. A closed window's state is dropped (its watcher stops); work still running for it finishes against it, unreachable.
+- **One window per folder.** Under the map's lock, `vault_open` takes a folder only when no other window's root is the same canonical path; otherwise that window comes forward and the call fails with `exists`. Nested or overlapping folders may be open in two windows: each sees the other's writes as external changes (§8.2), as with any other app. One folder in two windows would share its session and its recovery copies.
 - `check(epoch)`: fails with `no_vault` if there is no root or the epoch differs. If the root directory itself is missing (an unmounted volume), it fails with `root_unavailable` and nothing is ever created at that location.
   - On Unix, `vault_open` records whether the root is a mount point (on another device than its parent). Such a root that sits on its parent's device again is the bare folder of an unmounted volume, and `check` fails with `root_unavailable` too (VAULT-06). Device numbers are not stored, so a remount works; on Windows, or without a readable parent, nothing changes.
 - `resolve(rel) -> PathBuf`:
@@ -228,8 +242,8 @@ Every command marked "scoped" also takes `epoch: u64`, either as an argument or 
   - Symlinks, folder metadata changes and content changes of files other than notes, images and code files are dropped. Code files are told by name (`fs_ops::is_code_name`, the lists of the frontend's `utils/codeFiles.ts`, §10.4). A path that came and went within a batch is a `remove`, which the frontend ignores for paths it never listed (§8.2).
   - The file-ID cache that pairs renames on macOS and Windows holds folders, notes and images only; another file's rename arrives as a remove and a create, which re-list the tree all the same.
 - **Drop rules:** events outside the root, any hidden component, our temp files, and registry matches.
-- Deduplicate per batch, then `app.emit("vault:changed", …)`.
-- The callback captures the root and epoch it was started for, and drops batches once a newer vault is open.
+- Deduplicate per batch, then `app.emit_to(EventTarget::webview_window(label), "vault:changed", …)`: the paths are relative to this vault, so only its window hears them.
+- The callback captures the root, the epoch and the window it was started for, and drops batches once that window has another vault, none, or is gone.
 
 ### 6.5 Full-text search (`search.rs`, SRCH-01/02)
 
@@ -246,31 +260,36 @@ Every command marked "scoped" also takes `epoch: u64`, either as an argument or 
   - `ranges` are UTF-16 offsets into the snippet.
   - Ordering: files with `nameMatch` first, then by match count, then by path.
 
-### 6.6 App lifecycle (`lib.rs`, SAVE-02, PLAT-05, PLAT-10)
+### 6.6 App lifecycle (`lib.rs`, `windows.rs`, SAVE-02, PLAT-05, PLAT-10, VAULT-08)
 
 - **Plugins, in this order:**
-  1. `single-instance` (desktop only): unminimizes, shows and focuses `main`.
+  1. `single-instance` (desktop only): unminimizes, shows and focuses the window focused last (else the first one).
   2. `process` and `updater` (desktop only): the restart and the signed app updates of §6.7.
   3. `dialog`
   4. `opener`
-  5. `window-state`, restoring size, position and maximized only (restoring visibility would show the hidden window before the first paint, PLAT-03)
+  5. `window-state`, restoring size, position and maximized only (restoring visibility would show the hidden window before the first paint, PLAT-03), per window label
   6. `mininote-navigation` (inline): the webview may only navigate within the app's own origin (`tauri://localhost`, `http(s)://tauri.localhost`, `about:blank`, and the dev server in dev builds), as defense in depth for READ-04 / PLAT-13
+- **Windows (VAULT-08).** The first window, `main`, comes from tauri.conf.json, whose entry is also the template of every other window (`WebviewWindowBuilder::from_config` under another label). The others are `w2`, `w3`…, a label never given out twice while the app runs; the capability in `capabilities/default.json` covers `main` and `w*`. Every window starts hidden (`visible: false`), and its frontend shows it after the first paint.
+  - `window_new` opens one on the Welcome screen, at the calling window's size, one step (28 logical px) down and to the right, back near the top-left corner of its screen when that would leave the work area; maximized beside a maximized window, placed by the OS beside a full-screen one. That place replaces whatever the window-state plugin restored for the label.
+  - **Window list.** `app_config/windows.json` holds `{ windows: [{ label, vault }] }`, the windows with a vault, `main` first. It is rewritten (off the main thread, only when it changed) after every `vault_open` and `vault_close`, and when a window closes while others stay open. Once the app is exiting it stays as it is, and so does the last window to close: that ends the app, and the window comes back next time.
+  - **Restore.** In `setup`, the list's `main` entry (else its first) becomes what `main` opens, and every other entry is created again under its label, so the window-state plugin puts it back at its size and place; new labels start above the highest restored one. At most 16 windows, each label and each folder once, absolute folders only. With no list (an older version ran last), `main` gets `last: true` and reopens `settings.lastVault`. A folder that does not open leaves its window on Welcome, silently (VAULT-02), and drops out of the list at its next write.
+  - `Focused(true)` events record the window focused last; `Destroyed` drops the window's vault state and startup entry.
 - **Exit flush.**
-  - On `RunEvent::ExitRequested { api, code, .. }`: a restart request (`code == RESTART_EXIT_CODE`, §6.7) passes untouched, because Tauri ignores `prevent_exit` for it. Otherwise, if `exit_ready` is false and the `main` webview window exists, call `api.prevent_exit()` and emit `app:flush-request`.
-  - At the same time, start (once, even when the request repeats) a 4000 ms fallback thread that sets `exit_ready` and calls `app.exit(code.unwrap_or(0))`. The frontend answers every request, with or without an open vault.
-  - `app_exit_ready` sets `exit_ready` and calls `app.exit(0)`.
+  - On `RunEvent::ExitRequested { api, code, .. }`: a restart request (`code == RESTART_EXIT_CODE`, §6.7) passes untouched, because Tauri ignores `prevent_exit` for it. Otherwise, if not every window has flushed yet (`ready` is false) and a window is open, call `api.prevent_exit()` and emit `app:flush-request` to every window. An exit that passes freezes the window list.
+  - At the same time, start (once per quit, even when the request repeats) a 4000 ms fallback thread that sets `ready` and calls `app.exit(code)`. Every window answers every request, with or without an open vault.
+  - `app_exit_ready` records the calling window as flushed; the app exits once every open window has (a window closed meanwhile no longer counts). Called without a pending request (a window that quit on its own), it requests the flush of the others first.
 - **macOS menu.** Tao never raises a preventable exit for the predefined Quit (Tauri #9198), so build the menu explicitly:
   - **App menu:** About, separator, Hide, Hide Others, Show All, separator, and a **custom "Quit mininote" item with `CmdOrCtrl+Q`**. The custom item emits `app:flush-request` and starts the same fallback.
   - **Edit menu:** the predefined Undo, Redo, Cut, Copy, Paste and Select All. They are required for clipboard keys in WKWebView.
-  - **Window menu:** Minimize, Zoom, Fullscreen.
-- Windows and Linux have no menu bar. Ctrl+Q there is a frontend command that flushes and then calls `app_exit_ready`.
-- The main window starts hidden (`visible: false`). The frontend shows it after the first paint.
+  - **Window menu:** Minimize, Zoom, Fullscreen. macOS lists the open windows below them, by title (PLAT-02).
+- Windows and Linux have no menu bar. Ctrl+Q there is a frontend command that calls `app_quit`, the same protocol as the macOS Quit item.
 
 ### 6.7 App updates (`tauri-plugin-updater`, `tauri-plugin-process`)
 
 - **Configuration.** The committed `tauri.conf.json` has an empty updater block (no endpoint, no key), so development and local builds check nothing. Release builds merge `src-tauri/tauri.updater.conf.json`, an ignored overlay that `scripts/prepare-release.mjs` writes after validating the public key, the versions (package.json, both lockfiles, tauri.conf.json, Cargo.toml) and the tag: `bundle.createUpdaterArtifacts`, the public signing key and the single endpoint `https://github.com/<owner>/<repo>/releases/latest/download/latest.json`. GitHub Releases hosts the manifest and the archives; the app needs no credentials. Pipeline and one-time setup: `docs/releasing.md`.
 - **Flow (frontend, `state/updater.svelte.ts`).** `start(flushBeforeExit)` at mount reads the running version and makes one background check (10 s timeout), repeated when the machine comes back online; development builds skip the check. A newer release shows the update button (§9). The click downloads (5 min timeout, whole-percent progress), runs the quit flush of §8.4, installs the signature-verified bundle, flushes again and calls `relaunch()`. Check failures are silent. An install failure toasts `errUpdate` once and keeps the button for a retry; after a successful install only the restart is retried (`restart` phase), never the install. The Tauri `Update` resource is closed after the install and when the store stops.
 - **Why the flush runs twice.** Neither step waits for the exit protocol of §6.6: on Windows the plugin launches the installer and exits the process inside `install()`, and Tauri ignores `prevent_exit` for a restart request, so `ExitRequested` with `RESTART_EXIT_CODE` is let through without a flush request.
+- **Windows.** Every window runs the check and can show the button. The window that installs flushes itself twice as above; the others flushed when they lost focus to it (§8.1). After the restart the window list brings them back (§6.6).
 - **Scope.** Only the application bundle changes: the macOS `.app`, the Windows NSIS or MSI installer in passive mode (the installer relaunches the app), the Linux AppImage. A `.deb` or `.rpm` install has no AppImage to replace, and its check fails quietly. No vault file or setting is touched. No custom IPC command is involved; the plugins' own commands are allowed in `capabilities/default.json` (`updater:allow-check`, `allow-download`, `allow-install`, `process:allow-restart`).
 
 ## 7. Frontend state (`src/lib/state/*.svelte.ts`)
@@ -282,14 +301,21 @@ The stores are singleton classes with `$state` fields:
 
 | Store | Responsibility |
 |---|---|
-| `settings` | Loads and saves `{ settings, sessions }` through `settings_load`/`settings_save`, debounced and written only after loading finishes. Settings are sanitized on load and update, so unknown keys are dropped (SET-01). `shortcuts` holds only the user's changes, command id → keys (§9.1). `VaultSession` holds `expanded`, `lastFile`, `recent`, and `last`: the selection, scroll position and view mode for `lastFile` (VAULT-03), recorded on window blur or hide and before close or quit, and restored when the vault reopens. Applies the CSS variables (the content font size, the code font as `--font-mono`, the widths), `data-theme`, `data-icons` and the window theme. `data-icons` is the icon set (SET-08): `tokens.css` maps it to the tree's folder color and fill, so no component reads that setting. |
-| `vault` | Active `VaultInfo`, the raw `listing` and the derived tree, node map, notes list, `linkables` (notes and images, for `[[` completion) and the link index over them (links never resolve to other files, TREE-16), plus tree UI state: `selected`, `renaming`, and `creating`, the new-folder draft (§8.3). File operations follow §8.3. Owns the `vault:changed` subscription (§8.2). Link resolution wraps `markdown/resolve.ts`. |
+| `settings` | Loads `{ settings, sessions }` through `settings_load` and writes what changed as patches through `settings_update`, debounced and only after loading finishes; other windows' changes come in as described below. Settings are sanitized on load and update, so unknown keys are dropped (SET-01). `shortcuts` holds only the user's changes, command id → keys (§9.1). `VaultSession` holds `expanded`, `lastFile`, `recent`, and `last`: the selection, scroll position and view mode for `lastFile` (VAULT-03), recorded on window blur or hide and before close or quit, and restored when the vault reopens. Applies the CSS variables (the content font size, the code font as `--font-mono`, the widths), `data-theme`, `data-icons` and the window theme. `data-icons` is the icon set (SET-08): `tokens.css` maps it to the tree's folder color and fill, so no component reads that setting. |
+| `vault` | This window's `VaultInfo` (a folder open in another window comes forward there, VAULT-07), the raw `listing` and the derived tree, node map, notes list, `linkables` (notes and images, for `[[` completion) and the link index over them (links never resolve to other files, TREE-16), plus tree UI state: `selected`, `renaming`, and `creating`, the new-folder draft (§8.3). File operations follow §8.3. Owns the `vault:changed` subscription (§8.2). Link resolution wraps `markdown/resolve.ts`. |
 | `editor` | The open file, view mode, history, autosave engine, external-change reconciliation, the EditorState cache (20 notes and code files; dirty ones are pinned), virtual notes and recovery. A code file has a controller of kind `"code"`: cached and reloaded like a note, never dirty, never written (§10.4). Each controller keeps the vault epoch it was created in (§5). Publishes `lineRequest` `{ path, line, seq }` for every line reveal, which the reading view follows (§11). `blur()` takes focus out of the editor before slow commands (§8.3); `busyUnder` and `unsavedAt` let the vault refuse operations that would race a write or displace unsaved text. Owns the single `EditorView` after `Editor.svelte` attaches it. Implements `EditorHost`. |
 | `ui` | Modal, context menu, confirm dialog, toasts, the search query (while it is set, the sidebar shows results instead of the tree), and focus requests. |
 | `commands` | Registry used by the global shortcut handler and the command palette. `keysOf(cmd)` gives the keys in effect (the user's, else the defaults); `paused` is set while the shortcut settings record a key (§9.1). |
 | `updater` | The update phase (`idle` → `checking` → `available` → `downloading` → `installing` → `restart` / `restarting`), the offered and the running version, and the download percentage. `start(beforeExit)` at mount, `install()` from the button (§6.7). The Tauri `Update` resource stays out of reactive state. |
 
 Calls go one way: `vault` → `editor` for moves, removals and external changes. `editor` → `vault` only for queries and for creating files.
+
+**Settings across windows.** Every window runs these stores for itself, over one settings document.
+- A window writes only the settings keys and the vault sessions it changed, one patch per debounced write (`settings_update`); writes from one window never overlap. Rust merges each patch into the file under one lock and sends it to every window, the writer included, as `settings:changed` with the writer's label as `origin`, in the order applied.
+- `state/settingsSync.ts` tracks, per key and per session root, what this window changed and has not seen come back. Another window's change replaces a value only when this window has none pending: an incoming change that arrives before this window's own echo was applied before its write, which wins on disk. A failed write is sent again with the next one.
+- `sidebarVisible` and `sidebarWidth` are each window's own layout: written like the others (so a new window and the next launch start from the last one changed), never taken over.
+- `load()` listens before it reads the file, and replays what arrived meanwhile.
+- A session belongs to the one window that has its vault open (§6.1); another window only removes one, when its vault leaves the recent list (VAULT-04).
 
 ## 8. Autosave and sync protocol (SAVE-01…11)
 
@@ -363,11 +389,11 @@ Calls go one way: `vault` → `editor` for moves, removals and external changes.
 
 ### 8.4 Quit, close, and recovery (SAVE-02, SAVE-10)
 
-- **Close.** `getCurrentWindow().onCloseRequested(async () => …)` runs these steps, wrapped in try/catch, and the window is always destroyed:
+- **Close.** `getCurrentWindow().onCloseRequested(async () => …)` runs these steps, wrapped in try/catch, and the window is always destroyed (its vault is let go, §6.6):
   1. Record the open note's position in the session (VAULT-03), then `Promise.race([editor.flush(), timeout(2000)])`.
   2. On failure or timeout, write a recovery copy for every dirty note (each capped at about 1 s).
   3. `settings.flush()`.
-- **Quit.** `onFlushRequest` runs the same steps, then calls `appExitReady()`.
+- **Quit.** `onFlushRequest` runs the same steps in every window, each then calling `appExitReady()`; the app exits once all have (§6.6).
 - **Update.** The updater runs the same steps before installing a new version and again before restarting into it (§6.7).
 - **Opening a note** checks `recoveryGet(path)`:
   - If the file still matches the copy's whole baseline (mtime, size and hash: every empty file has the same size and hash, so a new note at a deleted note's path never takes the old text), restore the recovery text as a dirty buffer, which saves normally.
@@ -380,7 +406,7 @@ Calls go one way: `vault` → `editor` for moves, removals and external changes.
 App.svelte
 ├─ Welcome.svelte            (no vault)  open-folder icon button + recent vault names; UpdateButton in the top-right corner
 └─ layout (vault open)
-   ├─ Sidebar.svelte         header (drag region; new note, new folder, collapse all) · SearchPanel · FileTree (hidden while a query is set) · footer (vault menu, gear)
+   ├─ Sidebar.svelte         header (drag region; new note, new folder, collapse all) · SearchPanel · FileTree (hidden while a query is set) · footer (vault menu: recent vaults, open another folder, new window; gear)
    │   ├─ SearchPanel.svelte the search field, always shown at the top; grouped results while it holds a query
    │   └─ FileTree.svelte    flattened visible rows, virtualized, keyboard nav, DnD, new-folder draft row
    │       └─ TreeRow.svelte guide lines + kind icon + title; inline rename input, or the draft row's name input
@@ -406,6 +432,7 @@ These are the defaults. Settings → Shortcuts rebinds every global command and 
 | Keys | Action | Scope |
 |---|---|---|
 | Mod-N / Mod-Shift-N | New note (body focused) / new folder (draft row in the tree, created on Enter, §8.3) | global |
+| Mod-Alt-N (macOS) / Mod-M (Windows/Linux) | New window, on the Welcome screen (VAULT-08). ⌥⌘N is Mail's new window; Ctrl+Alt+N would be AltGr+N, which types a character on many Windows layouts, so elsewhere it is OneNote's Ctrl+M | global |
 | Esc | Trash the untouched new note while its title is still the generated default (§8.3) | title / editor body, after overlays |
 | Mod-O | Quick switcher | global |
 | Mod-P | Command palette | global |

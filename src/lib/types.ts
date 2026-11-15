@@ -171,6 +171,7 @@ export interface Settings {
   attachmentFolder: string;
   /** Ask before moving files/folders to the trash. */
   confirmDelete: boolean;
+  /** Window layout: each window keeps its own, and the last one changed is what new windows start with. */
   sidebarVisible: boolean;
   sidebarWidth: number;
   /**
@@ -180,6 +181,7 @@ export interface Settings {
   shortcuts: Record<string, string[]>;
   /** Absolute vault paths, most recent first (max 10). */
   recentVaults: string[];
+  /** The vault opened last. The first window reopens it while no window list was saved yet (`WindowStartup`). */
   lastVault: string | null;
 }
 
@@ -191,6 +193,31 @@ export interface VaultSession {
   recent: VaultPath[];
   /** Where the user left `lastFile` (VAULT-03): selection, scroll and view mode. */
   last?: { anchor: number; head: number; scrollTop: number; mode: ViewMode };
+}
+
+/**
+ * A change to the settings document (`settings_update`): the settings a window changed, and the
+ * vault sessions it replaced, by vault root (null removes one).
+ */
+export interface SettingsPatch {
+  settings?: Partial<Settings>;
+  sessions?: Record<string, VaultSession | null>;
+}
+
+/**
+ * Payload of `settings:changed`: a patch as the backend applied it, sent to every window in the
+ * order applied. `origin` is the label of the window that wrote it.
+ */
+export interface SettingsChangedPayload extends SettingsPatch {
+  origin: string;
+}
+
+/** What a window opens when its page starts (`window_startup`, VAULT-07). */
+export interface WindowStartup {
+  /** The folder to open as its vault: the one this window had open when the app last ran. */
+  vault: string | null;
+  /** No window list was saved yet (an older version ran last): reopen `Settings.lastVault`. */
+  last: boolean;
 }
 
 /** Error object every rejected `invoke` carries (serialized by Rust). */

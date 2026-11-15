@@ -1,14 +1,24 @@
-/** Typed listeners for backend events. CONTRACT with src-tauri (event names + payloads). */
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { VaultChangedPayload } from "../types";
+/**
+ * Typed listeners for backend events. CONTRACT with src-tauri (event names + payloads).
+ * Each listens for this window only: a global listen() would also hear the events the
+ * backend sends to other windows, such as their vaults' changes (ARCHITECTURE §5).
+ */
+import type { UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import type { SettingsChangedPayload, VaultChangedPayload } from "../types";
 
 export const EVENT_VAULT_CHANGED = "vault:changed";
 export const EVENT_FLUSH_REQUEST = "app:flush-request";
+export const EVENT_SETTINGS_CHANGED = "settings:changed";
 
-/** Batched filesystem changes inside the active vault (hidden paths excluded). */
+/** Batched filesystem changes inside this window's vault (hidden paths excluded). */
 export const onVaultChanged = (cb: (p: VaultChangedPayload) => void): Promise<UnlistenFn> =>
-  listen<VaultChangedPayload>(EVENT_VAULT_CHANGED, (e) => cb(e.payload));
+  getCurrentWebviewWindow().listen<VaultChangedPayload>(EVENT_VAULT_CHANGED, (e) => cb(e.payload));
 
-/** Emitted when the app is about to quit; reply with `appExitReady()` after flushing. */
+/** Emitted to every window when the app is about to quit; reply with `appExitReady()` after flushing. */
 export const onFlushRequest = (cb: () => void): Promise<UnlistenFn> =>
-  listen<null>(EVENT_FLUSH_REQUEST, () => cb());
+  getCurrentWebviewWindow().listen<null>(EVENT_FLUSH_REQUEST, () => cb());
+
+/** A settings patch some window wrote (this one included), in the order the backend applied them. */
+export const onSettingsChanged = (cb: (p: SettingsChangedPayload) => void): Promise<UnlistenFn> =>
+  getCurrentWebviewWindow().listen<SettingsChangedPayload>(EVENT_SETTINGS_CHANGED, (e) => cb(e.payload));

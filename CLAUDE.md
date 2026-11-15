@@ -47,6 +47,8 @@ npm run release:prepare    # validate the versions and write the updater overlay
 - **Contracts.**
   - `src/lib/types.ts` mirrors the Rust DTOs.
   - `src/lib/ipc/*` mirrors the Rust command and event names.
+  - Each window has its own vault (`Vaults` in `vault.rs`, keyed by window label), and a folder is open in one window at most. Commands take the calling `WebviewWindow`. An event about one window's vault goes to that window only (`emit_to`), and the frontend listens through `ipc/events.ts`, which uses `getCurrentWebviewWindow().listen()`: a global `listen()` also hears other windows' events.
+  - Settings are written as patches of what one window changed (`settings_update`), and every window hears each one (`settings:changed`); never write the whole document from a window.
   - `src/lib/editor/host.ts` is the only bridge from CodeMirror extensions to app state; editor modules never import stores.
   - Lezer node names (`WikiLink`, `WikiLinkMark`, `WikiLinkTarget`, `WikiLinkAlias`, `WikiEmbed`, `Highlight`, `HighlightMark`) are defined in `src/lib/editor/syntax.ts`.
   - What counts as a code file, and its language, is the table in `src/lib/utils/codeFiles.ts`. Its extensions, names and name prefixes are mirrored in `src-tauri/src/fs_ops.rs` (`CODE_EXTS`, `CODE_NAMES`, `CODE_NAME_PREFIXES`); change both together, and give a new language a loader in `src/lib/editor/code/languages.ts`. `codeFiles.test.ts` fails when the two sides differ.

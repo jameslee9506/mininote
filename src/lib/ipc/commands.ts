@@ -16,8 +16,10 @@ import type {
   ListResult,
   RecoveryCopy,
   SearchResponse,
+  SettingsPatch,
   VaultInfo,
   VaultPath,
+  WindowStartup,
   WriteResult,
 } from "../types";
 
@@ -89,12 +91,21 @@ const wellFormed = (text: string): string => (LONE_SURROGATE.test(text) ? utf8De
  */
 const plainBaseline = (b: Baseline): Baseline => ({ mtime: b.mtime, size: b.size, hash: b.hash });
 
-/** Opens (and starts watching) a folder as the active vault; adopts its epoch. */
+/**
+ * Opens (and starts watching) a folder as this window's vault; adopts its epoch. Rejects with
+ * "exists" when another window has the folder open, and that window comes forward (VAULT-07).
+ */
 export async function vaultOpen(path: string): Promise<VaultInfo> {
   const info = await call<VaultInfo>("vault_open", { path });
   epoch = info.epoch;
   return info;
 }
+
+/** This window shows no vault any more (Welcome screen), so another window may open its folder. */
+export const vaultClose = () => call<void>("vault_close");
+
+/** True when another window has the folder `path` open as its vault; that window comes forward. */
+export const vaultFocus = (path: string) => call<boolean>("vault_focus", { path });
 
 /** Breadth-first listing of the visible folders, notes (.md/.markdown) and images, one column per field. */
 export const vaultList = () => scoped<ListResult>("vault_list");
@@ -187,8 +198,17 @@ export const recoveryClear = (path: VaultPath, at?: number) => scoped<void>("rec
 /** Raw settings JSON from the app-config folder, or null (first run / unparsable file set aside). */
 export const settingsLoad = () => call<string | null>("settings_load");
 
-/** Atomically writes the settings JSON document. */
-export const settingsSave = (json: string) => call<void>("settings_save", { json });
+/** Applies a patch to the settings document (atomic write); every window then hears it (`settings:changed`). */
+export const settingsUpdate = (patch: SettingsPatch) => call<void>("settings_update", { patch });
 
-/** Tells Rust that pending saves are flushed and the app may exit now. */
+/** Opens another window, on the Welcome screen (VAULT-07). */
+export const windowNew = () => call<void>("window_new");
+
+/** What this window opens when its page starts; given out once. */
+export const windowStartup = () => call<WindowStartup>("window_startup");
+
+/** Quits: the backend asks every window to flush, then exits (Ctrl+Q on Windows and Linux). */
+export const appQuit = () => call<void>("app_quit");
+
+/** Tells Rust that this window's pending saves are flushed; the app exits once every window has. */
 export const appExitReady = () => call<void>("app_exit_ready");

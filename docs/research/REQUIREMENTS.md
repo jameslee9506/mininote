@@ -31,7 +31,7 @@ Anything not listed is out of scope (§13).
 
 1. **Plain files, never rewritten.** A vault is any local folder, and notes are UTF-8 `.md` files in nested folders. mininote changes only what the user typed. Opening and saving an untouched note leaves it byte-identical: line endings, BOM, trailing newline, escapes and list markers all stay. There are no smart quotes, no autocorrect, no reformatting and no forced final newline.
 2. **The vault stays clean.** The app writes into the vault only what the user creates: notes, folders, pasted attachments, and (rarely) conflict copies. Settings, sessions and caches live in the OS app-data folder.
-3. **Obsidian-like, but light.** One window and one vault, with a folder tree, an editor with live preview, a reading view, a quick switcher and links. Plugins, graph view, canvas, sync, publishing, math, diagrams, tabs and split panes are out (§13).
+3. **Obsidian-like, but light.** One vault per window (VAULT-07), with a folder tree, an editor with live preview, a reading view, a quick switcher and links. Plugins, graph view, canvas, sync, publishing, math, diagrams, tabs and split panes are out (§13).
 4. **Minimal monotone UI.**
    - Colors are grays and white, with a dark variant. There is no accent color.
    - There are no visible labels, toolbars, status bar, "Saved" text, placeholders or tooltips. Icons carry `aria-label`s.
@@ -85,7 +85,7 @@ Anything not listed is out of scope (§13).
   - the edit or reading mode;
   - the recently opened list (NAV-01).
 
-  Window bounds are global (PLAT-04). State is saved with a debounce of about 1 s and flushed on quit.
+  Window bounds are per window, not per vault (PLAT-04). State is saved with a debounce of about 1 s and flushed on quit.
 - **Edge cases.**
   - A remembered note that no longer exists opens nothing.
   - Selections are clamped to the current document length.
@@ -116,8 +116,21 @@ Anything not listed is out of scope (§13).
 - **Sources.** MT §1 (unavailable + retry), OB §5 (ejected drive).
 
 #### VAULT-07 · One vault per window · P0 (constraint)
-- Multi-root workspaces (ZT, MT) and multiple windows (OT) are out of scope. A second launch focuses the existing window (PLAT-05).
-- [critic] The single-instance part of PLAT-05 is therefore P0. Two processes on one vault would race on the same notes and on the settings file.
+- Each window shows one vault at most, and a folder is the vault of one window at most. Opening a folder that another window has open brings that window forward and leaves the current one as it is. Multi-root workspaces (ZT, MT) are out of scope.
+- [critic] The single-instance part of PLAT-05 is therefore P0. Two processes on one vault would race on the same notes and on the settings file; inside one process the windows share the settings through patches (ARCHITECTURE §7).
+- [critic] Nested or overlapping folders may be open in two windows. Each sees the other's writes as external changes (SAVE-05/06), as with another app. One folder in two windows would share its session and its recovery copies, so it is refused.
+
+#### VAULT-08 · Multiple windows · P1
+- **Behavior.**
+  - Mod+Alt+N on macOS, Mod+M on Windows and Linux, the command palette, or "New window" in the vault menu opens another window on the empty state (VAULT-05), at the current window's size, one step down and to the right. Each window has its own vault, tree, editor, history and title.
+  - Settings apply to every window at once, except the sidebar's visibility and width, which each window keeps for itself (the last one changed is what new windows start with).
+  - Quitting writes every window's notes first (SAVE-02). Closing a window writes its own.
+  - The next launch reopens every window that had a vault open, with its size and place (PLAT-04). Closing the last window keeps it in that list; closing another one removes it.
+  - A second launch focuses the window used last (PLAT-05).
+- **Edge cases.**
+  - [critic] ⌥⌘N follows Mail's "New Viewer Window" beside ⌘N and ⇧⌘N (new note and folder). Ctrl+Alt+N would be AltGr+N, which types a character on many Windows layouts (ń, }), so Windows and Linux use OneNote's Ctrl+M. Both can be changed (SET-06).
+  - A folder that no longer opens at launch leaves its window on the empty state, silently (VAULT-02).
+- **Sources.** OB §2 (one window per vault, restored at launch), OT §2.6 (window→vault claims, per-label window state).
 
 ---
 
@@ -901,7 +914,7 @@ Math and diagrams are out of scope.
 - A heading jump: an outline mode inside the switcher, rather than a panel.
 - Tabs.
 
-Split panes and multiple windows are out of scope.
+Split panes are out of scope; separate windows are VAULT-08.
 
 #### NAV-08 · Empty states · P0 [critic]
 - **Behavior.** Every empty state is blank, with no hint text, logo or illustration (principle 4):
@@ -1241,11 +1254,11 @@ Math and diagrams are out of scope.
 - **Sources.** MT §8, MS §9, WR (tauri-notes-discovery §2.6).
 
 #### PLAT-04 · Window size and position · P0
-- **Behavior.** The size, position and maximized state are restored. A window that would land off-screen, for example after a monitor was removed, moves onto a visible display. [critic] Wayland does not let apps place windows, so there only the size and maximized state are restored.
+- **Behavior.** The size, position and maximized state of each window are restored. A window that would land off-screen, for example after a monitor was removed, moves onto a visible display. [critic] Wayland does not let apps place windows, so there only the size and maximized state are restored.
 - **Sources.** OB §10, MT §9, ZT §10.
 
 #### PLAT-05 · Single instance · P0 [critic] (was P1; file association stays P2)
-- **Behavior.** A second launch focuses the existing window. Opening `.md` files from the OS (file association, "Open with") is P2.
+- **Behavior.** A second launch focuses the window used last (VAULT-08). Opening `.md` files from the OS (file association, "Open with") is P2.
 - [critic] *Priority:* VAULT-07 (P0) relies on it, and `tauri-plugin-single-instance` is already a dependency.
 - **Sources.** OB §10, OT §2.8, ZT §10.
 
@@ -1378,7 +1391,7 @@ Sources: OT §2.1, §5; MS §9.
 - Graph view, canvas, databases and Bases, a properties editor, query languages.
 - Sync, collaboration, publishing, a web clipper, AI features, encryption.
 - Math (KaTeX, MathJax), Mermaid and other diagrams.
-- Tabs and split panes (tabs P2 at most); multiple windows and pop-outs.
+- Tabs and split panes (tabs P2 at most); pop-out windows for single notes (VAULT-08 opens windows for whole vaults).
 - A slash menu, a floating formatting toolbar, block handles, a status bar, a word count display.
 - Vim and Emacs modes; smart quotes and autocorrect; typewriter and focus modes.
 - Multi-root workspaces; editing files outside a vault.

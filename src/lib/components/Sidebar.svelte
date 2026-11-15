@@ -47,7 +47,7 @@
   import Icon from "./Icon.svelte";
   import FileTree from "./FileTree.svelte";
   import SearchPanel from "./SearchPanel.svelte";
-  import { newFolder, newNote, openFolderDialog, openVault } from "../appCommands";
+  import { newFolder, newNote, newWindow, openFolderDialog, openVault } from "../appCommands";
   import { vault } from "../state/vault.svelte";
   import { ui, type MenuEntry } from "../state/ui.svelte";
   import { t } from "../i18n";
@@ -71,7 +71,8 @@
 
   /**
    * Recent vaults (the open one skipped; same-named ones by full path), then "Open
-   * another folder". Opening goes through appCommands, like the Welcome screen.
+   * another folder" and "New window". Opening goes through appCommands, like the
+   * Welcome screen; a vault open in another window comes forward there (VAULT-07).
    */
   function openVaultMenu(e: MouseEvent & { currentTarget: HTMLButtonElement }): void {
     const roots = settings.values.recentVaults.filter((r) => r !== vault.info?.root);
@@ -82,6 +83,7 @@
     }));
     if (items.length > 0) items.push({ separator: true });
     items.push({ label: t("openAnotherFolder"), run: () => safely(openFolderDialog()) });
+    items.push({ label: t("newWindow"), run: () => safely(newWindow()) });
 
     // Anchored at the button's top edge: near the window bottom, the menu opens upward.
     const rect = e.currentTarget.getBoundingClientRect();

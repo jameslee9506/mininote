@@ -16,6 +16,7 @@
   import Toasts from "./lib/components/Toasts.svelte";
   import { discardNewNote, flushBeforeExit, openVault, quitApp, registerAppCommands } from "./lib/appCommands";
   import { uiLanguage } from "./lib/i18n";
+  import { windowStartup } from "./lib/ipc/commands";
   import { onFlushRequest } from "./lib/ipc/events";
   import { commands } from "./lib/state/commands.svelte";
   import { editor } from "./lib/state/editor.svelte";
@@ -91,17 +92,26 @@
   }
 
   /**
-   * settings → reopen the last vault → show (PLAT-03). An unreachable last vault fails
-   * silently inside vault.open and stays on the recent list, dimmed (VAULT-02).
+   * settings → reopen this window's vault → show (PLAT-03). The backend says which folder this
+   * window had when the app last ran (VAULT-07); a new window has none and shows Welcome, and the
+   * first window of a run with no saved window list reopens the last vault. An unreachable folder
+   * fails silently inside vault.open and stays on the recent list, dimmed (VAULT-02).
    */
   async function boot(): Promise<void> {
     const fallback = setTimeout(() => void reveal(), SHOW_FALLBACK_MS);
     try {
-      await settings.load();
+      const [startup] = await Promise.all([
+        windowStartup().catch((e) => {
+          console.error("window startup failed", e);
+          return null;
+        }),
+        settings.load(),
+      ]);
       // PLAT-12: a narrow window starts with the sidebar hidden; checked here, not when it mounts.
       checkNarrowStartup();
-      const last = settings.values.lastVault;
-      if (last) await openVault(last);
+      const restoreLast = startup === null || startup.last;
+      const target = startup?.vault ?? (restoreLast ? settings.values.lastVault : null);
+      if (target) await openVault(target, { startup: true });
     } catch (e) {
       console.error("startup failed", e);
     } finally {
