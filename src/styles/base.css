@@ -36,10 +36,15 @@ body {
   height: 100%;
 }
 
-/* Narrow windows: the content padding shrinks (PLAT-12; same breakpoint as Sidebar.svelte). */
-@media (max-width: 699px) {
-  :root {
-    --content-pad-x: 20px;
+/*
+ * A sidebar beside the document takes its width from the pane, and the content padding
+ * shrinks with the pane (--content-pad-x, PLAT-12). Below 700px the sidebar lies over the
+ * document and takes nothing (same breakpoint as Sidebar.svelte). The settings store sets
+ * `data-sidebar` while the sidebar is shown.
+ */
+@media (min-width: 700px) {
+  :root[data-sidebar] {
+    --pane-width: calc(100vw - var(--sidebar-width));
   }
 }
 

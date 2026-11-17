@@ -1332,7 +1332,7 @@ Math and diagrams are out of scope.
 - **Behavior.**
   - The minimum window size is 520×360.
   - Below about 700 px wide, the sidebar is hidden by default and opens over the content when toggled.
-  - The content padding shrinks.
+  - The content padding shrinks with the room the document has, whether the window is narrow or a sidebar beside the document takes the room: 48 px at each side from 840 px up, down to 16 px at 680 px and below.
   - The page never scrolls horizontally.
 - **Sources.** ZT §8, DESIGN.md §4.
 

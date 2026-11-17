@@ -165,7 +165,7 @@ class SettingsStore {
     await this.#saving;
   };
 
-  /** Pushes settings into CSS variables and the theme and icon-set attributes on <html>. */
+  /** Pushes settings into CSS variables and the theme, icon-set and sidebar attributes on <html>. */
   apply = (): void => {
     const v = this.values;
     const root = document.documentElement;
@@ -176,6 +176,8 @@ class SettingsStore {
     else root.style.setProperty("--font-mono", mono);
     root.style.setProperty("--content-max", v.lineWidth > 0 ? `${v.lineWidth}px` : "none");
     root.style.setProperty("--sidebar-width", `${v.sidebarWidth}px`);
+    // The room left for the document is CSS only: base.css takes a shown sidebar's width from it.
+    root.toggleAttribute("data-sidebar", v.sidebarVisible);
     if (v.theme === "system") root.removeAttribute("data-theme");
     else root.setAttribute("data-theme", v.theme);
     // The icon set is CSS only: tokens.css maps the attribute to the tree's folder color and fill.

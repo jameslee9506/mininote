@@ -115,7 +115,9 @@
   --sidebar-width: 248px;       /* settings.sidebarWidth */
   --header-h: 40px;             /* sidebar header + main top strip (macOS traffic lights live here) */
   --content-max: 720px;         /* settings.lineWidth (or `none`) */
-  --content-pad-x: 48px;
+  --pane-width: 100vw;          /* the document's pane: the window, less a sidebar standing beside it (base.css) */
+  /* Follows the pane: 48px from 840px up, 16px from 680px down, and at 700px the 20px between. */
+  --content-pad-x: clamp(16px, calc(var(--pane-width) * 0.2 - 120px), 48px);
   --content-pad-top: 24px;
   --content-pad-bottom: 40vh;   /* lets the last line scroll to mid-screen */
   --inline-title-gap: 24px;
