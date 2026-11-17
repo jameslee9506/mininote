@@ -34,9 +34,9 @@ Dark mode swaps the same variable names, either through `:root[data-theme="dark"
 | Element | Size | Line height | Weight |
 |---|---|---|---|
 | body / p / li | 15px (`--fs-content`) | 1.7 | 400 |
-| h1 | ×1.6 ≈ 24px | 1.3 | 600 |
-| h2 | ×1.36 ≈ 20.4px | 1.3 | 600 |
-| h3 | ×1.16 ≈ 17.4px | 1.3 | 600 |
+| h1 | ×1.8667 ≈ 28px | 1.3 | 600 |
+| h2 | ×1.6 ≈ 24px | 1.3 | 600 |
+| h3 | ×1.2 ≈ 18px | 1.3 | 600 |
 | h4 | 15px | 1.3 | 600 |
 | h5 | ×0.94 ≈ 14.1px | 1.3 | 600 |
 | h6 | ×0.88 ≈ 13.2px, `--c-text-muted` | 1.3 | 600 |
