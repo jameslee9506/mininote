@@ -1,4 +1,5 @@
 <script module lang="ts">
+  import { chordOf, matchShortcut } from "../utils/keys";
   import { isComposing } from "../utils/platform";
 
   // Ticks already acted on, and the scroll position: module-level because the tree
@@ -7,8 +8,14 @@
   let handledFocusTick = 0;
   let savedScroll = { root: "", top: 0 };
 
-  /** The mounted tree, for the F2 listener below. */
-  let mounted: { el: HTMLElement; renameSelected: () => void } | null = null;
+  /** The mounted tree, for the listeners below. */
+  let mounted: { el: HTMLElement; renameSelected: () => void; selectedPath: () => string | null } | null = null;
+
+  /**
+   * A row was clicked, and no key or press has followed. The click may have opened a note,
+   * which takes the keyboard, but the row is still what a copy means (TREE-11).
+   */
+  let picked = false;
 
   // F2 is also the global "rename the open note" shortcut, and the shell's capturing
   // window listener would consume it before the tree sees it. This listener is
@@ -28,6 +35,40 @@
       },
       true,
     );
+
+    // The system's copy (Mod+C, the Edit menu) puts the selected row's absolute path on the
+    // clipboard while the tree has the keyboard, or right after a click on a row (TREE-11).
+    // The event goes to wherever the text selection is, not to the tree, and CodeMirror would
+    // answer it with the line of its caret: so it is taken at the window, before anyone else.
+    window.addEventListener(
+      "copy",
+      (e) => {
+        if (mounted === null || e.clipboardData === null) return;
+        if (document.activeElement !== mounted.el && !picked) return;
+        const path = mounted.selectedPath();
+        if (path === null) return;
+        e.clipboardData.setData("text/plain", path);
+        e.preventDefault();
+        e.stopPropagation();
+      },
+      true,
+    );
+
+    // `picked` ends with the next press or key. The copy keys themselves keep it: a modifier
+    // held on its own, and Mod+C, which reaches the page before it becomes a copy. A key of
+    // an IME composition counts like any other: it is text typed into the note.
+    const unpick = (): void => {
+      picked = false;
+    };
+    window.addEventListener("mousedown", unpick, true);
+    window.addEventListener("blur", unpick);
+    window.addEventListener(
+      "keydown",
+      (e) => {
+        if (chordOf(e)?.key !== "" && !matchShortcut(e, "Mod-c")) picked = false;
+      },
+      true,
+    );
   }
 </script>
 
@@ -42,7 +83,7 @@
   import { ui, type MenuEntry } from "../state/ui.svelte";
   import { t } from "../i18n";
   import { isMac, revealLabelKey } from "../utils/platform";
-  import { dirname, isAncestor, join } from "../utils/path";
+  import { basename, dirname, isAncestor, join, nfc } from "../utils/path";
   import type { TreeNode, VaultPath } from "../types";
 
   const uid = $props.id();
@@ -166,10 +207,11 @@
         scrollTop = el.scrollTop;
       }
     });
-    const self = { el, renameSelected };
+    const self = { el, renameSelected, selectedPath };
     mounted = self;
     return () => {
       if (mounted === self) mounted = null;
+      picked = false;
       stopAutoScroll();
       clearHoverExpand();
     };
@@ -357,12 +399,53 @@
     if (refocus) scroller?.focus({ preventScroll: true });
   }
 
+  // ── Copy (TREE-09, TREE-11) ──────────────────────────────────
+
+  /**
+   * A path or a name as text for other apps. macOS finds a file under any Unicode form of its
+   * name, so the text is NFC, the form everything else expects (PLAT-06). Elsewhere only the
+   * listed spelling is sure to name the file.
+   */
+  const asText = (s: string): string => (isMac ? nfc(s) : s);
+
+  /** The absolute path of the selected row, for the system's copy; null when no row on the list is selected. */
+  function selectedPath(): string | null {
+    const path = vault.selected;
+    return path !== null && indexOf.has(path) ? asText(vault.absPath(path)) : null;
+  }
+
+  /**
+   * Puts `text` on the clipboard for a menu item. The write starts within the click or the key
+   * press that chose the item: the webviews refuse one that no user gesture stands behind.
+   */
+  async function copy(text: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(asText(text));
+    } catch (err) {
+      console.error(err);
+      ui.notify(t("errCopy"));
+    }
+  }
+
+  /** "Copy" and its submenu: the row's path on disk, its path from the vault root, or its name alone. */
+  function copyMenu(path: VaultPath): MenuEntry {
+    return {
+      label: t("copy"),
+      submenu: [
+        { label: t("copyAbsolutePath"), run: () => copy(vault.absPath(path)) },
+        { label: t("copyRelativePath"), run: () => copy(vault.relPath(path)) },
+        { label: t("copyName"), run: () => copy(basename(path)) },
+      ],
+    };
+  }
+
   // ── Mouse and context menus (TREE-09) ────────────────────────
 
   function onclick(e: MouseEvent): void {
     const node = nodeAt(e.target);
     if (!node) return;
     vault.selected = node.path;
+    picked = true;
     activate(node);
   }
 
@@ -371,6 +454,7 @@
     return [
       { label: t("rename"), run: () => startRename(path) },
       { label: t(revealLabelKey()), run: () => safely(vault.revealInOs(path)) },
+      copyMenu(path),
       { separator: true },
       { label: t("delete"), run: () => remove(path) },
     ];

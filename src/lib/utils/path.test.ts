@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { basename, dirname, extname, isAncestor, normalizeRel, rebase, relativeTo, toAbsolute, decodeLinkPath, encodeLinkPath } from "./path";
+import { basename, dirname, extname, isAncestor, normalizeRel, rebase, relativeTo, toAbsolute, toNative, decodeLinkPath, encodeLinkPath } from "./path";
 
 describe("path", () => {
   it("splits paths", () => {
@@ -37,6 +37,13 @@ describe("path", () => {
   it("builds absolute paths with the root's separator", () => {
     expect(toAbsolute("/Users/me/vault", "a/b.md")).toBe("/Users/me/vault/a/b.md");
     expect(toAbsolute("C:\\vault", "a/b.md")).toBe("C:\\vault\\a\\b.md");
+    expect(toAbsolute("C:\\", "a/b.md")).toBe("C:\\a\\b.md");
+  });
+
+  it("spells a vault path with the root's separator", () => {
+    expect(toNative("/Users/me/vault", "a/b.md")).toBe("a/b.md");
+    expect(toNative("C:\\vault", "a/b.md")).toBe("a\\b.md");
+    expect(toNative("\\\\server\\share", "b.md")).toBe("b.md");
   });
 
   it("round-trips link destinations", () => {

@@ -4,9 +4,15 @@ import { settings } from "./settings.svelte";
 
 export type ModalKind = "switcher" | "palette" | "settings" | null;
 
-export type MenuEntry =
-  | { label: string; run: () => void | Promise<void>; disabled?: boolean }
-  | { separator: true };
+/** A menu item that acts when it is chosen. */
+export interface MenuAction {
+  label: string;
+  run: () => void | Promise<void>;
+  disabled?: boolean;
+}
+
+/** An action, an item that opens a second panel of actions beside it (one level deep), or a separator. */
+export type MenuEntry = MenuAction | { label: string; submenu: MenuAction[] } | { separator: true };
 
 export interface MenuState {
   x: number;

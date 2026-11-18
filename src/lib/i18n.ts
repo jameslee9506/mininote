@@ -17,6 +17,10 @@ const en = {
   revealMac: "Reveal in Finder",
   revealWin: "Show in Explorer",
   revealLinux: "Open containing folder",
+  copy: "Copy",
+  copyAbsolutePath: "Absolute path",
+  copyRelativePath: "Relative path",
+  copyName: "Name",
 
   confirmDelete: "Delete “{name}”?",
   confirmDeleteFolder: "Delete “{name}” and everything in it?",
@@ -106,6 +110,7 @@ const en = {
   errRename: "Couldn’t rename “{name}”.",
   errCreate: "Couldn’t create “{name}”.",
   errAttachment: "Couldn’t save the image.",
+  errCopy: "Couldn’t copy to the clipboard.",
   errFontNotMono: "“{name}” isn’t an installed monospaced font.",
   errShortcutInvalid: "That key can’t be a shortcut.",
   errShortcutReserved: "{key} is reserved.",

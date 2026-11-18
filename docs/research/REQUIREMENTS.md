@@ -253,9 +253,15 @@ Anything not listed is out of scope (§13).
 
 #### TREE-09 · Context menus · P0
 - **Items.** Text only, with no icons and no shortcut hints.
-  - Note or image: Rename, Delete, Reveal in Finder / Show in Explorer / Show in file manager (label per OS), Copy path (P1).
-  - Folder: New note, New folder, Rename, Delete, Reveal.
+  - File: Rename, Reveal in Finder / Show in Explorer / Show in file manager (label per OS), Copy, Delete.
+  - Folder: New note, New folder, then the items of a file.
   - Empty tree area: New note and New folder, both in the root.
+- **Copy.** *Changed:* one item with a submenu, where a single "Copy path" was planned (P1).
+  - The submenu holds Absolute path, Relative path (from the vault root, with the separator of the OS) and Name (the file's name with its extension, or the folder's). The three are never items of the menu itself.
+  - A submenu is a second panel beside the menu, its first item level with the item that opened it, on the side that has room. An item that has one shows a chevron at its right edge.
+  - It opens when the pointer rests on its item, on a click, or with → or Enter. ← closes it, and so does a pointer that rests on another item; the pointer may cross other items on its way in.
+  - The copied text is NFC on macOS, which finds a file under any Unicode form of its name; elsewhere it is the listed spelling (PLAT-06).
+  - If the clipboard refuses, an error toast appears.
 - **Edge cases.**
   - A right-click cancels a pending inline rename.
   - Opening the menu from the keyboard (ContextMenu key, Shift+F10) is P1.
@@ -281,6 +287,7 @@ Anything not listed is out of scope (§13).
   - Home and End jump to the first and last row.
   - Enter opens a note and focuses the editor, or toggles a folder.
   - F2 renames. Delete or Cmd+Backspace deletes.
+  - The system's copy (Mod+C, or Copy in the macOS Edit menu) copies the selected row's absolute path, as the context menu's Copy does (TREE-09). It also does right after a click on a row, although the note the click opened has the keyboard by then: until a key is pressed or something else is clicked, the row is what a copy means.
   - Esc returns focus to the editor.
   - Arrow keys with modifiers are not captured.
   - [critic] Mod+Shift+E focuses the tree at the open note's row, revealing it, from anywhere. Without it, the only keyboard route into the tree is Esc, then Tab out of the editor (EDIT-04).
@@ -1298,6 +1305,7 @@ Math and diagrams are out of scope.
   - Paths used for file I/O stay byte-identical to what the OS listed.
   - Display, matching, sorting and comparison use NFC.
   - New names are written in NFC.
+  - A path or name copied to the clipboard (TREE-09) is text for other apps. On macOS it is NFC: the system finds the file under either form, and NFD Hangul shows as separate jamo in many apps. On Windows and Linux only the listed spelling is sure to name the file, so it is copied as it is.
   - After a create or rename, the app adopts the name the backend reports, because HFS+ stores NFD even when NFC was requested.
   - Two paths are "the same" when their NFC forms match ignoring case. On Linux, where both can exist, an exact match is preferred.
   - [critic] Lookup versus identity. `key()` finds an entry from an untrusted spelling: a typed link, a watcher path, switcher input, a collision check. Once found, the entry is identified by its exact stored `VaultPath`, which keys editor states, save controllers, history and recovery copies, and an exact match always beats a key match. Otherwise `A.md` and `a.md` on ext4, or NFC and NFD twins on NTFS, would share one buffer, and one file would be overwritten with the other's text.

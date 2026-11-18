@@ -124,7 +124,7 @@ scripts/prepare-release.mjs  validates the versions and writes the updater overl
   - notes additionally reject `# ^ [ ] |`, which break wikilinks.
   - These rules apply to names *we* create. Existing files with other names are still listed and openable.
 - **Unique names:** `Untitled.md`, `Untitled 1.md`, … are checked against siblings with `key()`.
-- **Absolute paths** (asset URLs, reveal) come from `toAbsolute(root, rel)`, which uses the root's own separator.
+- **Absolute paths** (asset URLs, reveal, copy) come from `toAbsolute(root, rel)`, which uses the root's own separator; `toNative(root, rel)` spells a vault path alone that way (the copied relative path, TREE-09).
 
 ## 5. IPC contract
 
@@ -437,7 +437,7 @@ App.svelte
        └─ UnsupportedView.svelte any other file: a notice naming its unsupported extension (TREE-16)
 ├─ QuickSwitcher · CommandPalette · SettingsModal (on Modal.svelte; its shortcuts page is ShortcutSettings.svelte; a last row shows the app version)
 ├─ UpdateButton.svelte       the update control of §6.7: download tray → percentage → restart arrow
-├─ ContextMenu · ConfirmDialog · Toasts
+├─ ContextMenu · ConfirmDialog · Toasts   the menu is one panel, and a second one beside it for an item's submenu (TREE-09)
 └─ Icon.svelte               inline SVG icon set; a folder is solid where its parent sets --icon-fill (tree rows, by icon set)
 ```
 
@@ -462,6 +462,7 @@ These are the defaults. Settings → Shortcuts rebinds every global command and 
 | Mod-Alt-←/→; Mod-[ / Mod-] (macOS); Alt-←/→ (Windows/Linux); mouse 3/4 | History back/forward | global |
 | F2 | Rename current note (focus inline title); in the focused tree, rename the selected row | global |
 | Mod-Shift-E | Focus the file tree at the open note's row, revealing it (TREE-11) | global |
+| Mod-C (the system's copy) | Copy the selected row's absolute path (TREE-11) | focused tree, or right after a click on a row |
 | Mod-Q (Windows/Linux) | Flush and quit (macOS uses the menu item) | global |
 | F5, Mod-R, Mod-Shift-R, Ctrl-F5, the keyboard's Refresh key | Cancelled: never reload the webview (PLAT-13). Every other browser key (Home, Stop, Search…) is cancelled too, and so are Mod-P and Mod-S (WebView2's print and save page) once no command takes them | global |
 | Mod-Shift-B / Mod-I / Mod-Shift-X / Mod-Shift-H | Toggle bold / italic / strikethrough / highlight | editor |
@@ -486,6 +487,8 @@ These are the defaults. Settings → Shortcuts rebinds every global command and 
   - A recorded key must pass `canBind` (`utils/keys.ts`): a function key, or a key held with Mod, with Control on macOS, or with Alt elsewhere. It must not be reserved: clipboard, undo/redo, select all, find and its next/previous keys, replace, and the macOS app-menu and window keys (Quit, Hide, Minimize, Full Screen, Cmd+\`). A key belongs to one command at most; a taken key is refused with a toast naming its command.
 - **Composition.** Every custom key handler returns early on `isComposing(e)`. A Mod-chord that arrives mid-composition is ignored (EDIT-11).
 - **Context menu.** The native context menu is suppressed everywhere except over editable text (the editor, inputs) or selected text (PLAT-13). A read-only editor, a locked note or a code file, is not editable: its menu appears over selected text only, and nothing drops into it.
+- **Menus** (`ContextMenu.svelte`, `ui.showMenu`). A `MenuEntry` is an action, a separator, or an item with a `submenu` of actions (one level). The submenu is a second fixed panel, measured like the first: beside it, on the side with room. The pointer opens it after a short rest on its item and closes it after a longer one on another item, so the way into it may cross a neighbour; → and Enter open it, ← closes it. An action runs within the click or key press that chose it, so it may write to the clipboard.
+- **Copying a row** (`FileTree.svelte`, TREE-11). The tree answers the `copy` event, not a key: Mod-C, the macOS Edit menu and the platform's other copy keys all raise it, and its `clipboardData` needs no permission. The engines send it to the text selection's element, not to the focused one, so the listener captures at the window and decides by focus. It also claims a copy right after a click on a row (`picked`, cleared by the next press or key), because that click may have moved the keyboard into the note it opened, where CodeMirror would copy the caret's line. The menu's Copy items have no such event and call `navigator.clipboard.writeText`.
 
 ### 9.2 Links, anchors, navigation (LINK-01…05)
 

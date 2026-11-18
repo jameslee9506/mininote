@@ -28,7 +28,7 @@ import {
 import { onVaultChanged } from "../ipc/events";
 import { t } from "../i18n";
 import { buildTree, compareNodes, EMPTY_LISTING, flattenVisible, type TreeRow } from "./tree";
-import { basename, dirname, isSameOrAncestor, join, key, nfc, normalizeRel, rebase, toAbsolute } from "../utils/path";
+import { basename, dirname, isSameOrAncestor, join, key, nfc, normalizeRel, rebase, toAbsolute, toNative } from "../utils/path";
 import { fileKindOf, pastedImageName, titleOf, uniqueName, validateName } from "../utils/names";
 import { within } from "./autosave";
 import { editor, SWITCH_FLUSH_MS } from "./editor.svelte";
@@ -333,6 +333,9 @@ class VaultStore {
   };
 
   absPath = (path: VaultPath): string => toAbsolute(this.info?.root ?? "", path);
+
+  /** `path` from the vault root, as the root's OS spells paths (its separator). */
+  relPath = (path: VaultPath): string => toNative(this.info?.root ?? "", path);
 
   /**
    * asset:// URL for displaying a vault file in the webview. An image that is a link on

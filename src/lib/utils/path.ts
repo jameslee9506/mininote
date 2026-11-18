@@ -79,12 +79,23 @@ export function relativeTo(fromDir: VaultPath, target: VaultPath): string {
   return [...Array(a.length - i).fill(".."), ...b.slice(i)].join("/");
 }
 
+/** The separator of an absolute OS path: "\" in a Windows root, "/" anywhere else. */
+function separatorOf(root: string): string {
+  return root.includes("\\") && !root.includes("/") ? "\\" : "/";
+}
+
+/** A vault path spelled as the OS of `root` spells paths: "a/b.md" is "a\b.md" under a Windows root. */
+export function toNative(root: string, rel: VaultPath): string {
+  const sep = separatorOf(root);
+  return sep === "/" ? rel : rel.split("/").join(sep);
+}
+
 /** Builds an absolute OS path from the vault root, using the root's separator style. */
 export function toAbsolute(root: string, rel: VaultPath): string {
   if (rel === "") return root;
-  const sep = root.includes("\\") && !root.includes("/") ? "\\" : "/";
+  const sep = separatorOf(root);
   const base = root.endsWith(sep) ? root.slice(0, -1) : root;
-  return base + sep + (sep === "/" ? rel : rel.split("/").join(sep));
+  return base + sep + toNative(root, rel);
 }
 
 /** Unicode NFC (macOS may hand us NFD Hangul). */
