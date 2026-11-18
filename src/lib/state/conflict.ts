@@ -1,5 +1,5 @@
 /** Conflict-copy naming (SAVE-06): "<stem> (conflict YYYYMMDD-HHmmss).<ext>" in at most 255 UTF-8 bytes. */
-import { MAX_NAME_BYTES } from "../utils/names";
+import { MAX_NAME_BYTES, truncateBytes } from "../utils/names";
 
 const utf8 = new TextEncoder();
 const bytes = (s: string) => utf8.encode(s).length;
@@ -10,20 +10,6 @@ export function conflictStamp(d: Date): string {
   return (
     `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-` + `${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`
   );
-}
-
-/** Cuts `s` to at most `max` UTF-8 bytes at a code-point boundary. */
-function truncateBytes(s: string, max: number): string {
-  if (bytes(s) <= max) return s;
-  let out = "";
-  let used = 0;
-  for (const ch of s) {
-    const b = bytes(ch);
-    if (used + b > max) break;
-    out += ch;
-    used += b;
-  }
-  return out;
 }
 
 /**

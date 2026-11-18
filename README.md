@@ -29,7 +29,7 @@ npm test               # Unit tests (Vitest)
 | Area | Features |
 |---|---|
 | Vaults | Open a folder, revisit recent vaults, and restore the last note and scroll position. Open another window to work in another folder; every window comes back at the next launch. Settings live in the app's configuration folder, outside the vault. |
-| File tree | Natural sorting with folders first, inline creation and renaming, drag to move, deletion through the OS trash, keyboard navigation, and virtual scrolling. |
+| File tree | Natural sorting with folders first, inline creation and renaming, drag to move, copy and paste to duplicate a file, deletion through the OS trash, keyboard navigation, and virtual scrolling. |
 | Editor | Obsidian-style live preview powered by CodeMirror 6, hiding syntax away from the cursor. Supports tables, images, checkboxes, `[[wikilinks]]` with completion, `==highlights==`, find and replace, and images pasted or dropped as attachments. A typed arrow such as `->` becomes `→`. Handles Korean IME composition safely. |
 | Saving | Atomic saves 0.4 seconds after typing stops, or at least every 2 seconds while typing continues. External changes reload automatically; if there are unsaved edits, the disk version is kept as a conflict copy. Failed saves leave a recovery copy. |
 | Reading view | Toggle with `Mod+E`. Markdown is rendered with markdown-it and sanitized with DOMPurify. |
@@ -50,6 +50,7 @@ npm test               # Unit tests (Vitest)
 | `Mod+,` | Open settings |
 | `Mod+[` `Mod+]` (macOS) · `Alt+←/→` · `Mod+Alt+←/→` | Go back / forward |
 | `F2` | Rename the current note |
+| `Mod+C` / `Mod+V` on a file in the tree | Copy its path / paste a copy of that file into the selected folder |
 | `Mod+Shift+B` · `Mod+I/K` · `Mod+Shift+X/H` | Bold · italic / link · strikethrough / highlight |
 | `Mod+L` | Toggle checkbox |
 | `Mod+1…6` / `Mod+0` | Set heading level / plain paragraph |

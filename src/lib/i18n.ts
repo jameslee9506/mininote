@@ -107,6 +107,7 @@ const en = {
   errTruncated: "This vault is very large; some files aren’t shown.",
   errTrash: "Couldn’t delete “{name}”.",
   errMove: "Couldn’t move “{name}”.",
+  errCopyFile: "Couldn’t copy “{name}”.",
   errRename: "Couldn’t rename “{name}”.",
   errCreate: "Couldn’t create “{name}”.",
   errAttachment: "Couldn’t save the image.",

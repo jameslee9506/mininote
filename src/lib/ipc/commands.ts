@@ -157,6 +157,13 @@ export const dirCreate = (path: VaultPath) => scoped<void>("dir_create", { path 
  */
 export const pathRename = (from: VaultPath, to: VaultPath, at?: number) => scoped<void>("path_rename", { from, to }, at);
 
+/**
+ * Copies the file `from` into the NEW file `to` (creating `to`'s parent if needed). Rejects
+ * with "exists" when `to` is taken: nothing is ever replaced. A folder is not copied, and a
+ * link is copied as the file it leads to (TREE-18).
+ */
+export const pathCopy = (from: VaultPath, to: VaultPath, at?: number) => scoped<void>("path_copy", { from, to }, at);
+
 /** Moves a file/folder to the OS trash; rejects with "trash_failed" if unsupported. */
 export const pathTrash = (path: VaultPath, at?: number) => scoped<void>("path_trash", { path }, at);
 

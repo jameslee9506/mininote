@@ -1,5 +1,5 @@
-//! Vault file operations: listing, reading, atomic writes, create, rename, trash,
-//! delete, reveal (ARCHITECTURE §6.2–6.3), plus the self-write registry the
+//! Vault file operations: listing, reading, atomic writes, create, copy, rename,
+//! trash, delete, reveal (ARCHITECTURE §6.2–6.3), plus the self-write registry the
 //! watcher consults (SAVE-05).
 //!
 //! A link (a symlink) that leads to a regular file is a file of the vault: listed,
@@ -1170,29 +1170,40 @@ fn write_in_place(target: &Path, bytes: &[u8]) -> AppResult<()> {
         .map_err(|e| AppError::from_io(e, "write file in place"))
 }
 
-/// Exclusive create of a new file with `bytes` (never overwrites). A partially
-/// written file is removed again on failure. A link at `abs` is an entry in the
-/// way like any other, even one that leads nowhere: nothing is created through
-/// a link (TREE-18). Unix refuses that by itself; the check makes it so everywhere.
+/// Exclusive create of a new file with `bytes`; see [`create_new`].
 fn create_exclusive(abs: &Path, bytes: &[u8], rel: &str) -> AppResult<()> {
+    create_new(abs, rel, &mut OpenOptions::new(), |file| {
+        file.write_all(bytes)
+    })
+}
+
+/// Creates the new file `abs`, opened with `options`, and has `fill` write it
+/// (never overwrites). A partially written file is removed again on failure. A
+/// link at `abs` is an entry in the way like any other, even one that leads
+/// nowhere: nothing is created through a link (TREE-18). Unix refuses that by
+/// itself; the check makes it so everywhere.
+fn create_new(
+    abs: &Path,
+    rel: &str,
+    options: &mut OpenOptions,
+    fill: impl FnOnce(&mut File) -> io::Result<()>,
+) -> AppResult<()> {
+    let taken = || AppError::new(ErrorKind::Exists, format!("already exists: {rel}"));
     if fs::symlink_metadata(abs).is_ok_and(|meta| meta.file_type().is_symlink()) {
-        return Err(AppError::new(
-            ErrorKind::Exists,
-            format!("already exists: {rel}"),
-        ));
+        return Err(taken());
     }
-    let mut file = OpenOptions::new()
+    let mut file = options
         .write(true)
         .create_new(true)
         .open(abs)
         .map_err(|e| {
             if e.kind() == io::ErrorKind::AlreadyExists {
-                AppError::new(ErrorKind::Exists, format!("already exists: {rel}"))
+                taken()
             } else {
                 AppError::from_write(e, rel)
             }
         })?;
-    let written = file.write_all(bytes).and_then(|()| file.sync_all());
+    let written = fill(&mut file).and_then(|()| file.sync_all());
     drop(file);
     if let Err(e) = written {
         let _ = fs::remove_file(abs);
@@ -1454,6 +1465,59 @@ pub async fn dir_create(window: WebviewWindow, epoch: u64, path: String) -> AppR
         Ok(())
     })
     .await
+}
+
+// ---------------------------------------------------------------- copy
+
+/// `path_copy` (scoped): copies the file `from` into the new file `to` (missing
+/// parents inside the root are created). Only a file, never a folder, and never
+/// over an entry that is there (`exists`). A link is copied as the file it leads
+/// to, so the copy is a regular file of its own (TREE-18, TREE-19).
+#[tauri::command]
+pub async fn path_copy(
+    window: WebviewWindow,
+    epoch: u64,
+    from: String,
+    to: String,
+) -> AppResult<()> {
+    blocking(&window, move |state| {
+        let root = state.check(epoch)?;
+        copy_entry(state, &root, &from, &to)
+    })
+    .await
+}
+
+/// Copies the file `from_rel` into the new file `to_rel` (`path_copy`). The copy
+/// is created as in [`create_new`] and its content is streamed, so a file of any
+/// kind and size is copied whole. It has a new file's permissions, and the
+/// source's execute bits with them: a copied script still runs, and the copy of
+/// a read-only note can be edited.
+fn copy_entry(state: &VaultState, root: &Path, from_rel: &str, to_rel: &str) -> AppResult<()> {
+    if to_rel.is_empty() {
+        return Err(AppError::new(ErrorKind::Exists, "the vault folder exists"));
+    }
+    let from = vault::resolve(root, from_rel)?;
+    let to = vault::resolve(root, to_rel)?;
+    // Opening follows a link to its file, and the handle says what was opened.
+    let mut source = File::open(&from).map_err(|e| AppError::from_io(e, from_rel))?;
+    let meta = source
+        .metadata()
+        .map_err(|e| AppError::from_io(e, from_rel))?;
+    if !meta.is_file() {
+        return Err(invalid("only a file can be copied"));
+    }
+    ensure_parent_dirs(root, &to)?;
+    let mut options = OpenOptions::new();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        options.mode(0o666 | (meta.permissions().mode() & 0o111));
+    }
+    create_new(&to, to_rel, &mut options, |file| {
+        io::copy(&mut source, file).map(|_| ())
+    })?;
+    state.registry().remove(&to);
+    Ok(())
 }
 
 // ---------------------------------------------------------------- rename
@@ -2005,6 +2069,53 @@ mod tests {
         let created = create_exclusive(&dangling, b"x", "dangling.md");
         assert_eq!(created.unwrap_err().kind, ErrorKind::Exists);
         assert!(!root.join("gone.md").exists());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn a_copy_is_a_new_file_and_replaces_nothing() {
+        let root = dunce::canonicalize(scratch_dir("copy")).unwrap();
+        let state = VaultState::new();
+        fs::write(root.join("a.md"), "one").unwrap();
+        fs::write(root.join("b.md"), "two").unwrap();
+
+        copy_entry(&state, &root, "a.md", "docs/a 1.md").unwrap();
+        assert_eq!(fs::read_to_string(root.join("docs/a 1.md")).unwrap(), "one");
+        // A taken name is refused, and what is there stays.
+        let taken = copy_entry(&state, &root, "a.md", "b.md");
+        assert_eq!(taken.unwrap_err().kind, ErrorKind::Exists);
+        assert_eq!(fs::read_to_string(root.join("b.md")).unwrap(), "two");
+        // A folder is not copied, and neither is a file that is not there.
+        assert!(copy_entry(&state, &root, "docs", "docs 1").is_err());
+        let missing = copy_entry(&state, &root, "gone.md", "new/gone 1.md");
+        assert_eq!(missing.unwrap_err().kind, ErrorKind::NotFound);
+        assert!(!root.join("docs 1").exists() && !root.join("new").exists());
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::{symlink, PermissionsExt};
+            // A link is copied as the file it leads to: the copy is a file of its own.
+            symlink("a.md", root.join("alias.md")).unwrap();
+            copy_entry(&state, &root, "alias.md", "alias 1.md").unwrap();
+            let copy = root.join("alias 1.md");
+            assert!(fs::symlink_metadata(&copy).unwrap().is_file());
+            assert_eq!(fs::read_to_string(&copy).unwrap(), "one");
+            // Nothing is created through a link, even one that leads nowhere.
+            symlink("nowhere.md", root.join("dangling.md")).unwrap();
+            let through = copy_entry(&state, &root, "a.md", "dangling.md");
+            assert_eq!(through.unwrap_err().kind, ErrorKind::Exists);
+            assert!(!root.join("nowhere.md").exists());
+            // A read-only script: its copy still runs, and can be written.
+            let script = root.join("run.sh");
+            fs::write(&script, "#!/bin/sh\n").unwrap();
+            fs::set_permissions(&script, fs::Permissions::from_mode(0o555)).unwrap();
+            copy_entry(&state, &root, "run.sh", "run 1.sh").unwrap();
+            let mode = fs::metadata(root.join("run 1.sh"))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o300, 0o300);
+        }
         fs::remove_dir_all(&root).unwrap();
     }
 

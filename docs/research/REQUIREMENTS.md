@@ -288,7 +288,8 @@ Anything not listed is out of scope (§13).
   - Home and End jump to the first and last row.
   - Enter opens a note and focuses the editor, or toggles a folder.
   - F2 renames. Delete or Cmd+Backspace deletes.
-  - The system's copy (Mod+C, or Copy in the macOS Edit menu) copies the selected row's absolute path, as the context menu's Copy does (TREE-09). It also does right after a click on a row, although the note the click opened has the keyboard by then: until a key is pressed or something else is clicked, the row is what a copy means.
+  - The system's copy (Mod+C, or Copy in the macOS Edit menu) copies the selected row's absolute path, as the context menu's Copy does (TREE-09). It also does right after a click on a row, although the note the click opened has the keyboard by then: until a key is pressed or something else is clicked, a copy or a paste is about the row.
+  - The system's paste (Mod+V, or Paste in the macOS Edit menu) pastes the row copied that way: a copied file is copied into the folder in focus (TREE-19).
   - Esc returns focus to the editor.
   - Arrow keys with modifiers are not captured.
   - [critic] Mod+Shift+E focuses the tree at the open note's row, revealing it, from anywhere. Without it, the only keyboard route into the tree is Esc, then Tab out of the editor (EDIT-04).
@@ -312,7 +313,7 @@ Anything not listed is out of scope (§13).
 #### TREE-14 · More tree features · P2
 - Sort modes by modification or creation time, ascending or descending, with folders always sorted by name.
 - Multi-select with bulk move and delete.
-- Duplicate.
+- Copying a folder. *Changed:* a file is copied with the system's copy and paste (TREE-19), where a Duplicate item was planned.
 - A "Move to…" folder picker.
 - Sticky headers for open folders.
 - Importing OS files dropped on the tree.
@@ -363,6 +364,7 @@ Sources: OB §3, ZT §3.3–3.4, MT §2.
   - A link (a symlink) that leads to a regular file is a file of the vault. It is listed under its own name, and that name says what it is: `AGENTS.md` linked to `CLAUDE.md` is a note.
   - It opens, is searched and is shown as the file it leads to, wherever that file is. A note is edited through it: a save replaces that file where it lies, with the atomic write and the conflict check of any note (SAVE-04, SAVE-06), and the link stays a link.
   - Renaming, moving and deleting act on the link, never on its file. A link moved to another folder still leads to its file: a relative target is rewritten for the new folder.
+  - Copying (TREE-19) copies the file the link leads to. The copy is a regular file of its own, never a second link, which an edit of the copy would follow into the original.
   - A change of the file reaches every link to it: an open link reloads like any note (SAVE-06), and one whose file is gone closes (SAVE-07).
 - **Edge cases.**
   - A link that leads to a folder is not listed and never followed, so nothing below a linked folder is ever read or written (PLAT-08). A link that leads nowhere, or in a circle, is not listed either.
@@ -374,6 +376,24 @@ Sources: OB §3, ZT §3.3–3.4, MT §2.
   - Finder aliases and Windows shortcuts are not links: each is an ordinary file with content of its own.
 - **Decision.** *Changed:* links were hidden with everything that is neither a folder nor a regular file, so a project's `AGENTS.md`, linked to its `CLAUDE.md`, could not be opened. Every editor follows a link to a file. What must never be followed is a link to a folder, which can lead out of the vault, in a circle, or across the whole disk. The tree does not mark a link.
 - **Sources.** OB §2, MS §4, MT §4.
+
+#### TREE-19 · Copy and paste a file · P1
+- **Behavior.**
+  - A row copied with the system's copy (TREE-11) is pasted with the system's paste (Mod+V, or Paste in the macOS Edit menu), while the tree has the keyboard or right after a click on a row.
+  - A copied file is copied into the folder in focus: the selected folder, or the folder the selected file is in. Pasted right after it was copied, it is duplicated beside itself. With no row selected, the folder is the open note's, else the root, as for a new note (TREE-04).
+  - The copy keeps the file's name where that is free. Where it is taken, the copy is numbered as new notes are (TREE-04): `Note 1.md`, `Note 2.md`. Nothing is ever replaced.
+  - The copy is selected and revealed in the tree (TREE-03). It is not opened: the open note stays, and keeps the keyboard if it had it.
+  - A copied folder is not pasted: nothing happens.
+- **Edge cases.**
+  - Such a paste never types the copied path into the open note. The path is pasted as text where the keyboard is once a paste is no longer about the row (TREE-11): after a click in the note, or a key.
+  - A paste is the tree's only while the clipboard still holds what the tree copied last. Anything copied since, here or in another app, is pasted as usual: into the note that has the keyboard, or nowhere. The menu's Copy items (TREE-09) copy text only.
+  - An open note is flushed first (SAVE-02), so its copy holds the latest text.
+  - A file of any kind and size is copied byte for byte. The copy has a new file's permissions and its source's execute bits: a copied script still runs, and the copy of a read-only note can be edited. A link is copied as the file it leads to (TREE-18).
+  - The copied row is remembered by its path, for one window and one vault. A file renamed, moved or deleted since is not pasted.
+  - A numbered name stays within 255 bytes: the stem is shortened, never the extension (TREE-07). It is written in NFC (PLAT-06).
+  - If the copy fails, an error toast appears, and no partial file stays.
+- **Decision.** Copy and paste, where a Duplicate item was planned (TREE-14). The copy key was there (TREE-11), and one pair of keys both duplicates a file where it is and copies it into another folder. A folder is not copied: one paste could write thousands of files. *Changed:* the path the copy key put on the clipboard was pasted into the open note whenever a click on a row had opened it.
+- **Sources.** OB §3 (copy and paste with Mod+C and Mod+V, Duplicate), ZT §3.3 (Duplicate).
 
 ---
 
@@ -1501,7 +1521,7 @@ The current plan already matches most of this spec. Where it differs, this spec 
 
 **P1**
 - VAULT-05, VAULT-06.
-- TREE-10, TREE-11, TREE-13.
+- TREE-10, TREE-11, TREE-13, TREE-19.
 - EDIT-05 (the other shortcuts), EDIT-06, EDIT-07, EDIT-08, EDIT-09 (replace), EDIT-12, EDIT-14, EDIT-16, EDIT-18.
 - LIVE-02 (highlight), LIVE-11, LIVE-12, LIVE-13.
 - SAVE-06 (merge), SAVE-09, SAVE-11. ([critic] SAVE-10 moved to P0.)

@@ -88,6 +88,7 @@ pub fn run() {
             fs_ops::note_write,
             fs_ops::note_create,
             fs_ops::dir_create,
+            fs_ops::path_copy,
             fs_ops::path_rename,
             fs_ops::path_trash,
             fs_ops::path_delete,

@@ -1,4 +1,5 @@
 <script module lang="ts">
+  import type { VaultPath } from "../types";
   import { chordOf, matchShortcut } from "../utils/keys";
   import { isComposing } from "../utils/platform";
 
@@ -9,13 +10,24 @@
   let savedScroll = { root: "", top: 0 };
 
   /** The mounted tree, for the listeners below. */
-  let mounted: { el: HTMLElement; renameSelected: () => void; selectedPath: () => string | null } | null = null;
+  let mounted: {
+    el: HTMLElement;
+    renameSelected: () => void;
+    copySelected: () => string | null;
+    pasteCopied: (text: string) => boolean;
+  } | null = null;
 
   /**
    * A row was clicked, and no key or press has followed. The click may have opened a note,
-   * which takes the keyboard, but the row is still what a copy means (TREE-11).
+   * which takes the keyboard, but a copy or a paste is still about the row (TREE-11).
    */
   let picked = false;
+
+  /**
+   * The row the system's copy took last, in the vault `root`, and the text that copy put on the
+   * clipboard. A paste is that row's for as long as the clipboard still holds that text (TREE-19).
+   */
+  let copied: { root: string; path: VaultPath; text: string } | null = null;
 
   // F2 is also the global "rename the open note" shortcut, and the shell's capturing
   // window listener would consume it before the tree sees it. This listener is
@@ -45,7 +57,7 @@
       (e) => {
         if (mounted === null || e.clipboardData === null) return;
         if (document.activeElement !== mounted.el && !picked) return;
-        const path = mounted.selectedPath();
+        const path = mounted.copySelected();
         if (path === null) return;
         e.clipboardData.setData("text/plain", path);
         e.preventDefault();
@@ -54,9 +66,29 @@
       true,
     );
 
-    // `picked` ends with the next press or key. The copy keys themselves keep it: a modifier
-    // held on its own, and Mod+C, which reaches the page before it becomes a copy. A key of
-    // an IME composition counts like any other: it is text typed into the note.
+    // The system's paste (Mod+V, the Edit menu) is the tree's under the same condition, while
+    // the clipboard still holds the row copied last: a copied file is copied into the folder in
+    // focus, and a copied folder is not pasted (TREE-19). Such a paste is taken whole, here at
+    // the window: with the keyboard in a note, the path must not be typed into it. Any other
+    // paste is text for that note, and ends `picked` as its key did before it was a paste.
+    window.addEventListener(
+      "paste",
+      (e) => {
+        if (mounted === null || e.clipboardData === null) return;
+        if (document.activeElement !== mounted.el && !picked) return;
+        if (!mounted.pasteCopied(e.clipboardData.getData("text/plain"))) {
+          picked = false;
+          return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+      },
+      true,
+    );
+
+    // `picked` ends with the next press or key. The clipboard keys themselves keep it: a modifier
+    // held on its own, and Mod+C and Mod+V, which reach the page before they become a copy or a
+    // paste. A key of an IME composition counts like any other: it is text typed into the note.
     const unpick = (): void => {
       picked = false;
     };
@@ -65,7 +97,7 @@
     window.addEventListener(
       "keydown",
       (e) => {
-        if (chordOf(e)?.key !== "" && !matchShortcut(e, "Mod-c")) picked = false;
+        if (chordOf(e)?.key !== "" && !matchShortcut(e, "Mod-c") && !matchShortcut(e, "Mod-v")) picked = false;
       },
       true,
     );
@@ -84,7 +116,7 @@
   import { t } from "../i18n";
   import { isMac, revealLabelKey } from "../utils/platform";
   import { basename, dirname, isAncestor, join, nfc } from "../utils/path";
-  import type { TreeNode, VaultPath } from "../types";
+  import type { TreeNode } from "../types";
 
   const uid = $props.id();
 
@@ -207,7 +239,7 @@
         scrollTop = el.scrollTop;
       }
     });
-    const self = { el, renameSelected, selectedPath };
+    const self = { el, renameSelected, copySelected, pasteCopied };
     mounted = self;
     return () => {
       if (mounted === self) mounted = null;
@@ -399,7 +431,7 @@
     if (refocus) scroller?.focus({ preventScroll: true });
   }
 
-  // ── Copy (TREE-09, TREE-11) ──────────────────────────────────
+  // ── Copy and paste (TREE-09, TREE-11, TREE-19) ───────────────
 
   /**
    * A path or a name as text for other apps. macOS finds a file under any Unicode form of its
@@ -408,10 +440,29 @@
    */
   const asText = (s: string): string => (isMac ? nfc(s) : s);
 
-  /** The absolute path of the selected row, for the system's copy; null when no row on the list is selected. */
-  function selectedPath(): string | null {
+  /**
+   * The system's copy: remembers the selected row for a paste, and returns its absolute path, the
+   * text that goes on the clipboard. Null when no row on the list is selected.
+   */
+  function copySelected(): string | null {
     const path = vault.selected;
-    return path !== null && indexOf.has(path) ? asText(vault.absPath(path)) : null;
+    if (path === null || !indexOf.has(path)) return null;
+    const text = asText(vault.absPath(path));
+    copied = { root: vault.info?.root ?? "", path, text };
+    return text;
+  }
+
+  /**
+   * The system's paste, with `text` on the clipboard. False when that is not the row copied last
+   * in this vault: the paste is not the tree's. Otherwise a copied file is copied into the folder
+   * in focus (the selected folder, or the one the selected file is in), and a copied folder, or a
+   * file that is gone, pastes nothing.
+   */
+  function pasteCopied(text: string): boolean {
+    if (copied === null || copied.root !== vault.info?.root || text !== copied.text) return false;
+    const node = vault.node(copied.path);
+    if (node?.kind === "file") safely(vault.copyInto(node.path, vault.activeDir()));
+    return true;
   }
 
   /**

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { fileKindOf, pastedImageName, titleOf, uniqueName, validateName, withKeptExtension } from "./names";
+import { copyName, fileKindOf, pastedImageName, titleOf, uniqueName, validateName, withKeptExtension } from "./names";
+
+const bytes = (s: string) => new TextEncoder().encode(s).length;
 
 describe("names", () => {
   it("validates cross-platform file names", () => {
@@ -22,6 +24,26 @@ describe("names", () => {
     expect(uniqueName("Untitled", "md", (k) => taken.has(k))).toBe("Untitled 2.md");
     const nfd = new Set(["\uC81C\uBAA9 \uC5C6\uC74C.md".normalize("NFD").normalize("NFC").toLowerCase()]);
     expect(uniqueName("\uC81C\uBAA9 \uC5C6\uC74C", "md", (k) => nfd.has(k))).toBe("\uC81C\uBAA9 \uC5C6\uC74C 1.md");
+  });
+
+  it("names a copy after its file, numbered where the name is taken", () => {
+    const taken = new Set(["note.md", "note 1.md", "makefile", "draft."]);
+    const has = (k: string) => taken.has(k);
+    expect(copyName("Other.md", has)).toBe("Other.md");
+    expect(copyName("Note.md", has)).toBe("Note 2.md");
+    expect(copyName("NOTE.MD", has)).toBe("NOTE 2.MD");
+    expect(copyName("Makefile", has)).toBe("Makefile 1");
+    // A dot that ends the name starts no extension.
+    expect(copyName("draft.", has)).toBe("draft. 1");
+    // Written in NFC, and found taken under either form.
+    const hangul = "\uD55C\uAE00.md";
+    expect(copyName(hangul.normalize("NFD"), () => false)).toBe(hangul);
+    expect(copyName(hangul.normalize("NFD"), (k) => k === hangul)).toBe("\uD55C\uAE00 1.md");
+    // A numbered name still fits 255 bytes: the stem gives way, never the extension.
+    const long = `${"\uAC00".repeat(84)}.md`;
+    const copy = copyName(long, (k) => k === long);
+    expect(bytes(copy)).toBeLessThanOrEqual(255);
+    expect(copy.endsWith(" 1.md")).toBe(true);
   });
 
   it("tells notes, images, code and every other file apart by name", () => {

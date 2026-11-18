@@ -418,8 +418,8 @@ fn is_windows_reserved(c: &str) -> bool {
 ///
 /// The last component names an entry of a real folder of the vault, and that entry
 /// may be a link. Commands act on the entry itself (rename, trash, delete, exists),
-/// and an exclusive create fails on one. Only reading and writing a note follow it,
-/// and only to a regular file (TREE-18).
+/// and an exclusive create fails on one. Only reading and writing a note, and
+/// reading a file to copy it, follow it, and only to a regular file (TREE-18).
 pub fn resolve(root: &Path, rel: &str) -> AppResult<PathBuf> {
     let parts = split_rel(rel)?;
     let folders = parts.len().saturating_sub(1);

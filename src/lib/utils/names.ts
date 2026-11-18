@@ -76,6 +76,40 @@ export function uniqueName(base: string, ext: string, taken: (nameKey: string) =
   }
 }
 
+/** Cuts `s` to at most `max` UTF-8 bytes at a code-point boundary. */
+export function truncateBytes(s: string, max: number): string {
+  if (utf8.encode(s).length <= max) return s;
+  let out = "";
+  let used = 0;
+  for (const ch of s) {
+    const b = utf8.encode(ch).length;
+    if (used + b > max) break;
+    out += ch;
+    used += b;
+  }
+  return out;
+}
+
+/**
+ * The name of a copy of the file `name` in a folder where `taken(key)` reports the names in
+ * use (TREE-19): `name` itself while it is free there, else "stem 1.ext", "stem 2.ext", …
+ * as `uniqueName` numbers them. It is written in NFC, like every new name, and a numbered
+ * stem is shortened so that the whole name stays within the 255 bytes (TREE-07).
+ */
+export function copyName(name: string, taken: (nameKey: string) => boolean): string {
+  const full = name.normalize("NFC");
+  if (!taken(key(full))) return full;
+  // A dot that starts or ends the name is part of it, not the start of an extension.
+  const dot = full.lastIndexOf(".");
+  const cut = dot > 0 && dot < full.length - 1 ? dot : full.length;
+  const ext = full.slice(cut);
+  for (let i = 1; ; i++) {
+    const suffix = ` ${i}${ext}`;
+    const copy = truncateBytes(full.slice(0, cut), Math.max(0, MAX_NAME_BYTES - utf8.encode(suffix).length)) + suffix;
+    if (!taken(key(copy))) return copy;
+  }
+}
+
 /** "Pasted image 20261108093012.png" — Obsidian-compatible attachment naming. */
 export function pastedImageName(ext: string, now: Date): string {
   const p = (n: number) => String(n).padStart(2, "0");

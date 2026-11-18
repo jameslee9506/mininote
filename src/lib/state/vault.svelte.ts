@@ -15,6 +15,7 @@ import {
   dirCreate,
   isIpcError,
   noteCreate,
+  pathCopy,
   pathDelete,
   pathExists,
   pathRename,
@@ -29,7 +30,7 @@ import { onVaultChanged } from "../ipc/events";
 import { t } from "../i18n";
 import { buildTree, compareNodes, EMPTY_LISTING, flattenVisible, type TreeRow } from "./tree";
 import { basename, dirname, isSameOrAncestor, join, key, nfc, normalizeRel, rebase, toAbsolute, toNative } from "../utils/path";
-import { fileKindOf, pastedImageName, titleOf, uniqueName, validateName } from "../utils/names";
+import { copyName, fileKindOf, pastedImageName, titleOf, uniqueName, validateName } from "../utils/names";
 import { within } from "./autosave";
 import { editor, SWITCH_FLUSH_MS } from "./editor.svelte";
 import { settings } from "./settings.svelte";
@@ -270,6 +271,15 @@ class VaultStore {
   move = (path: VaultPath, destDir: VaultPath): Promise<VaultPath | null> => untrack(() => this.#move(path, destDir));
 
   /**
+   * Copies the file `path` into folder `destDir` ("" = root) under a free name: its own, or
+   * "name 1", "name 2"… where that is taken (TREE-19). An open note is flushed first, so the
+   * copy holds its latest text. Selects and reveals the copy and returns its path; toasts and
+   * returns null on failure. A folder is not copied.
+   */
+  copyInto = (path: VaultPath, destDir: VaultPath): Promise<VaultPath | null> =>
+    untrack(() => this.#copyInto(path, destDir));
+
+  /**
    * Deletes `path` (ARCHITECTURE §8.3): confirm (folders always, files only when
    * settings.confirmDelete) → flush → freeze saves under the path → pathTrash →
    * on success editor.onPathRemoved + refresh; on "trash_failed" confirm a
@@ -300,8 +310,9 @@ class VaultStore {
   linkTextFor = (path: VaultPath): string => wikiLinkText(path, this.linkIndex);
 
   /**
-   * Folder for "current" new-note location: the selected folder, else the
-   * selected file's folder, else the open note's folder, else "".
+   * The folder in focus: the selected folder, else the selected file's folder, else the open
+   * note's folder, else "". A new note goes there by default (newNoteDir), and so does a
+   * pasted copy of a file (TREE-19).
    */
   activeDir = (): VaultPath => {
     const sel = this.selected === null ? undefined : this.nodes.get(this.selected);
@@ -846,6 +857,46 @@ class VaultStore {
       return null;
     }
     return this.#movePath(path, to, "errMove", info);
+  }
+
+  async #copyInto(path: VaultPath, destDir: VaultPath): Promise<VaultPath | null> {
+    // Everything stays in `info`, the vault the copy started in (PLAT-08), as in #movePath.
+    const info = this.info;
+    if (!info) return null;
+    const node = this.nodes.get(path);
+    if (node?.kind !== "file") return null;
+    if (destDir !== "" && this.nodes.get(destDir)?.kind !== "dir") return null;
+    const label = this.#label(path);
+    // The copy is made of the file on disk: an open note's pending text is written first.
+    await within(editor.flushUnder(path), SWITCH_FLUSH_MS);
+    if (this.info !== info) return null;
+    const taken = this.#siblingKeys(destDir);
+    for (let attempt = 0; attempt < NAME_ATTEMPTS; attempt++) {
+      // Unsaved text of a note the listing does not show (virtual, or its file vanished) holds its
+      // name too; unsavedAt matches by key().
+      const name = copyName(node.name, (k) => taken.has(k) || editor.unsavedAt(join(destDir, k)));
+      const to = join(destDir, name);
+      try {
+        await pathCopy(path, to, info.epoch);
+      } catch (e) {
+        if (this.info !== info) return null;
+        if (isIpcError(e, "exists")) {
+          taken.add(key(name));
+          continue;
+        }
+        console.error("vault: copy failed", e);
+        ui.notify(t("errCopyFile", { name: label }));
+        return null;
+      }
+      await this.#refresh();
+      if (this.info !== info) return null;
+      // PLAT-06: the name the listing reports, as after a rename.
+      const actual = this.findExisting(to) ?? to;
+      this.revealInTree(actual);
+      return actual;
+    }
+    ui.notify(t("errCopyFile", { name: label }));
+    return null;
   }
 
   /**

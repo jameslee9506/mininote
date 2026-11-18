@@ -12,7 +12,7 @@ Where they disagree, REQUIREMENTS.md wins, unless §0.2 below says otherwise.
 
 The current build covers every P0 requirement, plus these P1 items:
 - VAULT-05, VAULT-08
-- TREE-10, TREE-11, TREE-13
+- TREE-10, TREE-11, TREE-13, TREE-19
 - EDIT-05 (all shortcuts), EDIT-06, EDIT-07 (URL paste), EDIT-08, EDIT-09 (replace), EDIT-12, EDIT-14, EDIT-16, EDIT-18
 - LIVE-02 (highlight), LIVE-11, LIVE-12, LIVE-13
 - SAVE-09, SAVE-11
@@ -123,7 +123,7 @@ scripts/prepare-release.mjs  validates the versions and writes the updater overl
   - **at most 255 UTF-8 bytes**, extension included;
   - notes additionally reject `# ^ [ ] |`, which break wikilinks.
   - These rules apply to names *we* create. Existing files with other names are still listed and openable.
-- **Unique names:** `Untitled.md`, `Untitled 1.md`, … are checked against siblings with `key()`.
+- **Unique names:** `Untitled.md`, `Untitled 1.md`, … are checked against siblings with `key()`. A copy keeps its file's name where that is free, and is numbered the same way where it is not (`utils/names.ts › copyName`, TREE-19).
 - **Absolute paths** (asset URLs, reveal, copy) come from `toAbsolute(root, rel)`, which uses the root's own separator; `toNative(root, rel)` spells a vault path alone that way (the copied relative path, TREE-09).
 
 ## 5. IPC contract
@@ -143,6 +143,7 @@ Every command marked "scoped" also takes `epoch: u64`, either as an argument or 
 | `note_create` (scoped) | `path, content` | `WriteResult` | Exclusive create, creating missing parents inside the root. Error: `exists`. Used for new notes and conflict copies. |
 | `dir_create` (scoped) | `path` | – | Creates parents. Error: `exists`. |
 | `path_rename` (scoped) | `from, to` | – | Files and folders. Creates `to`'s parent. Error: `exists`, unless it is a case- or normalization-only rename of the same entry (done via a temp name, with rollback). A free `to` is checked again right before every rename attempt (Windows retries included), so an entry that appeared meanwhile gives `exists` and nothing moves. Refuses the root, and refuses a folder into itself or a descendant (`invalid_path`). A link is renamed itself, and re-pointed when it moves to another folder (§6.8). Records both paths in the self-write registry. |
+| `path_copy` (scoped) | `from, to` | – | Copies the file `from` into the new file `to` (TREE-19), creating `to`'s parent. Never over an entry that is there (`exists`), and never a folder. The content is streamed, whatever its kind and size, and a failed copy leaves no partial file. The copy has a new file's permissions plus its source's execute bits. A link is copied as the file it leads to, into a regular file (§6.8). |
 | `path_trash` (scoped) | `path` | – | `trash` crate. On macOS it uses `DeleteMethod::NsFileManager`, because the default AppleScript method prompts for Automation rights. A link is trashed itself, never its file. Error: `trash_failed`. Refuses the root. |
 | `path_delete` (scoped) | `path` | – | Permanent, recursive. A link is removed itself, never its file. Called only after confirmation. Refuses the root. |
 | `path_exists` (scoped) | `path` | `bool` | |
@@ -214,7 +215,7 @@ Every command marked "scoped" also takes `epoch: u64`, either as an argument or 
   7. If the folder refuses the temp file but the target is writable, fall back to writing in place: the step 6 re-check, then truncate, write, fsync.
   8. On error, remove the temp file. The target is never left truncated.
   9. If the file now at the target is still our temp file (same size, and same inode on Unix), record `abs → (size, mtime, hash)` in the self-write registry (for a link, under its own path and its file's) and return its baseline. Otherwise another program replaced it right after the rename: return the baseline of our version (from the temp file) and record nothing, so the next save's check and the watcher see theirs as a change.
-- **Self-write registry:** an LRU of about 512 entries. Only overwrites by `note_write` and renames are recorded (renames record both paths and the case-rename temp name), each with the time it was made. Creates (`note_create`, `binary_write`, `dir_create`, a `note_write` that made a new file or found it replaced) still reach the frontend, whose tree needs them, and they forget any older record for the path. The watcher drops a `create` or `modify` event when the file's current size and mtime (and hash, when the mtime is coarse) still match the record. It also drops the `remove` echo of a rename source recorded in the last 5 s; after that, a delete of that path is real.
+- **Self-write registry:** an LRU of about 512 entries. Only overwrites by `note_write` and renames are recorded (renames record both paths and the case-rename temp name), each with the time it was made. Creates (`note_create`, `binary_write`, `dir_create`, `path_copy`, a `note_write` that made a new file or found it replaced) still reach the frontend, whose tree needs them, and they forget any older record for the path. The watcher drops a `create` or `modify` event when the file's current size and mtime (and hash, when the mtime is coarse) still match the record. It also drops the `remove` echo of a rename source recorded in the last 5 s; after that, a delete of that path is real.
 - **Case or normalization-only rename:** tried directly first; when the stored name did not change, go through the visible temp name `<stem>.mn-tmp-<n>.<ext>` (PLAT-07: a hidden temp left by a crash would be invisible) and roll back if the second step fails.
 - **Stale temp files** (ours, older than one hour) are deleted when `vault_list` walks their folder.
 
@@ -296,13 +297,14 @@ Every command marked "scoped" also takes `epoch: u64`, either as an argument or 
 
 A link is a symlink (on Windows also a junction, which always leads to a folder). A link that leads to a regular file is a file of the vault. A link that leads to a folder is never followed.
 
-- **Path guard.** `resolve` rejects a path that goes through a link and accepts one that ends at a link: that link is an entry of a real folder of the vault. Commands act on the entry itself (`symlink_metadata`): `path_rename`, `path_trash` and `path_delete` move or remove the link, `path_exists` sees it, and the exclusive creates (`note_create`, `binary_write`, `dir_create`) fail on it with `exists`. Only `note_read` and `note_write` follow it, and only to a regular file. `path_reveal` shows the link's file, because the opener plugin canonicalizes.
+- **Path guard.** `resolve` rejects a path that goes through a link and accepts one that ends at a link: that link is an entry of a real folder of the vault. Commands act on the entry itself (`symlink_metadata`): `path_rename`, `path_trash` and `path_delete` move or remove the link, `path_exists` sees it, and the exclusive creates (`note_create`, `binary_write`, `dir_create`, the target of `path_copy`) fail on it with `exists`. Only `note_read`, `note_write` and the source of `path_copy` follow it, and only to a regular file. `path_reveal` shows the link's file, because the opener plugin canonicalizes.
 - **Listing.** `vault_list` lists a link as a file when `fs::metadata`, which follows, finds a regular file, and gives it that file's mtime. A link to a folder, to nothing or in a circle is skipped. The frontend tells the kind from the link's name, as for any file.
   - For the links the frontend reads or shows (notes, images, code files) the listing also takes the canonical path of the file. The window's `VaultState` keeps them for the watcher (`links`: file → its links), replaced by every listing of the current epoch and cleared with the vault.
   - Image links cross IPC with that path (`realPaths`), and `vault.assetUrl` builds such an image's URL from it. Tauri's asset scope reads a link's target as it is written, so it refuses every link with a relative target; the file itself passes. A file the vault's scope does not cover (in a hidden folder, or outside the vault) is allowed by itself (`allow_file`).
 - **Reading.** `note_read` stats and reads through the link: the content, `readOnly` and the baseline are the file's.
 - **Writing.** `note_write` resolves the link to its file (`canonicalize`) and runs §6.2 on that file: its metadata for the checks, its folder for the temp file, the rename over it. The link itself is never replaced. Step 6 also checks that the link still leads to that file (`conflict`). A link that leads nowhere gives `not_found`: nothing is created through a link. The registry records the write under the link's path and under the file's.
 - **Moving.** A link's relative target is read from the folder the link is in. `path_rename` into another folder creates the new link with the way back to the old folder in front of the target (`docs/x.md`, moved into `notes/`, becomes `../docs/x.md`), checks that it leads to the same file, and then removes the old link. If that cannot be done, nothing moves. An absolute target, a rename within the folder and a link the tree does not list go through the plain rename.
+- **Copying.** `path_copy` opens its source through the link and writes that file's content into a new regular file. A copy is never a second link to the same file: an edit of the copy would change the original.
 - **Search.** `walk_notes` visits a link to a note as that note, with the file's size and placeholder flags.
 - **Watcher.** A link is an entry like a file (`probe`): its creation, removal and renaming are told as a file's. It is not in the file-ID cache, where its ID would be its file's, so its rename arrives as a remove and a create.
   - A change of its *file* names the file. Each event path is therefore also looked up in `links`, and every link to that file gets a `modify`, or a `remove` once it leads nowhere, before deduplication and the drop rules. The lookup is by canonical path, which is the path the watchers report; it also finds a file in a hidden folder, whose own event is dropped.
@@ -396,6 +398,9 @@ Calls go one way: `vault` → `editor` for moves, removals and external changes.
   4. On success, `editor.onPathRemoved` (dispose without saving) and refresh. If the removed note was shown, the previous history entry opens, taking keyboard focus only if the editor had it (a delete from the tree keeps the tree's focus, TREE-11).
   5. On `trash_failed`, confirm a permanent delete and use `pathDelete`.
   6. On failure or cancel, unfreeze.
+- **`copyInto`** (the tree's paste, TREE-19): flush the copied note, then `pathCopy` under a free name, then refresh, and select and reveal the copy.
+  - The name comes from `copyName`: the file's own where it is free in the target folder, else numbered. A name where a live note holds unsaved text counts as taken, as for a rename. On `exists` (an entry the listing did not show yet) the next name is tried.
+  - Nothing is frozen and no controller changes: the source stays as it is, and the copy is a new file that nothing has open. It is not opened.
 - **New note** (Mod+N, the header icon, the folder menus; `appCommands.newNote`): keyboard focus is released first, after any overlay closed, so keys typed while the note is created reach neither the previous note nor its title. Then `noteCreate` writes a real `Untitled.md` immediately and opens it in editing mode. Once the editor is visible, the caret moves to the start of the body, whether the inline title is shown or hidden. A later navigation cancels the pending focus. If nothing was created, the editor takes focus back. Notes created from the quick switcher also open with the body focused.
   - Esc in the title or body cancels this new note through the normal trash flow while its generated title and empty body are untouched. The creation records its exact path, vault epoch and editor revision, so generated names and numeric suffixes work without making older default-named notes eligible. Editing the body or navigating away ends eligibility; a changed inline title is reverted on Esc instead. Deletion rechecks eligibility after asynchronous waits. Open menus, dialogs, find panels and completions handle Esc first.
 - **New folder** (Mod+Shift+N, the header icon, the folder menus; TREE-05): nothing touches the disk until the name is committed.
@@ -426,7 +431,7 @@ App.svelte
 └─ layout (vault open)
    ├─ Sidebar.svelte         header (drag region; new note, new folder, collapse all) · SearchPanel · FileTree (hidden while a query is set) · footer (vault menu: recent vaults, open another folder, new window; gear)
    │   ├─ SearchPanel.svelte the search field, always shown at the top; grouped results while it holds a query
-   │   └─ FileTree.svelte    flattened visible rows, virtualized, keyboard nav, DnD, new-folder draft row
+   │   └─ FileTree.svelte    flattened visible rows, virtualized, keyboard nav, copy and paste, DnD, new-folder draft row
    │       └─ TreeRow.svelte guide lines + kind icon + title; inline rename input, or the draft row's name input
    ├─ Resizer.svelte
    └─ Main.svelte            top strip (drag region; sidebar toggle, always shown; nav, view and lock icons; UpdateButton while a release waits) + .doc-scroll
@@ -463,6 +468,7 @@ These are the defaults. Settings → Shortcuts rebinds every global command and 
 | F2 | Rename current note (focus inline title); in the focused tree, rename the selected row | global |
 | Mod-Shift-E | Focus the file tree at the open note's row, revealing it (TREE-11) | global |
 | Mod-C (the system's copy) | Copy the selected row's absolute path (TREE-11) | focused tree, or right after a click on a row |
+| Mod-V (the system's paste) | Copy the file copied that way into the folder in focus (TREE-19) | the same, while the clipboard holds that copy |
 | Mod-Q (Windows/Linux) | Flush and quit (macOS uses the menu item) | global |
 | F5, Mod-R, Mod-Shift-R, Ctrl-F5, the keyboard's Refresh key | Cancelled: never reload the webview (PLAT-13). Every other browser key (Home, Stop, Search…) is cancelled too, and so are Mod-P and Mod-S (WebView2's print and save page) once no command takes them | global |
 | Mod-Shift-B / Mod-I / Mod-Shift-X / Mod-Shift-H | Toggle bold / italic / strikethrough / highlight | editor |
@@ -489,6 +495,10 @@ These are the defaults. Settings → Shortcuts rebinds every global command and 
 - **Context menu.** The native context menu is suppressed everywhere except over editable text (the editor, inputs) or selected text (PLAT-13). A read-only editor, a locked note or a code file, is not editable: its menu appears over selected text only, and nothing drops into it.
 - **Menus** (`ContextMenu.svelte`, `ui.showMenu`). A `MenuEntry` is an action, a separator, or an item with a `submenu` of actions (one level). The submenu is a second fixed panel, measured like the first: beside it, on the side with room. The pointer opens it after a short rest on its item and closes it after a longer one on another item, so the way into it may cross a neighbour; → and Enter open it, ← closes it. An action runs within the click or key press that chose it, so it may write to the clipboard.
 - **Copying a row** (`FileTree.svelte`, TREE-11). The tree answers the `copy` event, not a key: Mod-C, the macOS Edit menu and the platform's other copy keys all raise it, and its `clipboardData` needs no permission. The engines send it to the text selection's element, not to the focused one, so the listener captures at the window and decides by focus. It also claims a copy right after a click on a row (`picked`, cleared by the next press or key), because that click may have moved the keyboard into the note it opened, where CodeMirror would copy the caret's line. The menu's Copy items have no such event and call `navigator.clipboard.writeText`.
+- **Pasting a row** (`FileTree.svelte`, TREE-19). That copy also remembers its row (`copied`: the vault root, the path, and the text put on the clipboard), and the `paste` event is answered like the `copy` event: captured at the window, decided by focus or `picked`.
+  - The paste is the tree's when the clipboard's text is still `copied.text`, in the same vault. A copied file then goes to `vault.copyInto` with `vault.activeDir()` (§8.3); a copied folder, or a file that is no longer listed, does nothing. Either way the event is cancelled and stopped at the window, so CodeMirror never sees it and the path is not typed into the note that has the keyboard.
+  - Any other paste passes on untouched, and ends `picked`: it is text for the note.
+  - Mod-C and Mod-V do not end `picked` as other keys do, because their `keydown` comes before the event.
 
 ### 9.2 Links, anchors, navigation (LINK-01…05)
 
