@@ -1,5 +1,5 @@
 <script lang="ts">
-  // Context menu (TREE-09): text-only items and separators at ui.menu's point,
+  // Context menu (TREE-09, VAULT-05): items and separators at ui.menu's point,
   // kept inside the window. An item with a submenu opens a second panel beside it
   // while the pointer rests on it, or with → (one level deep). Focus never moves
   // into the menu, so an action such as Rename can focus its own input; keys are
@@ -300,7 +300,10 @@
           onmouseleave={() => onItemLeave(i)}
           onclick={() => choose(i, false)}
         >
-          {entry.label}
+          <span class="item-label">
+            {#if "icon" in entry && entry.icon}<Icon name={entry.icon} />{/if}
+            {entry.label}
+          </span>
           {#if "submenu" in entry}<span class="chevron"><Icon name="chevron-right" /></span>{/if}
         </button>
       {/if}
@@ -373,6 +376,16 @@
 
   .item:focus-visible {
     outline: none;
+  }
+
+  .item-label {
+    display: flex;
+    align-items: center;
+    gap: var(--tree-icon-gap);
+  }
+
+  .item-label :global(.icon) {
+    color: var(--c-text-muted);
   }
 
   /* The mark of an item that opens a submenu, at the far edge; its glyph ends short of its box. */

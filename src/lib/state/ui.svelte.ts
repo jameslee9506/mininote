@@ -1,4 +1,5 @@
 /** Transient UI state: panels, modals, menus, confirmations, toasts, focus requests. */
+import type { IconName } from "../components/Icon.svelte";
 import { t } from "../i18n";
 import { settings } from "./settings.svelte";
 
@@ -12,7 +13,10 @@ export interface MenuAction {
 }
 
 /** An action, an item that opens a second panel of actions beside it (one level deep), or a separator. */
-export type MenuEntry = MenuAction | { label: string; submenu: MenuAction[] } | { separator: true };
+export type MenuEntry =
+  | (MenuAction & { icon?: IconName })
+  | { label: string; submenu: MenuAction[] }
+  | { separator: true };
 
 export interface MenuState {
   x: number;

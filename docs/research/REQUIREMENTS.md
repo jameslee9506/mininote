@@ -102,6 +102,7 @@ Anything not listed is out of scope (§13).
 #### VAULT-05 · Recent vaults and switching · P1
 - **Behavior.**
   - Up to 10 recent vaults, most recent first. They appear on the empty state and in the vault menu, which opens from the vault name in the sidebar footer.
+  - In the sidebar menu, each recent vault name has a leading bound notebook icon.
   - Actions: open; remove from the list (never deletes files); open another folder.
   - Switching flushes saves, then replaces the window's vault.
   - [critic] If that flush fails, recovery copies are written first (SAVE-10), then every save retry of the old vault is cancelled. File commands carry the vault epoch (PLAT-08), so nothing started for the old vault can write into the new one.

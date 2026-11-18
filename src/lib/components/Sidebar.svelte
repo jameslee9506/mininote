@@ -79,6 +79,7 @@
     const names = roots.map(baseName);
     const items: MenuEntry[] = roots.map((root, i) => ({
       label: names.filter((n) => key(n) === key(names[i])).length > 1 ? nfc(root) : names[i],
+      icon: "notebook",
       run: () => safely(openVault(root)),
     }));
     if (items.length > 0) items.push({ separator: true });

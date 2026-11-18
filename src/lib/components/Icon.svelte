@@ -15,6 +15,7 @@
     | "arrow-left"
     | "arrow-right"
     | "book"
+    | "notebook"
     | "pencil"
     | "close"
     | "more"
@@ -94,6 +95,9 @@
   {:else if name === "book"}
     <path d="M2 3.5h4A2 2 0 0 1 8 5.5V13a1.5 1.5 0 0 0-1.5-1.5H2Z" />
     <path d="M14 3.5h-4A2 2 0 0 0 8 5.5V13a1.5 1.5 0 0 1 1.5-1.5H14Z" />
+  {:else if name === "notebook"}
+    <path d="M13 10.75H5a1.5 1.5 0 0 0 0 3h8V2.25H5a1.5 1.5 0 0 0-1.5 1.5v8.5" />
+    <path d="M6.25 2.25v8.5" />
   {:else if name === "pencil"}
     <path d="m10.5 2.5 3 3L6 13H3v-3Z" />
     <path d="m9 4 3 3" />
