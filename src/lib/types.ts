@@ -37,6 +37,11 @@ export interface ListResult {
   kinds: string;
   /** Modification time of notes and images in whole ms since the Unix epoch; 0 for everything else. */
   mtimes: number[];
+  /**
+   * The listed images that are links (symlinks), each with the absolute path of the file it
+   * leads to. The asset protocol serves that file, and no link (TREE-18).
+   */
+  realPaths: Record<VaultPath, string>;
   /** True when the backend stopped early because the vault is enormous. */
   truncated: boolean;
 }

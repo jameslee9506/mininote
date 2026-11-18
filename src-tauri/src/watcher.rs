@@ -12,7 +12,7 @@ use notify_debouncer_full::{new_debouncer_opt, DebounceEventResult, DebouncedEve
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, EventTarget, Manager};
 
-use crate::fs_ops;
+use crate::fs_ops::{self, LinkTargets};
 use crate::vault::{self, VaultState, Vaults};
 
 /// Event name; mirrors `EVENT_VAULT_CHANGED` in src/lib/ipc/events.ts.
@@ -101,9 +101,9 @@ mod ids {
 
     /// File IDs of the vault's visible folders, notes and images. Unlike the
     /// crate's `FileIdMap` it never follows symlinks (which could walk the whole
-    /// disk), skips hidden entries and other files (their renames arrive as a
-    /// remove and a create, which re-list the tree all the same), and is bounded
-    /// for huge vaults.
+    /// disk), skips hidden entries, links and other files (their renames arrive
+    /// as a remove and a create, which re-list the tree all the same; a link's ID
+    /// would be its file's, and pair the two), and is bounded for huge vaults.
     pub struct VaultIdCache {
         root: PathBuf,
         ids: HashMap<PathBuf, FileId>,
@@ -206,9 +206,11 @@ fn on_events(app: &AppHandle, label: &str, root: &Path, epoch: u64, events: &[De
     if state.epoch() != epoch {
         return;
     }
+    let links = state.links();
     let mut changes = Vec::new();
     for event in events {
         map_event(root, event, &mut changes);
+        map_links(root, &links, event, &mut changes);
     }
     let mut seen = HashSet::new();
     changes.retain(|change| seen.insert(change.clone()));
@@ -233,20 +235,25 @@ fn visible_rel(root: &Path, path: &Path) -> Option<String> {
     (!rel.split('/').any(|c| c.starts_with('.'))).then_some(rel)
 }
 
-/// What is at a path when the batch is handled.
+/// What is at a path when the batch is handled, as the listing would show it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Present {
     Dir,
-    /// A regular file: the tree lists every one (TREE-01).
+    /// A regular file, or a link that leads to one: the tree lists every one
+    /// (TREE-01, TREE-18).
     File,
-    /// A symlink, or something that is neither a folder nor a regular file.
+    /// A link that leads to a folder or nowhere, or something that is neither a
+    /// folder nor a regular file.
     Unlisted,
     Missing,
 }
 
 fn probe(path: &Path) -> Present {
     match fs::symlink_metadata(path) {
-        Ok(meta) if meta.file_type().is_symlink() => Present::Unlisted,
+        Ok(meta) if meta.file_type().is_symlink() => match fs::metadata(path) {
+            Ok(file) if file.is_file() => Present::File,
+            _ => Present::Unlisted,
+        },
         Ok(meta) if meta.is_dir() => Present::Dir,
         Ok(meta) if meta.is_file() => Present::File,
         Ok(_) => Present::Unlisted,
@@ -324,6 +331,26 @@ fn map_single(root: &Path, path: &Path, kind: EventKind, out: &mut Vec<VaultChan
     }
 }
 
+/// A change of the file a listed link leads to is a change of that link
+/// (TREE-18): a `modify` while the link still leads to a file, a `remove` once it
+/// does not. The file's own path may be hidden, which drops its own change, and a
+/// link to it is still told. A file outside the vault is not watched: the
+/// frontend reads the open note again when its window comes forward (§8.2).
+fn map_links(root: &Path, links: &LinkTargets, event: &DebouncedEvent, out: &mut Vec<VaultChange>) {
+    if links.is_empty() || matches!(event.kind, EventKind::Access(_) | EventKind::Other) {
+        return;
+    }
+    for path in &event.paths {
+        for rel in links.get(path).into_iter().flatten() {
+            let kind = match probe(&vault::join_rel(root, rel)) {
+                Present::File => ChangeKind::Modify,
+                _ => ChangeKind::Remove,
+            };
+            out.push(VaultChange::new(kind, rel.clone()));
+        }
+    }
+}
+
 /// A paired rename, classified by both ends (TECHNIQUES §3.3). Between two
 /// listed paths of one class (folders, notes and images, other files) it is a
 /// `rename`. Across classes, as when another app saves a note through a visible
@@ -340,7 +367,7 @@ fn map_rename(root: &Path, from: &Path, to: &Path, out: &mut Vec<VaultChange>) {
         return;
     }
     let to_state = probe(to);
-    // The source had the target's type, and a symlink or special file is never listed.
+    // The source had the target's type, and what `probe` calls unlisted never was listed.
     let from_ok = from_rel.is_some() && to_state != Present::Unlisted;
     let to_ok = to_rel.is_some() && to_state != Present::Unlisted;
     let same_class = to_state == Present::Dir || has_linkable_name(from) == has_linkable_name(to);
@@ -374,6 +401,8 @@ fn map_rename(root: &Path, from: &Path, to: &Path, out: &mut Vec<VaultChange>) {
 
 /// Our own write or rename coming back (SAVE-05): the path still matches what the
 /// registry recorded, or it is the vanished source of one of our recent renames.
+/// A write through a link is recorded for the link and for its file, so both the
+/// file's change and the one passed on to the link are echoes (TREE-18).
 fn is_echo(state: &VaultState, root: &Path, change: &VaultChange) -> bool {
     let abs = vault::join_rel(root, &change.path);
     match change.kind {
@@ -381,7 +410,7 @@ fn is_echo(state: &VaultState, root: &Path, change: &VaultChange) -> bool {
             let Some(record) = state.registry().get(&abs) else {
                 return false;
             };
-            match fs::symlink_metadata(&abs) {
+            match record.stat(&abs) {
                 Ok(meta) => fs_ops::matches_record(&abs, &meta, &record),
                 Err(_) => change.kind == ChangeKind::Remove && recently_moved_away(&record),
             }

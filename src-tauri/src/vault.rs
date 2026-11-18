@@ -13,7 +13,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager, WebviewWindow};
 
 use crate::error::{AppError, AppResult, ErrorKind};
-use crate::fs_ops::SelfWrites;
+use crate::fs_ops::{LinkTargets, SelfWrites};
 use crate::{store, watcher, windows};
 
 /// Result of `vault_open` (`VaultInfo` in src/lib/types.ts).
@@ -46,6 +46,8 @@ pub struct VaultState {
     epoch: AtomicU64,
     watcher: Mutex<Option<watcher::VaultWatcher>>,
     registry: Mutex<SelfWrites>,
+    /// The links the last listing found, by the file each leads to (TREE-18).
+    links: Mutex<Arc<LinkTargets>>,
     /// Bumped by every search (and vault switch); a running search stops when it changes.
     pub search_gen: AtomicU64,
     /// Serializes this window's `vault_open` and `vault_close` calls.
@@ -53,12 +55,13 @@ pub struct VaultState {
 }
 
 impl VaultState {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             root: RwLock::new(None),
             epoch: AtomicU64::new(0),
             watcher: Mutex::new(None),
             registry: Mutex::new(SelfWrites::default()),
+            links: Mutex::new(Arc::default()),
             search_gen: AtomicU64::new(0),
             open_lock: Mutex::new(()),
         }
@@ -133,6 +136,22 @@ impl VaultState {
         lock(&self.registry)
     }
 
+    /// The links of the last listing, by the file each leads to: the watcher turns
+    /// a change of such a file into a change of its links (§6.4).
+    pub fn links(&self) -> Arc<LinkTargets> {
+        lock(&self.links).clone()
+    }
+
+    /// Keeps the links a listing of the vault of `epoch` found. One taken for a
+    /// vault that was replaced meanwhile is dropped.
+    pub fn set_links(&self, epoch: u64, links: LinkTargets) {
+        let mut slot = lock(&self.links);
+        // `activate` stores the new epoch before it clears this slot.
+        if self.epoch() == epoch {
+            *slot = Arc::new(links);
+        }
+    }
+
     /// The open vault folder, if any.
     pub fn root_path(&self) -> Option<PathBuf> {
         let root = self.root.read().unwrap_or_else(PoisonError::into_inner);
@@ -140,8 +159,8 @@ impl VaultState {
     }
 
     /// Makes `root` the active vault (`None`: no vault) under `epoch`: clears the
-    /// registry, cancels running searches and hands back the previous watcher for
-    /// the caller to drop.
+    /// registry and the links, cancels running searches and hands back the previous
+    /// watcher for the caller to drop.
     fn activate(&self, root: Option<Root>, epoch: u64) -> Option<watcher::VaultWatcher> {
         let mut slot = lock(&self.watcher);
         {
@@ -150,6 +169,7 @@ impl VaultState {
             self.epoch.store(epoch, Ordering::SeqCst);
         }
         self.registry().clear();
+        *lock(&self.links) = Arc::default();
         self.search_gen.fetch_add(1, Ordering::SeqCst);
         slot.take()
     }
@@ -392,15 +412,22 @@ fn is_windows_reserved(c: &str) -> bool {
 }
 
 /// `vault::resolve`: joins a `VaultPath` onto the root after the lexical guard and
-/// rejects it when any existing component is a symlink or junction (one
-/// `symlink_metadata` per existing prefix).
+/// rejects it when it goes through a symlink or junction, that is when any existing
+/// component before the last is one (one `symlink_metadata` per existing prefix).
+/// A path can therefore never leave the vault through a linked folder.
+///
+/// The last component names an entry of a real folder of the vault, and that entry
+/// may be a link. Commands act on the entry itself (rename, trash, delete, exists),
+/// and an exclusive create fails on one. Only reading and writing a note follow it,
+/// and only to a regular file (TREE-18).
 pub fn resolve(root: &Path, rel: &str) -> AppResult<PathBuf> {
     let parts = split_rel(rel)?;
+    let folders = parts.len().saturating_sub(1);
     let mut path = root.to_path_buf();
     let mut probing = true;
-    for part in parts {
+    for (i, part) in parts.into_iter().enumerate() {
         path.push(part);
-        if probing {
+        if probing && i < folders {
             match fs::symlink_metadata(&path) {
                 Ok(meta) if meta.file_type().is_symlink() => {
                     return Err(AppError::new(
@@ -724,22 +751,29 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn resolve_rejects_symlink_components() {
+    fn resolve_never_goes_through_a_link() {
         let root = scratch_dir("symlink");
         let outside = scratch_dir("symlink-outside");
+        fs::create_dir_all(outside.join("sub")).unwrap();
         std::os::unix::fs::symlink(&outside, root.join("linked")).unwrap();
         std::os::unix::fs::symlink(outside.join("f.md"), root.join("file-link.md")).unwrap();
+        for through in [
+            "linked/x.md",
+            "linked/sub",
+            "linked/sub/x.md",
+            "file-link.md/x",
+        ] {
+            assert_eq!(
+                resolve(&root, through).unwrap_err().kind,
+                ErrorKind::InvalidPath,
+                "{through}"
+            );
+        }
+        // A link is an entry of its folder: the path to it stays inside the vault.
+        assert_eq!(resolve(&root, "linked").unwrap(), root.join("linked"));
         assert_eq!(
-            resolve(&root, "linked/x.md").unwrap_err().kind,
-            ErrorKind::InvalidPath
-        );
-        assert_eq!(
-            resolve(&root, "linked").unwrap_err().kind,
-            ErrorKind::InvalidPath
-        );
-        assert_eq!(
-            resolve(&root, "file-link.md").unwrap_err().kind,
-            ErrorKind::InvalidPath
+            resolve(&root, "file-link.md").unwrap(),
+            root.join("file-link.md")
         );
         fs::remove_dir_all(&root).unwrap();
         fs::remove_dir_all(&outside).unwrap();

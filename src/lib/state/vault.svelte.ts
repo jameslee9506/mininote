@@ -76,6 +76,8 @@ class VaultStore {
   linkables = $derived([...this.data.nodes.values()].filter((n) => n.fileKind === "note" || n.fileKind === "image"));
   /** Link index over notes and images: a link never resolves to another kind of file (TREE-16). */
   linkIndex: LinkIndex = $derived(buildLinkIndex(this.linkables.map((n) => ({ path: n.path, isNote: n.fileKind === "note" }))));
+  /** The file behind each listed image that is a link on disk (TREE-18): its absolute path. */
+  #realPaths = $derived(new Map(Object.entries(this.listing.realPaths)));
 
   /** Expanded folder paths (persisted per vault in the session). */
   expanded = new SvelteSet<VaultPath>();
@@ -332,8 +334,11 @@ class VaultStore {
 
   absPath = (path: VaultPath): string => toAbsolute(this.info?.root ?? "", path);
 
-  /** asset:// URL for displaying a vault file in the webview. */
-  assetUrl = (path: VaultPath): string => convertFileSrc(this.absPath(path));
+  /**
+   * asset:// URL for displaying a vault file in the webview. An image that is a link on
+   * disk gets the URL of the file it leads to: the asset protocol refuses the link (TREE-18).
+   */
+  assetUrl = (path: VaultPath): string => convertFileSrc(this.#realPaths.get(path) ?? this.absPath(path));
 
   node = (path: VaultPath): TreeNode | undefined => this.nodes.get(path);
 

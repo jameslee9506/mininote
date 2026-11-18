@@ -1,19 +1,23 @@
 //! Vault file operations: listing, reading, atomic writes, create, rename, trash,
 //! delete, reveal (ARCHITECTURE §6.2–6.3), plus the self-write registry the
 //! watcher consults (SAVE-05).
+//!
+//! A link (a symlink) that leads to a regular file is a file of the vault: listed,
+//! read, searched and written as that file (TREE-18). A link that leads to a
+//! folder is never followed, and neither it nor one that leads nowhere is listed.
 
 use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::fs::{self, File, Metadata, OpenOptions};
 use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 use tauri::ipc::{InvokeBody, Request};
-use tauri::WebviewWindow;
+use tauri::{AppHandle, Manager, WebviewWindow};
 use unicode_normalization::UnicodeNormalization;
 
 use crate::error::{AppError, AppResult, ErrorKind};
@@ -96,6 +100,7 @@ static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// crosses IPC as a few flat arrays: entry `i` is `paths[i]`, `kinds[i]` and
 /// `mtimes[i]`.
 #[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ListResult {
     /// Breadth-first: every folder comes before its contents.
     pub paths: Vec<String>,
@@ -104,8 +109,19 @@ pub struct ListResult {
     /// Whole ms since the Unix epoch for notes and images, 0 for everything
     /// else: nothing else uses it, and the rest stay unstatted (§6.3).
     pub mtimes: Vec<u64>,
+    /// The listed images that are links, each with the absolute path of the file
+    /// it leads to: the asset protocol serves that file, and no link (TREE-18).
+    pub real_paths: HashMap<String, String>,
     pub truncated: bool,
+    /// Not sent: the listed links the frontend reads or shows, for the watcher (§6.4).
+    #[serde(skip)]
+    pub links: LinkTargets,
 }
+
+/// The listed links that are notes, images or code files (the files the frontend
+/// reads or shows), by the canonical path of the file each leads to. A change of
+/// that file is a change of every link to it (TREE-18).
+pub type LinkTargets = HashMap<PathBuf, Vec<String>>;
 
 /// `Baseline` / `WriteResult` in src/lib/types.ts: what a file looked like when
 /// we last read or wrote it.
@@ -250,6 +266,11 @@ pub fn is_note_name(name: &str) -> bool {
     extension(name).is_some_and(|e| NOTE_EXTS.contains(&e.as_str()))
 }
 
+/// An image: the webview loads it through the asset protocol (TREE-15).
+fn is_image_name(name: &str) -> bool {
+    extension(name).is_some_and(|e| IMAGE_EXTS.contains(&e.as_str()))
+}
+
 /// A note or an image: the files links and completion know (LINK-04), and the
 /// only ones whose modification time the frontend uses (listing). The tree
 /// lists every file; the others only by name.
@@ -335,8 +356,15 @@ fn same_version(a: &Metadata, b: &Metadata) -> bool {
         && same_mtime(mtime_ms(a), mtime_ms(b))
 }
 
+/// Metadata of the entry at `path` itself: a link's own, never its file's.
 fn lstat(path: &Path, rel: &str) -> AppResult<Metadata> {
     fs::symlink_metadata(path).map_err(|e| AppError::from_io(e, rel))
+}
+
+/// Metadata of the file at `path`: of the file a link leads to when the entry
+/// there is one (TREE-18). A link that leads nowhere is `not_found`.
+fn stat(path: &Path, rel: &str) -> AppResult<Metadata> {
+    fs::metadata(path).map_err(|e| AppError::from_io(e, rel))
 }
 
 /// The longest prefix of `s` that fits `max` bytes, cut at a character boundary.
@@ -366,6 +394,19 @@ pub struct Record {
     pub moved_away: bool,
     /// When the record was made.
     pub at: Instant,
+}
+
+impl Record {
+    /// What is at `path` now, to compare with this record. The record of a write
+    /// describes a file's content, so a link is followed to its file (TREE-18);
+    /// the record of a rename describes the entry itself.
+    pub fn stat(&self, path: &Path) -> io::Result<Metadata> {
+        if self.hash.is_some() {
+            fs::metadata(path)
+        } else {
+            fs::symlink_metadata(path)
+        }
+    }
 }
 
 /// Bounded map from absolute path to its latest [`Record`]; the oldest record is
@@ -461,10 +502,11 @@ pub struct Walked {
 }
 
 /// Walks the vault's folders and notes depth-first with the listing rules
-/// (TREE-01), for search (SRCH-01): no names starting with `.`, no symlinks or
-/// junctions (never followed), no Windows Hidden/System entries, no names that
-/// are not UTF-8. An unreadable sub-folder is visited without children. `visit`
-/// returns `false` to stop.
+/// (TREE-01), for search (SRCH-01): no names starting with `.`, no Windows
+/// Hidden/System entries, no names that are not UTF-8. A link is visited as the
+/// regular file it leads to, with that file's metadata, and never followed into
+/// a folder (TREE-18). An unreadable sub-folder is visited without children.
+/// `visit` returns `false` to stop.
 pub fn walk_notes(root: &Path, mut visit: impl FnMut(Walked) -> bool) {
     let mut entries = walkdir::WalkDir::new(root)
         .follow_links(false)
@@ -480,7 +522,8 @@ pub fn walk_notes(root: &Path, mut visit: impl FnMut(Walked) -> bool) {
             }
             continue;
         }
-        if file_type.is_symlink() || !(is_dir || file_type.is_file()) {
+        let link = file_type.is_symlink();
+        if !(is_dir || link || file_type.is_file()) {
             continue;
         }
         if !is_dir && !entry.file_name().to_str().is_some_and(is_note_name) {
@@ -494,6 +537,14 @@ pub fn walk_notes(root: &Path, mut visit: impl FnMut(Walked) -> bool) {
                 }
                 continue;
             }
+        };
+        let meta = if link {
+            match fs::metadata(entry.path()) {
+                Ok(file) if file.is_file() => file,
+                _ => continue, // it leads to a folder, or nowhere
+            }
+        } else {
+            meta
         };
         let Some(rel) = vault::to_rel(root, entry.path()) else {
             if is_dir {
@@ -524,17 +575,39 @@ struct FolderRead {
     entries: Vec<(String, bool, u64)>,
     /// Its visible sub-folders, read with the next level.
     folders: Vec<Pending>,
+    /// Its links that are notes, images or code files: `VaultPath` and the
+    /// canonical path of the file each leads to.
+    links: Vec<(String, PathBuf)>,
 }
 
 /// `vault_list` (scoped): metadata-only listing of every visible folder and file
 /// (ARCHITECTURE §6.3).
 #[tauri::command]
 pub async fn vault_list(window: WebviewWindow, epoch: u64) -> AppResult<ListResult> {
+    let app = window.app_handle().clone();
     blocking(&window, move |state| {
         let root = state.check(epoch)?;
-        list_vault(&root, MAX_ENTRIES)
+        let mut list = list_vault(&root, MAX_ENTRIES)?;
+        state.set_links(epoch, std::mem::take(&mut list.links));
+        serve_linked_images(&app, &list);
+        Ok(list)
     })
     .await
+}
+
+/// Lets the asset protocol serve the files the listed image links lead to
+/// (TREE-18). The vault's own scope covers a file in a visible folder of the
+/// vault; one in a hidden folder, or outside the vault, is allowed by itself.
+fn serve_linked_images(app: &AppHandle, list: &ListResult) {
+    let scope = app.asset_protocol_scope();
+    for file in list.real_paths.values() {
+        if scope.is_allowed(file) {
+            continue;
+        }
+        if let Err(e) = scope.allow_file(file) {
+            log::warn!("asset scope for {file}: {e}");
+        }
+    }
 }
 
 /// Folders read at once while listing. Listing waits on the disk (a cold cache,
@@ -570,6 +643,15 @@ fn list_vault(root: &Path, cap: usize) -> AppResult<ListResult> {
                 out.paths.push(path);
                 out.kinds.push(if is_dir { 'd' } else { 'f' });
                 out.mtimes.push(mtime);
+            }
+            for (path, file) in read.links {
+                if is_image_name(path.rsplit('/').next().unwrap_or(&path)) {
+                    // An image behind a path that is not UTF-8 stays without one, and shows as broken.
+                    if let Some(file) = file.to_str() {
+                        out.real_paths.insert(path.clone(), file.to_owned());
+                    }
+                }
+                out.links.entry(file).or_default().push(path);
             }
             next.extend(read.folders);
         }
@@ -633,13 +715,14 @@ fn read_level(
 }
 
 /// Reads one folder with the listing rules (TREE-01): no names starting with `.`,
-/// no symlinks or junctions (never followed), only folders and regular files, no
-/// names that are not UTF-8, and on Windows no Hidden or System entries. The
-/// folder read itself tells what an entry is (and on Windows carries its
-/// attributes), so only notes and images are statted, for their mtime. An
-/// unreadable folder has no children. Each entry takes one unit of `budget`;
-/// once it passes `cap`, reading stops. Our temp files older than an hour are
-/// collected into `stale`.
+/// only folders and regular files, no names that are not UTF-8, and on Windows no
+/// Hidden or System entries. A link (a symlink) is listed as the regular file it
+/// leads to, with that file's mtime; one that leads to a folder, or nowhere, is
+/// not listed, so a link is never followed into a folder (TREE-18). The folder
+/// read itself tells what an entry is (and on Windows carries its attributes),
+/// so only notes, images and links are statted. An unreadable folder has no
+/// children. Each entry takes one unit of `budget`; once it passes `cap`,
+/// reading stops. Our temp files older than an hour are collected into `stale`.
 fn read_folder(
     abs: &Path,
     rel: &str,
@@ -664,20 +747,32 @@ fn read_folder(
             continue;
         }
         let is_dir = file_type.is_dir();
-        if file_type.is_symlink() || !(is_dir || file_type.is_file()) {
+        let link = file_type.is_symlink();
+        if !(is_dir || link || file_type.is_file()) {
             continue;
         }
         let Some(name) = name.to_str() else { continue };
         if cfg!(windows) && item.metadata().map_or(true, |meta| is_os_hidden(&meta)) {
             continue;
         }
-        let mtime = if !is_dir && is_linkable_name(name) {
+        // The file a link leads to; `None` for an entry that is no link.
+        let linked = if link {
+            match fs::metadata(item.path()) {
+                Ok(file) if file.is_file() => Some(file),
+                _ => continue, // it leads to a folder, or nowhere
+            }
+        } else {
+            None
+        };
+        let mtime = if is_dir || !is_linkable_name(name) {
+            0
+        } else if let Some(file) = &linked {
+            listing_mtime(file)
+        } else {
             match item.metadata() {
                 Ok(meta) => listing_mtime(&meta),
                 Err(_) => continue, // gone since the folder was read
             }
-        } else {
-            0
         };
         if budget.fetch_add(1, Ordering::Relaxed) >= cap {
             break;
@@ -689,6 +784,12 @@ fn read_folder(
         };
         if is_dir {
             read.folders.push((item.path(), path.clone()));
+        }
+        // Only a link whose file the frontend reads or shows is resolved to that file.
+        if linked.is_some() && is_content_name(name) {
+            if let Ok(file) = dunce::canonicalize(item.path()) {
+                read.links.push((path.clone(), file));
+            }
         }
         read.entries.push((path, is_dir, mtime));
     }
@@ -720,7 +821,8 @@ fn is_stale_temp(item: &fs::DirEntry) -> bool {
 // ---------------------------------------------------------------- reading
 
 /// `note_read` (scoped): UTF-8 text with the BOM stripped, plus `readOnly` and the
-/// baseline. A file that changes while being read is read again.
+/// baseline. A file that changes while being read is read again. A link is read as
+/// the file it leads to, and the baseline is that file's (TREE-18).
 #[tauri::command]
 pub async fn note_read(window: WebviewWindow, epoch: u64, path: String) -> AppResult<FileContent> {
     blocking(&window, move |state| {
@@ -732,7 +834,7 @@ pub async fn note_read(window: WebviewWindow, epoch: u64, path: String) -> AppRe
 }
 
 fn stat_note(abs: &Path, rel: &str) -> AppResult<Metadata> {
-    let meta = lstat(abs, rel)?;
+    let meta = stat(abs, rel)?;
     if !meta.is_file() {
         return Err(invalid(format!("not a file: {rel}")));
     }
@@ -756,7 +858,7 @@ fn read_note(abs: &Path, rel: &str) -> AppResult<FileContent> {
                 format!("larger than 20 MB: {rel}"),
             ));
         }
-        let after = lstat(abs, rel)?;
+        let after = stat(abs, rel)?;
         let settled = before.len() == after.len()
             && same_mtime(mtime_ms(&before), mtime_ms(&after))
             && bytes.len() as u64 == after.len();
@@ -1069,8 +1171,16 @@ fn write_in_place(target: &Path, bytes: &[u8]) -> AppResult<()> {
 }
 
 /// Exclusive create of a new file with `bytes` (never overwrites). A partially
-/// written file is removed again on failure.
+/// written file is removed again on failure. A link at `abs` is an entry in the
+/// way like any other, even one that leads nowhere: nothing is created through
+/// a link (TREE-18). Unix refuses that by itself; the check makes it so everywhere.
 fn create_exclusive(abs: &Path, bytes: &[u8], rel: &str) -> AppResult<()> {
+    if fs::symlink_metadata(abs).is_ok_and(|meta| meta.file_type().is_symlink()) {
+        return Err(AppError::new(
+            ErrorKind::Exists,
+            format!("already exists: {rel}"),
+        ));
+    }
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -1146,7 +1256,8 @@ fn ensure_unchanged(
 }
 
 /// `note_write` (scoped, raw body): atomic write with the save-time conflict check
-/// (ARCHITECTURE §6.2).
+/// (ARCHITECTURE §6.2). A link is written through: the file it leads to is
+/// replaced, and the link stays (TREE-18).
 #[tauri::command]
 pub async fn note_write(window: WebviewWindow, request: Request<'_>) -> AppResult<Baseline> {
     let epoch = header_epoch(&request)?;
@@ -1172,8 +1283,19 @@ fn write_note(
     if rel.is_empty() {
         return Err(invalid("cannot write the vault folder"));
     }
-    let current = match fs::symlink_metadata(abs) {
-        Ok(meta) if meta.is_file() => Some(meta),
+    // `linked`: the file a link at `abs` leads to. That file is what gets written,
+    // in its own folder, so the link stays a link (TREE-18).
+    let (linked, current) = match fs::symlink_metadata(abs) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            // Leading nowhere is `not_found`: nothing is ever created through a link.
+            let file = dunce::canonicalize(abs).map_err(|e| AppError::from_io(e, rel))?;
+            let meta = lstat(&file, rel)?;
+            if !meta.is_file() {
+                return Err(invalid(format!("not a file: {rel}")));
+            }
+            (Some(file), Some(meta))
+        }
+        Ok(meta) if meta.is_file() => (None, Some(meta)),
         Ok(_) => return Err(invalid(format!("not a file: {rel}"))),
         Err(e)
             if matches!(
@@ -1181,33 +1303,42 @@ fn write_note(
                 io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
             ) =>
         {
-            None
+            (None, None)
         }
         Err(e) => return Err(AppError::from_io(e, rel)),
     };
+    let file = linked.as_deref().unwrap_or(abs);
     if let Some(expected) = expected {
         let meta = current.as_ref().ok_or_else(|| not_found(rel))?;
         if meta.len() != expected.size || !same_mtime(mtime_ms(meta), expected.mtime) {
             return Err(conflict(rel));
         }
         if is_coarse(meta) {
-            let disk = fs::read(abs).map_err(|e| AppError::from_io(e, rel))?;
+            let disk = fs::read(file).map_err(|e| AppError::from_io(e, rel))?;
             if hash_hex(&disk) != expected.hash {
                 return Err(conflict(rel));
             }
         }
     }
     match &current {
-        Some(meta) => ensure_writable(abs, meta, rel)?,
+        Some(meta) => ensure_writable(file, meta, rel)?,
         None => ensure_parent_dirs(root, abs)?,
     }
     // The checks above ran before the temp file was written and flushed (tens of
     // ms, more on network drives). Repeated right before the target is replaced,
     // they turn an external write that landed meanwhile into a conflict, instead
-    // of overwriting it and then mistaking it for our own echo.
-    let unchanged = || ensure_unchanged(abs, rel, current.as_ref(), expected);
-    let written = write_atomic(abs, bytes, current.as_ref(), true, Some(&unchanged))?;
-    let on_disk = lstat(abs, rel)?;
+    // of overwriting it and then mistaking it for our own echo. A link must also
+    // still lead to the file examined above.
+    let unchanged = || {
+        if let Some(led) = &linked {
+            if !dunce::canonicalize(abs).is_ok_and(|now| now == *led) {
+                return Err(conflict(rel));
+            }
+        }
+        ensure_unchanged(file, rel, current.as_ref(), expected)
+    };
+    let written = write_atomic(file, bytes, current.as_ref(), true, Some(&unchanged))?;
+    let on_disk = lstat(file, rel)?;
     // Another program may have replaced our file right after the rename. Then the
     // baseline describes our version, so the next save's check and the watcher
     // see theirs as a change, and nothing is recorded for it. The mtime is not
@@ -1231,21 +1362,27 @@ fn write_note(
     };
     let mut registry = state.registry();
     if current.is_some() && ours {
-        registry.insert(
-            abs.to_path_buf(),
-            Record {
-                size: baseline.size,
-                mtime: baseline.mtime,
-                hash: Some(baseline.hash.clone()),
-                moved_away: false,
-                at: Instant::now(),
-            },
-        );
+        let record = Record {
+            size: baseline.size,
+            mtime: baseline.mtime,
+            hash: Some(baseline.hash.clone()),
+            moved_away: false,
+            at: Instant::now(),
+        };
+        // The echo names the file written. For a link the watcher passes it on to
+        // the link as well (§6.4), so both paths are recorded.
+        if let Some(led) = &linked {
+            registry.insert(led.clone(), record.clone());
+        }
+        registry.insert(abs.to_path_buf(), record);
     } else {
         // Only overwrites that are still ours are recorded: the `create` echo of
         // a write that made a new file must reach the frontend, whose tree does
         // not know the file yet, and an older record must not cover either case.
         registry.remove(abs);
+        if let Some(led) = &linked {
+            registry.remove(led);
+        }
     }
     Ok(baseline)
 }
@@ -1323,7 +1460,8 @@ pub async fn dir_create(window: WebviewWindow, epoch: u64, path: String) -> AppR
 
 /// `path_rename` (scoped): files and folders; `to`'s parent is created. Refuses
 /// the root, a folder into itself, and taken targets, except a case- or
-/// normalization-only rename of the same entry.
+/// normalization-only rename of the same entry. A link is renamed itself, never
+/// its file, and one moved to another folder still leads to its file (TREE-18).
 #[tauri::command]
 pub async fn path_rename(
     window: WebviewWindow,
@@ -1383,7 +1521,13 @@ fn rename_entry(state: &VaultState, root: &Path, from_rel: &str, to_rel: &str) -
                 Err(e) if missing(&e) => Ok(()),
                 Err(e) => Err(AppError::from_io(e, to_rel)),
             };
-            rename_guarded(&from, &to, &still_free, map_err)?;
+            let relinked = relink(&from, &from_meta, &to).map_err(|e| match e.kind() {
+                io::ErrorKind::AlreadyExists => taken(),
+                _ => map_err(e),
+            })?;
+            if !relinked {
+                rename_guarded(&from, &to, &still_free, map_err)?;
+            }
             None
         }
         Err(e) => return Err(AppError::from_io(e, to_rel)),
@@ -1393,6 +1537,89 @@ fn rename_entry(state: &VaultState, root: &Path, from_rel: &str, to_rel: &str) -
     }
     record_move(state, &from, &to, temp.as_deref());
     Ok(())
+}
+
+/// Moves the link `from` to `to`, in another folder, so that it still leads to
+/// its file (TREE-18). A link's relative target is read from the folder the link
+/// is in, so renamed as it is the link would lead nowhere, or to another file:
+/// the link made at `to` has the way from its folder back to the old one in
+/// front of that target, and `from` is removed once that link is proven to lead
+/// to the same file.
+///
+/// `Ok(false)` when a plain rename moves `from` just as well: it is no link, it
+/// stays in its folder, its target is absolute, or it leads to no regular file
+/// (the tree does not list it). An error when the link cannot be kept whole (a
+/// taken `to`, no right to create links on Windows): nothing has moved then.
+fn relink(from: &Path, from_meta: &Metadata, to: &Path) -> io::Result<bool> {
+    if !from_meta.file_type().is_symlink() {
+        return Ok(false);
+    }
+    let (Some(old_dir), Some(new_dir)) = (from.parent(), to.parent()) else {
+        return Ok(false);
+    };
+    if old_dir == new_dir {
+        return Ok(false);
+    }
+    let target = fs::read_link(from)?;
+    let rooted = matches!(
+        target.components().next(),
+        None | Some(Component::Prefix(_) | Component::RootDir)
+    );
+    let file = match fs::metadata(from) {
+        Ok(file) if file.is_file() && !rooted => file,
+        _ => return Ok(false),
+    };
+    let lost = || io::Error::other("the moved link would not lead to its file");
+    let back = way_between(new_dir, old_dir).ok_or_else(lost)?;
+    create_file_link(&back.join(target), to)?;
+    // The new target was put together from path components alone.
+    let kept = fs::metadata(to).is_ok_and(|moved| same_entry(from, &file, to, &moved));
+    let removed = if kept {
+        fs::remove_file(from)
+    } else {
+        Err(lost())
+    };
+    if removed.is_err() {
+        let _ = fs::remove_file(to);
+    }
+    removed.map(|()| true)
+}
+
+/// The relative way from the folder `from` to the folder `to` (`../../x/y`), both
+/// absolute. `None` when they share no root.
+fn way_between(from: &Path, to: &Path) -> Option<PathBuf> {
+    let from: Vec<Component> = from.components().collect();
+    let to: Vec<Component> = to.components().collect();
+    let shared = from.iter().zip(&to).take_while(|(a, b)| a == b).count();
+    if shared == 0 {
+        return None;
+    }
+    let mut way = PathBuf::new();
+    for _ in shared..from.len() {
+        way.push("..");
+    }
+    for part in &to[shared..] {
+        way.push(part);
+    }
+    Some(way)
+}
+
+/// Creates the link `link` to a file, with `target` as its text. Fails with
+/// `AlreadyExists` when anything is at `link`.
+fn create_file_link(target: &Path, link: &Path) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(target, link)
+    }
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::symlink_file(target, link)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = (target, link);
+        Err(io::Error::from(io::ErrorKind::Unsupported))
+    }
 }
 
 /// Same file by identity: device and inode on Unix; on Windows the canonical
@@ -1650,6 +1877,144 @@ mod tests {
         assert!(cut.truncated && cut.paths.len() == all.paths.len() - 1);
         assert!(!cut.paths.iter().any(|p| p == "a/b/c/deep.md"));
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn links_are_listed_as_the_files_they_lead_to() {
+        use std::os::unix::fs::symlink;
+        // Canonical, as a vault root is: the links' files are compared by canonical path.
+        let root = dunce::canonicalize(scratch_dir("links")).unwrap();
+        let outside = scratch_dir("links-outside");
+        for dir in ["sub", ".hidden"] {
+            fs::create_dir_all(root.join(dir)).unwrap();
+        }
+        fs::write(root.join("real.md"), "x").unwrap();
+        fs::write(root.join(".hidden/pic.png"), "x").unwrap();
+        fs::write(outside.join("tool"), "x").unwrap();
+        symlink("real.md", root.join("alias.md")).unwrap();
+        symlink("../real.md", root.join("sub/deep.md")).unwrap();
+        symlink(root.join(".hidden/pic.png"), root.join("pic.png")).unwrap();
+        symlink(outside.join("tool"), root.join("tool")).unwrap();
+        // Not listed: links to a folder, to nothing, and to itself.
+        symlink("sub", root.join("folder.md")).unwrap();
+        symlink("missing.md", root.join("dangling.md")).unwrap();
+        symlink("loop.md", root.join("loop.md")).unwrap();
+
+        let list = list_vault(&root, MAX_ENTRIES).unwrap();
+        let row = |p: &str, k: char, m: bool| (p.to_owned(), k, m);
+        assert_eq!(
+            rows(&list).0,
+            vec![
+                row("alias.md", 'f', true),
+                row("pic.png", 'f', true),
+                row("real.md", 'f', true),
+                row("sub", 'd', false),
+                row("sub/deep.md", 'f', true),
+                row("tool", 'f', false),
+            ]
+        );
+        // Notes, images and code files only, by the file: `tool` is none of them.
+        let mut links: Vec<_> = list.links.clone().into_iter().collect();
+        links.sort();
+        links.iter_mut().for_each(|(_, rels)| rels.sort());
+        let rels = |names: &[&str]| names.iter().map(|n| (*n).to_owned()).collect::<Vec<_>>();
+        assert_eq!(
+            links,
+            vec![
+                (root.join(".hidden/pic.png"), rels(&["pic.png"])),
+                (root.join("real.md"), rels(&["alias.md", "sub/deep.md"])),
+            ]
+        );
+        let pic = root.join(".hidden/pic.png").to_str().unwrap().to_owned();
+        assert_eq!(
+            list.real_paths,
+            HashMap::from([("pic.png".to_owned(), pic)])
+        );
+
+        // Search walks the same notes.
+        let mut notes = Vec::new();
+        walk_notes(&root, |entry| {
+            if !entry.is_dir {
+                notes.push(entry.rel);
+            }
+            true
+        });
+        notes.sort();
+        assert_eq!(notes, ["alias.md", "real.md", "sub/deep.md"]);
+        fs::remove_dir_all(&root).unwrap();
+        fs::remove_dir_all(&outside).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_is_read_written_and_moved_as_its_file() {
+        use std::os::unix::fs::symlink;
+        let root = dunce::canonicalize(scratch_dir("through")).unwrap();
+        let state = VaultState::new();
+        fs::create_dir_all(root.join("docs")).unwrap();
+        let real = root.join("docs/real.md");
+        let alias = root.join("alias.md");
+        fs::write(&real, "one").unwrap();
+        symlink("docs/real.md", &alias).unwrap();
+
+        let read = read_note(&alias, "alias.md").unwrap();
+        assert_eq!(read.content, "one");
+        let seen = Baseline {
+            mtime: read.mtime,
+            size: read.size,
+            hash: read.hash,
+        };
+        let write =
+            |bytes: &[u8], expected| write_note(&state, &root, &alias, "alias.md", bytes, expected);
+        // The file is replaced where it is, and the link is still a link.
+        assert_eq!(write(b"two!", Some(&seen)).unwrap().size, 4);
+        assert!(fs::symlink_metadata(&alias)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(fs::read_to_string(&real).unwrap(), "two!");
+        // Both paths get the echo of that write.
+        assert!(state.registry().get(&alias).is_some() && state.registry().get(&real).is_some());
+        // The baseline is the file's: the one from before that write is stale.
+        assert_eq!(
+            write(b"three", Some(&seen)).unwrap_err().kind,
+            ErrorKind::Conflict
+        );
+
+        // In another folder the link gets the way back in front of its target.
+        rename_entry(&state, &root, "alias.md", "notes/alias.md").unwrap();
+        let moved = root.join("notes/alias.md");
+        assert_eq!(fs::read_link(&moved).unwrap(), Path::new("../docs/real.md"));
+        assert_eq!(read_note(&moved, "notes/alias.md").unwrap().content, "two!");
+        assert!(fs::symlink_metadata(&alias).is_err());
+        // Renamed in its folder, it is left as it is.
+        rename_entry(&state, &root, "notes/alias.md", "notes/other.md").unwrap();
+        let other = root.join("notes/other.md");
+        assert_eq!(fs::read_link(&other).unwrap(), Path::new("../docs/real.md"));
+
+        // A link that leads nowhere: not found, and nothing is created through it.
+        let dangling = root.join("dangling.md");
+        symlink("gone.md", &dangling).unwrap();
+        assert_eq!(
+            read_note(&dangling, "dangling.md").unwrap_err().kind,
+            ErrorKind::NotFound
+        );
+        let through = write_note(&state, &root, &dangling, "dangling.md", b"x", None);
+        assert_eq!(through.unwrap_err().kind, ErrorKind::NotFound);
+        let created = create_exclusive(&dangling, b"x", "dangling.md");
+        assert_eq!(created.unwrap_err().kind, ErrorKind::Exists);
+        assert!(!root.join("gone.md").exists());
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn way_between_folders_goes_up_then_down() {
+        let way = |from: &str, to: &str| way_between(Path::new(from), Path::new(to));
+        assert_eq!(way("/v/notes", "/v"), Some(PathBuf::from("..")));
+        assert_eq!(way("/v", "/v/a/b"), Some(PathBuf::from("a/b")));
+        assert_eq!(way("/v/a/b", "/v/c"), Some(PathBuf::from("../../c")));
+        assert_eq!(way("v", "/v"), None);
     }
 
     #[test]

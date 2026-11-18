@@ -351,7 +351,8 @@ async flush() { clearTimer(); if (version !== savedVersion) await save(); await 
 note_write(rel, bytes, expected: Option<Baseline>, epoch) -> Result<Baseline, IpcError>
   [critic] epoch != active epoch → Err(stale_vault)          // PLAT-08
   [critic] root missing → Err(root_unavailable)              // never recreate the root (VAULT-06)
-  abs = vault::resolve(rel)?       // [critic] per-platform components, no symlink component (PLAT-08)
+  abs = vault::resolve(rel)?       // [critic] per-platform components, no path through a symlink (PLAT-08)
+                                   // a link at abs: every step below is on the file it leads to (TREE-18)
   if let Some(b) = expected:
       meta = stat(abs)             // NotFound → Err(not_found): handled as an external delete
       if (meta.len, meta.mtime) != (b.size, b.mtime): return Err(conflict)
@@ -407,7 +408,7 @@ write_atomic(abs, bytes):
   - Linux: hitting the inotify watch limit (ENOSPC) shows one error toast, then the app falls back to listing every 30 s [MT §4.5, SB §5]. inotify misses files created inside a new directory before its watch exists, so the frontend lists again on a directory `create` [SB §5].
   - All: close the watcher on exit [ZT §5.3].
 - **Paths** pass through byte-identical. All comparisons happen in TS through `key()` (§10). [critic] An event path is mapped to an entry by exact path first, then by `key()` (§10.1).
-- [critic] **Symlinks.** Build the watcher with `notify::Config::default().with_follow_symlinks(false)`. notify follows symlinks by default (verified in notify 8.2), so inotify and kqueue would add watches inside linked folders, outside the vault, or loop.
+- [critic] **Symlinks.** Build the watcher with `notify::Config::default().with_follow_symlinks(false)`. notify follows symlinks by default (verified in notify 8.2), so inotify and kqueue would add watches inside linked folders, outside the vault, or loop. A link to a file is watched as an entry, and a change of its file is passed on to it by path: the listing keeps each such link by the canonical path of its file, which is the path the watcher reports (verified with FSEvents; TREE-18).
 - [critic] **Overflow.** notify reports a queue overflow as `EventKind::Other` with `Flag::Rescan` (inotify and FSEvents; verified). ARCHITECTURE §6.3's mapping has no row for it and would drop it; map it to `any`.
 - [critic] **Network volumes.** FSEvents, inotify and ReadDirectoryChangesW see only this machine's changes on SMB, NFS and AFP shares, and Windows can drop a burst silently. On window focus, stat the open note against its baseline; on network volumes, or after a fallback, also re-list (TREE-12).
 - [critic] **Own renames.** Record in-app renames and moves, including the case-only temp step, in the registry, so their `remove(from)` echoes are dropped. The frontend still confirms a `remove` by reading (§3.4).
@@ -797,6 +798,6 @@ Then set `lastSaved = disk.text` and `baseline = disk.meta`, and save; the merge
 | Text utilities | Line-ending and BOM detect and restore round trip; `hunk` / minimal diff; merge (P1) disjoint vs overlapping |
 | Save scheduler | `delay = min(400, firstDirtyAt + 2000 - now)` with fake timers; [critic] *changed:* a save fires while composing (no rescheduling); the 2 s / 10 s timing above 2 MB; a retry after a note switch reads the right note's state |
 | Link rewrite (P1) | Keeping alias, heading, embed and encoding; escaping pipes in tables. [critic] Re-encoding with the note's own line ending and BOM |
-| Rust | `vault::resolve` rejects `..`, absolute paths and prefixes; `write_atomic` in a temp dir; case-only rename; search folding offsets in UTF-16, including `İ`; mapping watcher events to changes, including the rename-by-destination rules. [critic] Per-platform component rules (`\` and `:` legal on Unix); symlink components rejected; the root refused by delete, trash and rename; `stale_vault`; a temp name independent of the note's name (a 255-byte name saves); `read_only` targets refused; `root_unavailable` instead of recreating the root; `Flag::Rescan` mapped to `any` |
+| Rust | `vault::resolve` rejects `..`, absolute paths and prefixes; `write_atomic` in a temp dir; case-only rename; search folding offsets in UTF-16, including `İ`; mapping watcher events to changes, including the rename-by-destination rules. [critic] Per-platform component rules (`\` and `:` legal on Unix); paths through a symlink rejected, and a link read, written through and moved as its file (TREE-18); the root refused by delete, trash and rename; `stale_vault`; a temp name independent of the note's name (a 255-byte name saves); `read_only` targets refused; `root_unavailable` instead of recreating the root; `Flag::Rescan` mapped to `any` |
 
 There are no integration or E2E tests, and nobody launches the app to verify (the owner's rule).

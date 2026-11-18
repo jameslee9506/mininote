@@ -15,7 +15,7 @@ export function compareNodes(a: TreeNode, b: TreeNode): number {
 export type Listing = Pick<ListResult, "paths" | "kinds" | "mtimes">;
 
 /** The listing of no vault. */
-export const EMPTY_LISTING: ListResult = { paths: [], kinds: "", mtimes: [], truncated: false };
+export const EMPTY_LISTING: ListResult = { paths: [], kinds: "", mtimes: [], realPaths: {}, truncated: false };
 
 const DIR = "d".charCodeAt(0);
 

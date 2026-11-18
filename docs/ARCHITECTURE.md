@@ -37,7 +37,7 @@ The current build covers every P0 requirement, plus these P1 items:
 | Dirty buffer plus external change | Conflict copy `<stem> (conflict YYYYMMDD-HHmmss).<ext>` next to the note. The suffix is not localized. |
 | Delete | Files go to the OS trash without confirmation. `settings.confirmDelete` (default off) adds one. Folders and permanent deletes always confirm. |
 | Attachments | Default `attachments/` at the vault root (`attachmentLocation: "folder"`). |
-| Tree contents | Every visible file is listed, so a folder reads as it is on disk. Images and unsupported files are muted. Code and plain-text files open in a read-only code view (TREE-17, §10.4); any other file that is not a note or an image opens to a notice that its type is not supported (TREE-16). |
+| Tree contents | Every visible file is listed, so a folder reads as it is on disk; a link (symlink) to a file is listed as that file (TREE-18, §6.8). Images and unsupported files are muted. Code and plain-text files open in a read-only code view (TREE-17, §10.4); any other file that is not a note or an image opens to a notice that its type is not supported (TREE-16). |
 | Reading view | P0 (Mod+E). |
 | Editor spacing | DESIGN.md §3.2: the reading view's pair gaps and gutters; a blank line is a body line, and the one right below a block stands where a paragraph typed on it would. |
 | Markdown dialect | One block dialect in both views (§10.1, §11): no setext headings and no lazy continuation lines. |
@@ -77,7 +77,7 @@ The current build covers every P0 requirement, plus these P1 items:
 - Each window is its own webview running the whole frontend, with a vault of its own (§6.1). Windows share the settings document (§7) and nothing else.
 - The frontend never touches the filesystem directly.
 - Every path crossing IPC is **vault-relative** with `/` separators (`VaultPath`).
-- Rust joins it onto the active root and rejects anything that could escape: `..`, absolute or prefix components, and symlinked components.
+- Rust joins it onto the active root and rejects anything that could escape: `..`, absolute or prefix components, and a path that goes through a symlink. A link that leads to a regular file is itself a file of the vault (§6.8).
 - Every vault-scoped command carries the **vault epoch**. Rust rejects stale epochs with `no_vault`, so a late write meant for vault A can never land in vault B.
 - Rust finds the vault of a command through the window that sent it (its label). Events about one vault go to its window only (`emit_to`), and the frontend listens with `getCurrentWebviewWindow().listen()`: a global `listen()` also hears the events sent to other windows (Tauri delivers every event to listeners whose target is `Any`).
 
@@ -137,14 +137,14 @@ Every command marked "scoped" also takes `epoch: u64`, either as an argument or 
 | `vault_open` | `path` (absolute) | `VaultInfo` | Opens the folder as the calling window's vault. Steps: (1) canonicalize with dunce; (2) require a directory; (3) unless another window has the folder open (§6.1), set the root (recording whether it is a mount point), take a new epoch, and clear the self-write registry; (4) allow the asset-protocol scope for the directory (recursive); (5) restart the watcher; (6) prune this vault's recovery copies that are older than 30 days and whose note no longer exists (SAVE-10); (7) update the window list (§6.6). Errors: `not_found` (also for a file), `invalid_path` (relative or non-UTF-8 path), `exists` (another window has it open, and that window comes forward), `io`. |
 | `vault_close` | – | – | The calling window has no vault any more (back to Welcome, after the frontend flushed): every request for the old epoch fails with `no_vault`, its watcher stops, and another window may open the folder. Updates the window list. |
 | `vault_focus` | `path` (absolute) | `bool` | True when another window has the folder open as its vault; that window comes forward (VAULT-07). A path that does not canonicalize gives false, and `vault_open` reports what is wrong with it. |
-| `vault_list` (scoped) | – | `ListResult` | §6.3: one column per field, `{ paths, kinds, mtimes, truncated }`. |
-| `note_read` (scoped) | `path` | `FileContent` | Strips a UTF-8 BOM (`bom: true`). Reports `readOnly` (the writability test `note_write` uses, §6.2 step 3), plus the baseline `{mtime,size,hash}` taken from stats around the read; a change while reading triggers a re-read (SAVE-06 "partial files"). Also reads a code file for its viewer (TREE-17). Errors: `not_found`, `not_utf8`, `too_large` (over 20 MB). |
-| `note_write` (scoped, **raw body**) | body = UTF-8 bytes (BOM included if wanted); headers `x-path` (URI-encoded), `x-expected` (JSON baseline or empty), `x-epoch` | `WriteResult` | §6.2. The `x-expected` check covers external changes since the baseline: a changed file gives `conflict`, a vanished one `not_found`. With an empty `x-expected` there is no baseline check, and missing parent folders **inside** the root are recreated. Either way the target is re-checked right before it is replaced: a file that appeared or changed during the write gives `conflict`, one that vanished `not_found`. Also returns `read_only` and `root_unavailable`. |
+| `vault_list` (scoped) | – | `ListResult` | §6.3: one column per field, `{ paths, kinds, mtimes, realPaths, truncated }`. |
+| `note_read` (scoped) | `path` | `FileContent` | Strips a UTF-8 BOM (`bom: true`). Reports `readOnly` (the writability test `note_write` uses, §6.2 step 3), plus the baseline `{mtime,size,hash}` taken from stats around the read; a change while reading triggers a re-read (SAVE-06 "partial files"). Also reads a code file for its viewer (TREE-17). A link is read as the file it leads to (§6.8). Errors: `not_found`, `not_utf8`, `too_large` (over 20 MB). |
+| `note_write` (scoped, **raw body**) | body = UTF-8 bytes (BOM included if wanted); headers `x-path` (URI-encoded), `x-expected` (JSON baseline or empty), `x-epoch` | `WriteResult` | §6.2. The `x-expected` check covers external changes since the baseline: a changed file gives `conflict`, a vanished one `not_found`. With an empty `x-expected` there is no baseline check, and missing parent folders **inside** the root are recreated. Either way the target is re-checked right before it is replaced: a file that appeared or changed during the write gives `conflict`, one that vanished `not_found`. Through a link, the file it leads to is replaced and the link stays; a link that leads nowhere gives `not_found` (§6.8). Also returns `read_only` and `root_unavailable`. |
 | `note_create` (scoped) | `path, content` | `WriteResult` | Exclusive create, creating missing parents inside the root. Error: `exists`. Used for new notes and conflict copies. |
 | `dir_create` (scoped) | `path` | – | Creates parents. Error: `exists`. |
-| `path_rename` (scoped) | `from, to` | – | Files and folders. Creates `to`'s parent. Error: `exists`, unless it is a case- or normalization-only rename of the same entry (done via a temp name, with rollback). A free `to` is checked again right before every rename attempt (Windows retries included), so an entry that appeared meanwhile gives `exists` and nothing moves. Refuses the root, and refuses a folder into itself or a descendant (`invalid_path`). Records both paths in the self-write registry. |
-| `path_trash` (scoped) | `path` | – | `trash` crate. On macOS it uses `DeleteMethod::NsFileManager`, because the default AppleScript method prompts for Automation rights. Error: `trash_failed`. Refuses the root. |
-| `path_delete` (scoped) | `path` | – | Permanent, recursive. Called only after confirmation. Refuses the root. |
+| `path_rename` (scoped) | `from, to` | – | Files and folders. Creates `to`'s parent. Error: `exists`, unless it is a case- or normalization-only rename of the same entry (done via a temp name, with rollback). A free `to` is checked again right before every rename attempt (Windows retries included), so an entry that appeared meanwhile gives `exists` and nothing moves. Refuses the root, and refuses a folder into itself or a descendant (`invalid_path`). A link is renamed itself, and re-pointed when it moves to another folder (§6.8). Records both paths in the self-write registry. |
+| `path_trash` (scoped) | `path` | – | `trash` crate. On macOS it uses `DeleteMethod::NsFileManager`, because the default AppleScript method prompts for Automation rights. A link is trashed itself, never its file. Error: `trash_failed`. Refuses the root. |
+| `path_delete` (scoped) | `path` | – | Permanent, recursive. A link is removed itself, never its file. Called only after confirmation. Refuses the root. |
 | `path_exists` (scoped) | `path` | `bool` | |
 | `path_reveal` (scoped) | `path` | – | Opener plugin `reveal_item_in_dir`, called from Rust. |
 | `binary_write` (scoped, **raw body**) | body = bytes; headers `x-path`, `x-epoch` | – | New file only (`exists`), creating parents. Used for pasted and dropped images. |
@@ -194,7 +194,7 @@ Every command marked "scoped" also takes `epoch: u64`, either as an argument or 
 - `resolve(rel) -> PathBuf`:
   1. Split on `/` and reject empty, `.` and `..` components, NUL, and absolute or prefix components.
   2. On **Windows only**, also reject `\`, `:` and other characters that are invalid there. On Unix those characters are legal parts of a name.
-  3. Join onto the root, then reject the result if **any existing component is a symlink or junction**: check `symlink_metadata` on each prefix that exists.
+  3. Join onto the root, then reject the result if it **goes through a symlink or junction**: check `symlink_metadata` on each existing prefix before the last component. The last component may itself be a link (§6.8).
 - `to_rel(abs)` strips the root and joins components with `/`. Entries that are not valid UTF-8 are skipped from listings.
 - Operations that modify (`path_rename`, `path_trash`, `path_delete`) refuse `rel == ""`.
 
@@ -203,7 +203,7 @@ Every command marked "scoped" also takes `epoch: u64`, either as an argument or 
 - All commands are `async`, with blocking work in `tauri::async_runtime::spawn_blocking`.
 - `mtime` is reported as ms since the epoch (f64). `hash` is FNV-1a 64-bit as 16 hex characters, stable across runs.
 - **`note_write` algorithm:**
-  1. `check` the epoch, then resolve the path.
+  1. `check` the epoch, then resolve the path. If a link is there, the file it leads to takes the path's place in every step below (§6.8).
   2. If `x-expected` is set:
      - a missing file gives `not_found`;
      - otherwise, compare the current size and mtime with the expected values; if they match but the mtime has no sub-second part, also compare the hash. A difference gives `conflict`.
@@ -213,21 +213,21 @@ Every command marked "scoped" also takes `epoch: u64`, either as an argument or 
   6. Rename the temp over the target. On Windows, retry on raw OS errors 5/32/33 after 10, 20, 40, 80 and 160 ms. Right before every attempt, re-stat the target: if it appeared or changed since step 2 (size, mtime, inode on Unix; the hash too when the mtime is coarse and a baseline was given), stop with `conflict`; if it vanished, with `not_found`.
   7. If the folder refuses the temp file but the target is writable, fall back to writing in place: the step 6 re-check, then truncate, write, fsync.
   8. On error, remove the temp file. The target is never left truncated.
-  9. If the file now at the target is still our temp file (same size, and same inode on Unix), record `abs → (size, mtime, hash)` in the self-write registry and return its baseline. Otherwise another program replaced it right after the rename: return the baseline of our version (from the temp file) and record nothing, so the next save's check and the watcher see theirs as a change.
+  9. If the file now at the target is still our temp file (same size, and same inode on Unix), record `abs → (size, mtime, hash)` in the self-write registry (for a link, under its own path and its file's) and return its baseline. Otherwise another program replaced it right after the rename: return the baseline of our version (from the temp file) and record nothing, so the next save's check and the watcher see theirs as a change.
 - **Self-write registry:** an LRU of about 512 entries. Only overwrites by `note_write` and renames are recorded (renames record both paths and the case-rename temp name), each with the time it was made. Creates (`note_create`, `binary_write`, `dir_create`, a `note_write` that made a new file or found it replaced) still reach the frontend, whose tree needs them, and they forget any older record for the path. The watcher drops a `create` or `modify` event when the file's current size and mtime (and hash, when the mtime is coarse) still match the record. It also drops the `remove` echo of a rename source recorded in the last 5 s; after that, a delete of that path is real.
 - **Case or normalization-only rename:** tried directly first; when the stored name did not change, go through the visible temp name `<stem>.mn-tmp-<n>.<ext>` (PLAT-07: a hidden temp left by a crash would be invisible) and roll back if the second step fails.
 - **Stale temp files** (ours, older than one hour) are deleted when `vault_list` walks their folder.
 
 ### 6.3 Listing (`vault_list`, TREE-01, VAULT-01, PERF-01)
 
-- **Breadth-first, one level at a time.** A level's folders are read with `std::fs::read_dir` on up to 8 threads (the machine's parallelism, at least 2), each taking the next unread folder. Links are never followed. A level keeps the order of the folders it came from, and each folder the order its entries were read in, so thread timing never changes a complete listing, and every folder comes before its contents.
-- Skips names starting with `.`, symlinks and junctions, and anything that is neither a folder nor a regular file.
+- **Breadth-first, one level at a time.** A level's folders are read with `std::fs::read_dir` on up to 8 threads (the machine's parallelism, at least 2), each taking the next unread folder. A link is never followed into a folder. A level keeps the order of the folders it came from, and each folder the order its entries were read in, so thread timing never changes a complete listing, and every folder comes before its contents.
+- Skips names starting with `.`, and anything that is neither a folder nor a regular file. A link (symlink) counts as the regular file it leads to, and is skipped when it leads to a folder or nowhere (§6.8).
 - On Windows, also skips entries with the Hidden or System attribute.
 - Lists every folder and regular file. Notes are `md` and `markdown`, images `png jpg jpeg gif webp svg bmp avif`; the frontend classifies the rest as code files (TREE-17) or other files (`utils/names.ts › fileKindOf`).
-- **Metadata only where it is used.** The folder read already says what an entry is (and on Windows carries its attributes), so only notes and images are statted, for their mtime: the switcher's order and image reloads.
+- **Metadata only where it is used.** The folder read already says what an entry is (and on Windows carries its attributes), so only notes and images are statted, for their mtime: the switcher's order and image reloads. A link is statted too, to see what it leads to.
 - An unreadable sub-folder is listed without children, not fatal.
 - Capped at 100 000 entries (`truncated`). The cap cuts the deepest level being read, so a huge root such as a home folder still shows its upper levels whole.
-- **Wire format.** One column per field: `paths`, `kinds` (one `d` or `f` per entry), `mtimes` (whole ms; 0 for folders) and `truncated`. 100 000 entries cross IPC as three flat arrays, not 100 000 objects.
+- **Wire format.** One column per field: `paths`, `kinds` (one `d` or `f` per entry), `mtimes` (whole ms; 0 for folders) and `truncated`. 100 000 entries cross IPC as three flat arrays, not 100 000 objects. `realPaths` is a small map beside them: the file behind each image that is a link (§6.8).
 
 ### 6.4 Watcher (`watcher.rs`, TREE-12)
 
@@ -239,8 +239,8 @@ Every command marked "scoped" also takes `epoch: u64`, either as an argument or 
 - Event mapping: `Create` → `create`; data `Modify` → `modify`; `Name(Both)` with two paths → `rename` with `to`; `Remove` → `remove`; the `Rescan` flag → `{any, ""}`.
   - A single-sided name change, or a `remove` of a path that exists again, is classified by what exists when the batch is handled: `create` if the path exists, else `remove`.
   - A paired rename between two paths of one class (folders, notes and images, other files) is `rename`. Across classes it is `remove(from)` plus `create(to)`: another app's atomic save through a visible temp file (`a.md.tmp` → `a.md`) reaches a live note as a create, as before. From a hidden file it is `create(to)`; to a hidden or outside path, `remove(from)`. A rename whose source exists again (vim's save) is `modify(from)` plus `create(to)`.
-  - Symlinks, folder metadata changes and content changes of files other than notes, images and code files are dropped. Code files are told by name (`fs_ops::is_code_name`, the lists of the frontend's `utils/codeFiles.ts`, §10.4). A path that came and went within a batch is a `remove`, which the frontend ignores for paths it never listed (§8.2).
-  - The file-ID cache that pairs renames on macOS and Windows holds folders, notes and images only; another file's rename arrives as a remove and a create, which re-list the tree all the same.
+  - Links that lead to a folder or nowhere, folder metadata changes and content changes of files other than notes, images and code files are dropped. A link that leads to a file is told like a file, and hears of its file's changes (§6.8). Code files are told by name (`fs_ops::is_code_name`, the lists of the frontend's `utils/codeFiles.ts`, §10.4). A path that came and went within a batch is a `remove`, which the frontend ignores for paths it never listed (§8.2).
+  - The file-ID cache that pairs renames on macOS and Windows holds folders, notes and images only, and no links; another file's rename arrives as a remove and a create, which re-list the tree all the same.
 - **Drop rules:** events outside the root, any hidden component, our temp files, and registry matches.
 - Deduplicate per batch, then `app.emit_to(EventTarget::webview_window(label), "vault:changed", …)`: the paths are relative to this vault, so only its window hears them.
 - The callback captures the root, the epoch and the window it was started for, and drops batches once that window has another vault, none, or is gone.
@@ -253,7 +253,7 @@ Every command marked "scoped" also takes `epoch: u64`, either as an argument or 
   - A file matches when **every term** occurs in its content or name.
   - Case-insensitive mode lowercases per character, with a map back to the original positions that tolerates length-changing case folds.
   - Hangul is matched at character level, as plain substrings.
-- **Files.** Notes only, using the `vault_list` rules. Files over 2 MB are skipped, as are cloud placeholders (SRCH-01 [critic]).
+- **Files.** Notes only, using the `vault_list` rules: a link to a note is searched as the note it leads to (§6.8). Files over 2 MB are skipped, as are cloud placeholders (SRCH-01 [critic]).
 - **Output.**
   - Up to 20 matching lines per file (lines containing any term), and up to `limit` files.
   - Snippets longer than 240 characters are trimmed around the first hit with `…`.
@@ -292,6 +292,24 @@ Every command marked "scoped" also takes `epoch: u64`, either as an argument or 
 - **Windows.** Every window runs the check and can show the button. The window that installs flushes itself twice as above; the others flushed when they lost focus to it (§8.1). After the restart the window list brings them back (§6.6).
 - **Scope.** Only the application bundle changes: the macOS `.app`, the Windows NSIS or MSI installer in passive mode (the installer relaunches the app), the Linux AppImage. A `.deb` or `.rpm` install has no AppImage to replace, and its check fails quietly. No vault file or setting is touched. No custom IPC command is involved; the plugins' own commands are allowed in `capabilities/default.json` (`updater:allow-check`, `allow-download`, `allow-install`, `process:allow-restart`).
 
+### 6.8 Links (`vault.rs`, `fs_ops.rs`, `watcher.rs`, TREE-18)
+
+A link is a symlink (on Windows also a junction, which always leads to a folder). A link that leads to a regular file is a file of the vault. A link that leads to a folder is never followed.
+
+- **Path guard.** `resolve` rejects a path that goes through a link and accepts one that ends at a link: that link is an entry of a real folder of the vault. Commands act on the entry itself (`symlink_metadata`): `path_rename`, `path_trash` and `path_delete` move or remove the link, `path_exists` sees it, and the exclusive creates (`note_create`, `binary_write`, `dir_create`) fail on it with `exists`. Only `note_read` and `note_write` follow it, and only to a regular file. `path_reveal` shows the link's file, because the opener plugin canonicalizes.
+- **Listing.** `vault_list` lists a link as a file when `fs::metadata`, which follows, finds a regular file, and gives it that file's mtime. A link to a folder, to nothing or in a circle is skipped. The frontend tells the kind from the link's name, as for any file.
+  - For the links the frontend reads or shows (notes, images, code files) the listing also takes the canonical path of the file. The window's `VaultState` keeps them for the watcher (`links`: file → its links), replaced by every listing of the current epoch and cleared with the vault.
+  - Image links cross IPC with that path (`realPaths`), and `vault.assetUrl` builds such an image's URL from it. Tauri's asset scope reads a link's target as it is written, so it refuses every link with a relative target; the file itself passes. A file the vault's scope does not cover (in a hidden folder, or outside the vault) is allowed by itself (`allow_file`).
+- **Reading.** `note_read` stats and reads through the link: the content, `readOnly` and the baseline are the file's.
+- **Writing.** `note_write` resolves the link to its file (`canonicalize`) and runs §6.2 on that file: its metadata for the checks, its folder for the temp file, the rename over it. The link itself is never replaced. Step 6 also checks that the link still leads to that file (`conflict`). A link that leads nowhere gives `not_found`: nothing is created through a link. The registry records the write under the link's path and under the file's.
+- **Moving.** A link's relative target is read from the folder the link is in. `path_rename` into another folder creates the new link with the way back to the old folder in front of the target (`docs/x.md`, moved into `notes/`, becomes `../docs/x.md`), checks that it leads to the same file, and then removes the old link. If that cannot be done, nothing moves. An absolute target, a rename within the folder and a link the tree does not list go through the plain rename.
+- **Search.** `walk_notes` visits a link to a note as that note, with the file's size and placeholder flags.
+- **Watcher.** A link is an entry like a file (`probe`): its creation, removal and renaming are told as a file's. It is not in the file-ID cache, where its ID would be its file's, so its rename arrives as a remove and a create.
+  - A change of its *file* names the file. Each event path is therefore also looked up in `links`, and every link to that file gets a `modify`, or a `remove` once it leads nowhere, before deduplication and the drop rules. The lookup is by canonical path, which is the path the watchers report; it also finds a file in a hidden folder, whose own event is dropped.
+  - A file outside the vault is not watched. The open note is read again when the window comes forward (§8.2).
+  - Echoes: a registry record with a hash (a write) is compared with the metadata of the file the path leads to; one without (a rename) with the entry's own. A write through a link is recorded under both paths, so neither the file's event nor the one passed on to the link reaches the frontend.
+- **Frontend.** No store knows a link from a file, except `vault.assetUrl`. Two notes that are one file (a link and its file, or two links to it) each have a controller of their own. A save through one is an external change for the other (§8.2): the watcher tells the links of their file's change, and a cached state is compared with the file whenever it is shown again. A clean one is replaced; unsaved text becomes a conflict copy.
+
 ## 7. Frontend state (`src/lib/state/*.svelte.ts`)
 
 The stores are singleton classes with `$state` fields:
@@ -302,7 +320,7 @@ The stores are singleton classes with `$state` fields:
 | Store | Responsibility |
 |---|---|
 | `settings` | Loads `{ settings, sessions }` through `settings_load` and writes what changed as patches through `settings_update`, debounced and only after loading finishes; other windows' changes come in as described below. Settings are sanitized on load and update, so unknown keys are dropped (SET-01). `shortcuts` holds only the user's changes, command id → keys (§9.1). `VaultSession` holds `expanded`, `lastFile`, `recent`, and `last`: the selection, scroll position and view mode for `lastFile` (VAULT-03), recorded on window blur or hide and before close or quit, and restored when the vault reopens. Applies the CSS variables (the content font size, the code font as `--font-mono`, the widths), `data-theme`, `data-icons`, `data-sidebar` and the window theme. `data-sidebar` is there while the sidebar is shown: `base.css` takes the sidebar's width from `--pane-width` then, and the content padding follows that (PLAT-12). `data-icons` is the icon set (SET-08): `tokens.css` maps it to the tree's folder color and fill, so no component reads that setting. |
-| `vault` | This window's `VaultInfo` (a folder open in another window comes forward there, VAULT-07), the raw `listing` and the derived tree, node map, notes list, `linkables` (notes and images, for `[[` completion) and the link index over them (links never resolve to other files, TREE-16), plus tree UI state: `selected`, `renaming`, and `creating`, the new-folder draft (§8.3). File operations follow §8.3. Owns the `vault:changed` subscription (§8.2). Link resolution wraps `markdown/resolve.ts`. |
+| `vault` | This window's `VaultInfo` (a folder open in another window comes forward there, VAULT-07), the raw `listing` and the derived tree, node map, notes list, `linkables` (notes and images, for `[[` completion) and the link index over them (links never resolve to other files, TREE-16), plus tree UI state: `selected`, `renaming`, and `creating`, the new-folder draft (§8.3). File operations follow §8.3. Owns the `vault:changed` subscription (§8.2). Link resolution wraps `markdown/resolve.ts`. `assetUrl` gives an image that is a link on disk the URL of its file (§6.8). |
 | `editor` | The open file, view mode, history, autosave engine, external-change reconciliation, the EditorState cache (20 notes and code files; dirty ones are pinned), virtual notes and recovery. A code file has a controller of kind `"code"`: cached and reloaded like a note, never dirty, never written (§10.4). Each controller keeps the vault epoch it was created in (§5). Publishes `lineRequest` `{ path, line, seq }` for every line reveal, which the reading view follows (§11). `blur()` takes focus out of the editor before slow commands (§8.3); `busyUnder` and `unsavedAt` let the vault refuse operations that would race a write or displace unsaved text. Owns the single `EditorView` after `Editor.svelte` attaches it. Implements `EditorHost`. |
 | `ui` | Modal, context menu, confirm dialog, toasts, the search query (while it is set, the sidebar shows results instead of the tree), and focus requests. |
 | `commands` | Registry used by the global shortcut handler and the command palette. `keysOf(cmd)` gives the keys in effect (the user's, else the defaults); `paused` is set while the shortcut settings record a key (§9.1). |
@@ -348,7 +366,7 @@ Calls go one way: `vault` → `editor` for moves, removals and external changes.
 - **Routing.** The vault store routes `vault:changed` events:
   - any structural change triggers a debounced refresh (about 150 ms, throttled adaptively for huge vaults). A `remove` counts only when its path is listed or live, or a listing is running: another app's temp or lock file that came and went between listings never re-lists the vault;
   - `modify`/`create` of a note or a code file with live state (open or cached) goes to `editor.onExternalChange(path)`.
-  - On window **focus**, the open note or code file is re-checked the same way, because watchers miss changes on network volumes.
+  - On window **focus**, the open note or code file is re-checked the same way, because watchers miss changes on network volumes, and never see the file of a link that leads out of the vault (§6.8).
   - A code file is never dirty, so of the rules below only the clean ones apply to it: a change reloads its view in place, and a removal closes it. Its reads never overlap (`editor.#refreshCode`): one runs at a time, and a change that arrives meanwhile is read once more after it, so a big file written faster than it can be read still updates; a read that has not answered for 10 s no longer holds back the next. Over 2 MB it is not read again on window focus; the watcher's events are enough. It follows a create of the same text only when it has at least 200 characters (short files have twins), and only among the few created code files that kept its name or its folder.
 - **`onExternalChange` reads the file and then:**
   - **Moved meanwhile:** an answer that arrives after the note or code file got another path is about the old path, "not found" above all. It is dropped and the file is read at its new path (three reads at most).
@@ -641,5 +659,5 @@ A code file is shown by the same `EditorView`, in a state of its own kind. The e
 The owner wants minimal verification:
 - `npm run check` and `cargo check` must be clean.
 - `vitest` runs unit tests for pure logic only: utils, resolve, tree, syntax, render plugins, the code view's tables and modes, and small state helpers.
-- Rust unit tests cover only the path guard, the listing rules and search helpers.
+- Rust unit tests cover only the path guard, the listing rules, links (listed, read, written through, moved) and search helpers.
 - There are no integration or E2E tests, and the app is not launched to verify.

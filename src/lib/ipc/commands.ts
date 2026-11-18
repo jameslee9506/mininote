@@ -107,7 +107,10 @@ export const vaultClose = () => call<void>("vault_close");
 /** True when another window has the folder `path` open as its vault; that window comes forward. */
 export const vaultFocus = (path: string) => call<boolean>("vault_focus", { path });
 
-/** Breadth-first listing of the visible folders, notes (.md/.markdown) and images, one column per field. */
+/**
+ * Breadth-first listing of the visible folders and files, one column per field. A link
+ * (symlink) that leads to a regular file is listed as that file (TREE-18).
+ */
 export const vaultList = () => scoped<ListResult>("vault_list");
 
 export const noteRead = (path: VaultPath, at?: number) => scoped<FileContent>("note_read", { path }, at);

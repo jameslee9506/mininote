@@ -145,7 +145,7 @@ Anything not listed is out of scope (§13).
   - Every other file, in muted text with its extension (TREE-16). Names are NFC-normalized for display only.
 - **Hidden.**
   - Any entry whose name starts with `.`. This covers `.git`, `.obsidian`, `.trash`, `.DS_Store` and our own temp files.
-  - Symlinks and Windows junctions, which are also never followed.
+  - Links (symlinks, Windows junctions) that lead to a folder or nowhere. No link is ever followed into a folder. *Changed:* a link that leads to a file is listed as that file (TREE-18).
   - Names that are not valid UTF-8, because they cannot cross IPC safely.
   - [critic] On Windows, entries with the Hidden or System attribute (`$RECYCLE.BIN`, `System Volume Information`, `desktop.ini`). This is the platform's own equivalent of dot files, and a drive root is an allowed vault (VAULT-01).
 - **Edge cases.**
@@ -349,6 +349,23 @@ Sources: OB §3, ZT §3.3–3.4, MT §2.
   - Dot files stay hidden (TREE-01), whatever their type.
 - **Decision.** People open project folders, not only note folders, and read the code next to their notes. A viewer is enough: editing code belongs to an editor built for it, and a view that cannot write can never damage a project file. Colors come from tokenizers loaded on demand, not from language servers.
 - **Sources.** ARCHITECTURE.md §10.4, DESIGN.md §6.
+
+#### TREE-18 · Files reached through a link · P0
+- **Behavior.**
+  - A link (a symlink) that leads to a regular file is a file of the vault. It is listed under its own name, and that name says what it is: `AGENTS.md` linked to `CLAUDE.md` is a note.
+  - It opens, is searched and is shown as the file it leads to, wherever that file is. A note is edited through it: a save replaces that file where it lies, with the atomic write and the conflict check of any note (SAVE-04, SAVE-06), and the link stays a link.
+  - Renaming, moving and deleting act on the link, never on its file. A link moved to another folder still leads to its file: a relative target is rewritten for the new folder.
+  - A change of the file reaches every link to it: an open link reloads like any note (SAVE-06), and one whose file is gone closes (SAVE-07).
+- **Edge cases.**
+  - A link that leads to a folder is not listed and never followed, so nothing below a linked folder is ever read or written (PLAT-08). A link that leads nowhere, or in a circle, is not listed either.
+  - The file may lie in a hidden folder of the vault, or outside the vault. Outside, nothing watches it: the open link is read again when the window comes forward (TREE-12).
+  - Nothing is created through a link. A save through one whose file is gone fails like any save that cannot reach its file, and the text is kept (SAVE-08, SAVE-10).
+  - Moving the file a link leads to, or a folder whose links lead out of it, leaves those links leading nowhere, and they leave the tree. A link that cannot be re-pointed (Windows without the right to create links) is not moved.
+  - A linked image is loaded from the file it leads to, which the image protocol is allowed for by itself when it lies in a hidden folder or outside the vault.
+  - Reveal shows the file the link leads to.
+  - Finder aliases and Windows shortcuts are not links: each is an ordinary file with content of its own.
+- **Decision.** *Changed:* links were hidden with everything that is neither a folder nor a regular file, so a project's `AGENTS.md`, linked to its `CLAUDE.md`, could not be opened. Every editor follows a link to a file. What must never be followed is a link to a folder, which can lead out of the vault, in a circle, or across the whole disk. The tree does not mark a link.
+- **Sources.** OB §2, MS §4, MT §4.
 
 ---
 
@@ -1303,7 +1320,7 @@ Math and diagrams are out of scope.
   - Commands run off the main thread.
   - Capabilities stay minimal: core, dialog, opener, store, window-state, single-instance.
   - [critic] Component rules depend on the platform. Everywhere: reject empty, `.` and `..` components, absolute paths and NUL. On Windows only: also drive and UNC prefixes, `\`, `:` and reserved device names (TREE-07). On macOS and Linux, `\` and `:` are ordinary file-name characters. Rejecting them on every OS, as ARCHITECTURE §6.1 does, would make every read fail for exactly the notes that TREE-07 promises to keep openable.
-  - [critic] No existing component of a resolved path may be a symlink or junction (one `symlink_metadata` per component, as Otterly checks for writes [OT §2.2]). TREE-01 never follows links, but a purely lexical check would let a typed link or a switcher-created `linked/x` read or write outside the vault through a symlinked folder.
+  - [critic] No resolved path may go through a symlink or junction: every existing component before the last is checked (one `symlink_metadata` each, as Otterly checks for writes [OT §2.2]). TREE-01 never follows a link into a folder, but a purely lexical check would let a typed link or a switcher-created `linked/x` read or write outside the vault through a symlinked folder. *Changed:* the last component may be a link. It is an entry of a real folder of the vault: commands act on that entry, and only reading and writing a note follow it, to a regular file (TREE-18).
   - [critic] The backend refuses to delete, trash or rename the vault root (the empty path), whatever the frontend asks.
   - [critic] Every file command carries the epoch of the vault it was issued for, and the backend rejects a mismatch (`stale_vault`). A retry, link rewrite or recovery that outlives a vault switch can then never write into the next vault [OT §2.2 (`vault_id` per command), WR epoch in OT §2.4].
   - [critic] Reveal and the LINK-01 opener run from Rust, on a path that passed these checks [OT §2.2].
@@ -1412,7 +1429,7 @@ Sources: OT §2.1, §5; MS §9.
 - Mobile apps.
 - Daily notes and templates (P2 at most); spaced repetition, citations, Zettelkasten IDs.
 - Replace across files; a persistent full-text index (see SRCH-03).
-- [critic] Following symlinks or junctions inside a vault (TREE-01 hides them). Obsidian users who link shared folders into a vault will not see those folders.
+- [critic] Following symlinks or junctions to folders inside a vault (TREE-01 hides them). Obsidian users who link shared folders into a vault will not see those folders. A link to a file is a file (TREE-18).
 
 ---
 
@@ -1444,8 +1461,8 @@ The current plan already matches most of this spec. Where it differs, this spec 
 | 20 | [critic] Delete order | Cancel the pending save, then trash (TECHNIQUES §11) | Flush, freeze, trash, and dispose the controller only on success | TREE-08 |
 | 21 | [critic] Missing parent folder on save | `note_write` refuses; `note_create` recreates any parent | Recreate folders inside the root only; a missing root returns `root_unavailable` | SAVE-04, SAVE-07, VAULT-06 |
 | 22 | [critic] Temp names | `.<name>.mn~` and `from.mn-tmp-<n>` | A temp name that never embeds the note's name; a case-rename temp that keeps the extension; stale temps cleaned | SAVE-04, PLAT-07 |
-| 23 | [critic] Path guard | Rejects `\` and `:` on every OS; lexical only | Per-platform component rules, no symlink components, the root protected, a vault epoch per command | PLAT-08 |
-| 24 | [critic] Symlinked write targets | Written through, non-atomically | Unreachable: never listed, and rejected by the path guard | PLAT-08, TREE-01 |
+| 23 | [critic] Path guard | Rejects `\` and `:` on every OS; lexical only | Per-platform component rules, no path through a symlink, the root protected, a vault epoch per command | PLAT-08 |
+| 24 | [critic] Symlinked write targets | Written through, non-atomically | *Changed:* written through atomically: the file the link leads to is replaced where it lies, and the link stays. A linked folder stays unreachable: never listed, and rejected by the path guard | PLAT-08, TREE-01, TREE-18 |
 | 25 | [critic] Self-write registry | `(mtime, Instant)` with a 2 s TTL | `(size, mtime, hash)` per path in an LRU; renames recorded too | SAVE-05 |
 | 26 | [critic] Watcher | Follows symlinks (notify's default); no row for rescan events | `with_follow_symlinks(false)`; `Flag::Rescan` → `any`; a re-check on window focus | TREE-12 |
 | 27 | [critic] Exit fallback timer | 1,500 ms | 4,000 ms, longer than the frontend's flush plus recovery-copy budget | SAVE-02 |
@@ -1462,7 +1479,7 @@ The current plan already matches most of this spec. Where it differs, this spec 
 
 **P0**
 - VAULT-01–04, VAULT-07, [critic] VAULT-06 (never recreating the root).
-- TREE-01–09, TREE-12, [critic] TREE-15, TREE-16, TREE-17.
+- TREE-01–09, TREE-12, [critic] TREE-15, TREE-16, TREE-17, TREE-18.
 - EDIT-01–05 (B, I, K), EDIT-09 (find), EDIT-10, EDIT-11, EDIT-13, EDIT-15.
 - LIVE-01–10, LIVE-14, LIVE-15, LIVE-16.
 - SAVE-01–08 ([critic] including read-only notes), [critic] SAVE-10 (recovery copies).
