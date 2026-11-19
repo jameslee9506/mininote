@@ -434,7 +434,7 @@ App.svelte
    │   └─ FileTree.svelte    flattened visible rows, virtualized, keyboard nav, copy and paste, DnD, new-folder draft row
    │       └─ TreeRow.svelte guide lines + kind icon + title; inline rename input, or the draft row's name input
    ├─ Resizer.svelte
-   └─ Main.svelte            top strip (drag region; sidebar toggle, always shown; nav, view and lock icons; UpdateButton while a release waits) + .doc-scroll
+   └─ Main.svelte            top strip (drag region; sidebar toggle, always shown; nav, copy, view and lock icons; UpdateButton while a release waits) + .doc-scroll
        ├─ InlineTitle.svelte editable file name → rename on commit
        ├─ Editor.svelte      the single EditorView (always mounted while a vault is open): notes, and code files read-only (§10.4)
        ├─ Reader.svelte      rendered HTML (reading view)
@@ -499,6 +499,10 @@ These are the defaults. Settings → Shortcuts rebinds every global command and 
   - The paste is the tree's when the clipboard's text is still `copied.text`, in the same vault. A copied file then goes to `vault.copyInto` with `vault.activeDir()` (§8.3); a copied folder, or a file that is no longer listed, does nothing. Either way the event is cancelled and stopped at the window, so CodeMirror never sees it and the path is not typed into the note that has the keyboard.
   - Any other paste passes on untouched, and ends `picked`: it is text for the note.
   - Mod-C and Mod-V do not end `picked` as other keys do, because their `keydown` comes before the event.
+- **Copying the open file's text** (`Main.svelte`, NAV-09). The strip's copy button is there for a note or a code file. It writes `editor.getText()`, the open controller's document, with `navigator.clipboard.writeText`, within the click, as the menu's Copy items do. The text therefore holds the edits not saved yet and LF line breaks, in the reading view too.
+  - The button cancels its `mousedown`, so the keyboard and the selection stay in the text.
+  - It is disabled while the document is empty: `editor.hasText()` reads the document's length, asked again whenever `editor.revision` grows.
+  - After a copy it shows a check for 1.5 s, kept by the copied path, so only while that file is still the open one. Nothing else reports the success; a refused write is the `errCopy` toast.
 
 ### 9.2 Links, anchors, navigation (LINK-01…05)
 

@@ -130,6 +130,8 @@ const en = {
   ariaReadingView: "Reading view",
   ariaEditingView: "Editing view",
   ariaReadOnly: "Read-only",
+  ariaCopyText: "Copy text",
+  ariaCopied: "Copied",
   ariaVault: "Vault",
   ariaFiles: "Files",
   ariaFind: "Find",

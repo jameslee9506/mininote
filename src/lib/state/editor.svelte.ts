@@ -376,6 +376,12 @@ class EditorStore {
     return n ? this.#stateOf(n).doc.toString() : "";
   };
 
+  /** True when the open note or code file holds any text. Costs nothing, so it may be asked on every change. */
+  hasText = (): boolean => {
+    const n = this.#current;
+    return n !== null && this.#stateOf(n).doc.length > 0;
+  };
+
   /**
    * Text of the main selection while the editor view shows the file (a note being
    * edited, or a code file), else "". Read from the editor state, which stays right

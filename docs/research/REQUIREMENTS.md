@@ -346,7 +346,7 @@ Sources: OB §3, ZT §3.3–3.4, MT §2.
 - **Behavior.**
   - A code file opens in the main area as a viewer: its text in the code font (SET-07) with syntax colors, line numbers in the margin, and long lines wrapped under their own indentation. It cannot be edited there, and nothing in the app ever writes it.
   - Code files are told by name: the source files of the common programming languages; markup, style, data and configuration formats; shell and build scripts; the text scene, resource and project files of game engines; and plain text (`txt`, `log`, `csv`, `LICENSE`…), which is shown without colors. A whole name (`Makefile`, `CMakeLists.txt`) or a name prefix (`Dockerfile.dev`) counts before the extension.
-  - The text can be selected and copied (Mod+A selects all of it), and Mod+F finds in it; there is no replace. The arrow, Page, Home and End keys scroll. The system's menu appears over selected text only (PLAT-13).
+  - The text can be selected and copied (Mod+A selects all of it; the top strip's copy icon copies the whole file, NAV-09), and Mod+F finds in it; there is no replace. The arrow, Page, Home and End keys scroll. The system's menu appears over selected text only (PLAT-13).
   - The inline title shows the full file name and renames it as for images (TREE-15). A faint lock in the top strip marks the view as read-only. Mod+E and the editing shortcuts do nothing. Back, forward and the session's last file include it, with its scroll position.
   - The view follows the file: a change on disk reloads it in place and keeps the scroll position, and a deleted file closes.
 - **Edge cases.**
@@ -956,7 +956,7 @@ Math and diagrams are out of scope.
 - **Behavior.**
   - Mod+B (also Mod+\) toggles the sidebar. Its width is adjustable between 180 and 480 px, and persisted.
   - The sidebar header holds faint icons: new note, new folder, collapse all. The search field sits below it, above the file tree, always visible (SRCH-01).
-  - The main area's top strip holds faint icons: show sidebar (when hidden), back and forward, reading view.
+  - The main area's top strip holds faint icons: show sidebar (when hidden), back and forward, reading view, and before it a copy icon for the open file's text (NAV-09).
   - On macOS both strips are window drag regions.
   - [critic] On macOS, with the sidebar hidden, the main strip reserves the traffic lights' area; otherwise they sit on top of the show-sidebar icon. In full screen, where the traffic lights are hidden, the reserved space collapses, leaving no dead click zone [OB §10].
 - **Sources.** DESIGN.md §4, MT §9, OB §10.
@@ -983,6 +983,20 @@ Split panes are out of scope; separate windows are VAULT-08.
   - no search results: nothing below the input. The switcher shows only its create row (NAV-01), and find shows faint input text (EDIT-09).
 - **Decision.** No requirement said what these states show, and each one invites a "No file open" or "No results" line otherwise.
 - **Sources.** Principle 4, DESIGN.md §1.
+
+#### NAV-09 · Copy the open file's text · P1
+- **Behavior.**
+  - While a note or a code file (TREE-17) is open, the top strip shows a copy icon left of the reading-view icon, or last in the strip for a code file, which has no such icon. A click puts the whole text of the file on the clipboard.
+  - The text is the file's as the editor holds it: a note's Markdown source, whichever view shows it, with the edits that are not saved yet.
+  - Once the text is on the clipboard, a check stands in for the icon for a moment. Nothing else answers: no toast, no text (principle 4). If the clipboard refuses, an error toast appears.
+  - The click moves neither the keyboard nor the selection: typing goes on where it was.
+- **Edge cases.**
+  - An empty file has nothing to copy: the icon is disabled, and the clipboard keeps what it holds.
+  - Images, unsupported files (TREE-15, TREE-16) and the blank state (NAV-08) have no copy icon.
+  - The text goes to the clipboard as the editor keeps it, with LF line breaks (EDIT-02), not with the file's own. The BOM is not part of it.
+  - The check belongs to the file that was copied: a file opened meanwhile shows the icon.
+- **Decision.** A whole file is copied to be pasted elsewhere, into a chat or another editor, and selecting all of it first costs the selection and the place in the text. The check is the one success the UI shows: a clipboard shows nothing of its own, and without it a click could not be told from one that missed.
+- **Sources.** DESIGN.md §4.
 
 ---
 
@@ -1525,7 +1539,7 @@ The current plan already matches most of this spec. Where it differs, this spec 
 - EDIT-05 (the other shortcuts), EDIT-06, EDIT-07, EDIT-08, EDIT-09 (replace), EDIT-12, EDIT-14, EDIT-16, EDIT-18.
 - LIVE-02 (highlight), LIVE-11, LIVE-12, LIVE-13.
 - SAVE-06 (merge), SAVE-09, SAVE-11. ([critic] SAVE-10 moved to P0.)
-- NAV-02 (Hangul extras), NAV-03, NAV-06.
+- NAV-02 (Hangul extras), NAV-03, NAV-06, NAV-09.
 - SRCH-01, SRCH-02.
 - LINK-04 (headings), LINK-07, LINK-08.
 - READ-08.

@@ -11,8 +11,12 @@
   import { editor } from "../state/editor.svelte";
   import { settings } from "../state/settings.svelte";
   import { ui } from "../state/ui.svelte";
+  import type { VaultPath } from "../types";
   import { isMac } from "../utils/platform";
   import { debounce } from "../utils/timing";
+
+  /** How long the copy button shows a check after a copy (NAV-09). */
+  const COPIED_MS = 1500;
 
   /** The document scroll container (ARCHITECTURE §9): title + editor/reader scroll together. */
   let docScrollEl: HTMLElement | null = $state(null);
@@ -40,6 +44,46 @@
       return "";
     }
   });
+
+  // ── Copying the text (NAV-09) ────────────────────────────────
+
+  /** A note or a code file: the files that are text, which the copy button copies. */
+  const isText = $derived(isNote || isCode);
+  /** There is text to copy. `revision` grows with every change of the document. */
+  const hasText = $derived.by(() => {
+    if (!isText) return false;
+    void editor.revision;
+    return editor.hasText();
+  });
+  /** The file whose text was copied a moment ago: while it is the open one, its button shows a check. */
+  let copiedPath: VaultPath | null = $state(null);
+  const copied = $derived(copiedPath !== null && copiedPath === editor.path);
+  /** Takes the check away `COPIED_MS` after the last call, so after the last copy. */
+  const uncheck = debounce(() => {
+    copiedPath = null;
+  }, COPIED_MS);
+  $effect(() => () => uncheck.cancel());
+
+  /**
+   * Puts the whole text of the open note or code file on the clipboard: the document as the
+   * editor holds it, so with the edits not saved yet and with LF line breaks, whichever view
+   * shows it. The write starts within the click: the webviews refuse one that no user gesture
+   * stands behind.
+   */
+  async function copyText(): Promise<void> {
+    const path = editor.path;
+    const text = editor.getText();
+    if (path === null || text === "") return;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (err) {
+      console.error(err);
+      ui.notify(t("errCopy"));
+      return;
+    }
+    copiedPath = path;
+    uncheck();
+  }
 
   // macOS: with the sidebar hidden, the traffic lights sit over this strip, so it keeps their
   // area free, except in full screen where they are gone (NAV-04).
@@ -106,6 +150,19 @@
       </span>
     {/if}
     <UpdateButton />
+    {#if isText}
+      <!-- mousedown is cancelled so the keyboard and the selection stay where they are, in the text. -->
+      <button
+        type="button"
+        class="icon-btn"
+        aria-label={copied ? t("ariaCopied") : t("ariaCopyText")}
+        disabled={!hasText}
+        onmousedown={(e) => e.preventDefault()}
+        onclick={() => void copyText()}
+      >
+        <Icon name={copied ? "check" : "copy"} />
+      </button>
+    {/if}
     {#if isNote}
       <button
         type="button"
