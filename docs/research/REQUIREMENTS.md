@@ -444,14 +444,17 @@ Live-preview rendering is specified separately, in §4 (LIVE).
 - **Behavior.**
   - In a list item, Tab indents the item *and its whole subtree* under the previous sibling. On a first item it does nothing.
   - Shift+Tab outdents the subtree.
+  - Both number an ordered item for its new place, so a nested list starts at 1 again. The moved item gets 1 where it starts a list, and otherwise one more than the item before it. The items after its old place and after its new one go on counting from there, as far as they counted up before (as after Enter, EDIT-03). The move and its numbers are one undo step.
   - Elsewhere, Tab inserts a tab character at the caret, or indents the selected lines. Shift+Tab outdents.
   - An open completion takes Tab first.
   - The indent unit is a tab character displayed 4 columns wide.
 - **Edge cases.**
   - Files indented with spaces keep their spaces on lines the user does not touch.
   - For list structure, a tab always counts as 4 columns.
+  - A list that does not count up (`1.`, `1.`, `1.`) keeps its numbers. So do the items below a place where the move splits a list, as a bullet moved out between two ordered items does.
+  - Renumbering never changes what a line belongs to. A number that gains or loses a digit moves the text column of its item, and a line aligned under `9.` is outside `10.` (READ-01's dialect). Where that would happen, the numbers stay as they were.
   - Tab never moves focus out of the editor. [critic] One exception stays: CodeMirror's escape hatch, in which Tab within 2 s after Esc moves focus out (verified in `@codemirror/view` 6.43). It is the only keyboard way out of the editor, so app-level Esc handling must not call `preventDefault()` when it has nothing to close. CodeMirror's `Ctrl-m` / `Shift-Alt-m` binding (`toggleTabFocusMode`) is removed, because it turns Tab into focus movement with no visible state.
-- **Decision.** Use a tab character (OB's default) rather than 2 or 4 spaces. It is always deep enough for CommonMark nesting under `1. `, and it matches Obsidian vaults.
+- **Decision.** Use a tab character (OB's default) rather than 2 or 4 spaces. It is always deep enough for CommonMark nesting under `1. `, and it matches Obsidian vaults. Renumbering was a later feature (EDIT-17) and joined the command at the owner's request: an item that kept its number under another one read as a mistake, and it was not even a list in the reading view, where only `1.` starts a list right below a line of text (CommonMark).
 - **Sources.** OB §4.5, CM §12, OT §4.2, MT §3.5, ZT §4.3.
 
 #### EDIT-05 · Formatting shortcuts · P0 (B, I, K) / P1 (the rest)
@@ -578,7 +581,6 @@ Live-preview rendering is specified separately, in §4 (LIVE).
 #### EDIT-17 · Later editing features · P2
 - Pasting HTML as Markdown.
 - Folding headings and lists.
-- Renumbering ordered lists after indent or outdent.
 - Opening legacy EUC-KR/CP949 files read-only.
 - Wrapping a selection in Markdown symbols when one is typed.
 

@@ -140,7 +140,7 @@ describe("list indentation", () => {
     expect(run(indentListOrInsertTab, "> - a\n> - b|")).toBe("> - a\n> \t- b|");
     expect(run(indentListOrInsertTab, "foo|")).toBe("foo\t|");
     // "100. " puts the text at column 5, one past a tab.
-    expect(run(indentListOrInsertTab, "100. a\n101. b|\n     c")).toBe("100. a\n\t 101. b|\n\t      c");
+    expect(run(indentListOrInsertTab, "100. a\n101. b|\n     c")).toBe("100. a\n\t 1. b|\n\t      c");
   });
 
   it("outdents an item with its subtree to the parent's column", () => {
@@ -148,6 +148,41 @@ describe("list indentation", () => {
     expect(run(outdentListOrLines, "- a\n  - b|\n    - c")).toBe("- a\n- b|\n  - c");
     expect(run(outdentListOrLines, "- a|")).toBe("- a|");
     expect(run(outdentListOrLines, "\tfoo|")).toBe("foo|");
+  });
+
+  it("numbers an indented item for its new list, and closes the gap it leaves", () => {
+    expect(run(indentListOrInsertTab, "1. a\n2. b\n3. c|\n4. d")).toBe("1. a\n2. b\n\t1. c|\n3. d");
+    expect(run(indentListOrInsertTab, "1. a\n2. b\n3. |")).toBe("1. a\n2. b\n\t1. |");
+    expect(run(indentListOrInsertTab, "1. a\n2. b\n3. |c\n4. d|\n5. e")).toBe("1. a\n2. b\n\t1. |c\n\t2. d|\n3. e");
+    // It joins the list that is already there, after its last item.
+    expect(run(indentListOrInsertTab, "1. a\n\t1. x\n2. b|\n3. c")).toBe("1. a\n\t1. x\n\t2. b|\n2. c");
+    expect(run(indentListOrInsertTab, "1. a\n\t- x\n2. b|")).toBe("1. a\n\t- x\n\t1. b|");
+    expect(run(indentListOrInsertTab, "> 1. a\n> 2. b|\n> 3. c")).toBe("> 1. a\n> \t 1. b|\n> 2. c");
+    // A list that does not count up is left as it is.
+    expect(run(indentListOrInsertTab, "1. a\n1. b|\n1. c")).toBe("1. a\n\t1. b|\n1. c");
+  });
+
+  it("numbers an outdented item after its parent, and what followed it from 1", () => {
+    expect(run(outdentListOrLines, "1. a\n\t1. b\n\t2. c|\n\t3. d\n\t4. e\n2. f\n3. g")).toBe(
+      "1. a\n\t1. b\n2. c|\n\t1. d\n\t2. e\n3. f\n4. g",
+    );
+    expect(run(outdentListOrLines, "1. a\n\t1. b|")).toBe("1. a\n2. b|");
+    // What followed it counts on from the items it already holds.
+    expect(run(outdentListOrLines, "1. a\n\t1. b|\n\t\t1. x\n\t2. c")).toBe("1. a\n2. b|\n\t1. x\n\t2. c");
+    expect(run(outdentListOrLines, "> 1. a\n> \t 1. b|\n> 2. c")).toBe("> 1. a\n> 2. b|\n> 3. c");
+    // Out of a bullet list it starts a list of its own.
+    expect(run(outdentListOrLines, "- a\n\t1. b\n\t2. c|\n\t3. d")).toBe("- a\n\t1. b\n1. c|\n\t1. d");
+    // A bullet moved out splits the list: the numbers below it are not touched.
+    expect(run(outdentListOrLines, "8. a\n\t- b|\n9. c")).toBe("8. a\n- b|\n9. c");
+  });
+
+  it("keeps the numbers where a wider one would push a line out of its item", () => {
+    const tail = "\n2. b\n3. c\n4. d\n5. e\n6. f\n7. g\n8. h\n9. i";
+    const renumbered = "\n3. b\n4. c\n5. d\n6. e\n7. f\n8. g\n9. h\n10. i";
+    expect(run(outdentListOrLines, `1. a\n\t1. x|${tail}`)).toBe(`1. a\n2. x|${renumbered}`);
+    expect(run(outdentListOrLines, `1. a\n\t1. x|${tail}\n\t- j`)).toBe(`1. a\n2. x|${renumbered}\n\t- j`);
+    // "   j" is aligned under "9. i": under "10. i" it would be a paragraph below the list.
+    expect(run(outdentListOrLines, `1. a\n\t1. x|${tail}\n   j`)).toBe(`1. a\n1. x|${tail}\n   j`);
   });
 });
 

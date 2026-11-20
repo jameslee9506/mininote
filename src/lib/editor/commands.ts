@@ -5,7 +5,7 @@
  */
 import { completionStatus } from "@codemirror/autocomplete";
 import { EditorSelection, Prec, countColumn } from "@codemirror/state";
-import type { ChangeSpec, EditorState, Extension, Line, StateCommand, Transaction } from "@codemirror/state";
+import type { ChangeDesc, ChangeSet, ChangeSpec, EditorState, Extension, Line, StateCommand, Transaction } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import type { Command, KeyBinding } from "@codemirror/view";
 import { ensureSyntaxTree, forceParsing, syntaxTree, syntaxTreeAvailable } from "@codemirror/language";
@@ -454,6 +454,11 @@ function listMark(item: SyntaxNode): SyntaxNode | null {
   return mark && mark.name === "ListMark" ? mark : null;
 }
 
+/** The digits of an ordered item's marker ("12." → "12"), or null for a bullet. */
+function markDigits(state: EditorState, mark: SyntaxNode): string | null {
+  return /^\d+/.exec(state.sliceDoc(mark.from, mark.to))?.[0] ?? null;
+}
+
 /**
  * Column where a list item's text starts (CommonMark): after the marker and its
  * 1–4 columns of spacing, or one past the marker when the spacing is wider (indented
@@ -511,11 +516,132 @@ function nestPadding(state: EditorState, item: SyntaxNode, under: SyntaxNode, de
   return Math.max(0, contentColumn(state, under) - markerAfterTab);
 }
 
+/** The top-level block that holds `node`. */
+function topBlock(node: SyntaxNode): SyntaxNode {
+  let top = node;
+  while (top.parent && !top.parent.type.isTop) top = top.parent;
+  return top;
+}
+
+/** The nodes of `tree` over [from, to] as text, each placed where `map` puts it: equal for two trees of one shape. */
+function shapeOf(tree: Tree, from: number, to: number, map: ChangeDesc | null): string {
+  let out = "";
+  tree.iterate({
+    from,
+    to,
+    enter: (n) => {
+      out += `${n.name} ${map ? map.mapPos(n.from, 1) : n.from} ${map ? map.mapPos(n.to, -1) : n.to},`;
+    },
+  });
+  return out;
+}
+
+/**
+ * `shift` (the indentation a Tab or Shift-Tab changes) together with the numbers of the
+ * ordered items it moves (EDIT-04), or null when no number changes. A nested list starts
+ * at 1 again: an item that kept its number under another would not even be a list in the
+ * reading view, where only "1." may follow a line of text.
+ *
+ * The lists are read from the document as `shift` leaves it, so every item is numbered
+ * for the list it really lands in:
+ * - a moved item gets 1 where it starts a list, else one more than the item before it;
+ * - the items after its old place and after its new one go on counting from there, as
+ *   far as they counted up before (like Enter, EDIT-03): "1. 1. 1." stays as it is.
+ *
+ * A number that gains or loses a digit moves the text column of its item. Where that
+ * would change what a line belongs to (a line aligned under "9." is outside "10."), the
+ * numbers stay as they were.
+ */
+function renumberShifted(state: EditorState, shift: ChangeSet, moved: readonly SyntaxNode[]): ChangeSet | null {
+  /** Where the markers of the moved items are after `shift`. */
+  const arrived = new Set<number>();
+  /** By the marker of the item that followed a moved one (after `shift`): the number the moved one had. */
+  const followed = new Map<number, number>();
+  let upto = 0;
+  for (const item of moved) {
+    const mark = listMark(item);
+    const digits = mark && markDigits(state, mark);
+    if (!mark || digits === null) continue;
+    arrived.add(shift.mapPos(mark.from, 1));
+    const next = nextItem(item);
+    const nextMark = next && listMark(next);
+    if (nextMark) followed.set(shift.mapPos(nextMark.from, 1), Number(digits));
+    upto = Math.max(upto, topBlock(item).to);
+  }
+  // Only ordered items carry a number: moving bullets costs nothing more.
+  if (arrived.size === 0) return null;
+  for (const pos of arrived) followed.delete(pos);
+
+  const mid = state.update({ changes: shift }).state;
+  const tree = treeUpTo(mid, shift.mapPos(upto));
+  const lists = new Map<number, SyntaxNode>();
+  let from = mid.doc.length;
+  let to = 0;
+  for (const pos of [...arrived, ...followed.keys()]) {
+    const mark = tree.resolveInner(pos, 1);
+    const list = mark.name === "ListMark" && mark.from === pos ? mark.parent?.parent : null;
+    // The marker no longer starts an item: nothing here is sure enough to renumber.
+    if (!list) return null;
+    lists.set(list.from, list);
+    const top = topBlock(list);
+    from = Math.min(from, top.from);
+    to = Math.max(to, top.to);
+  }
+
+  const changes: ChangeSpec[] = [];
+  let resized = false;
+  for (const list of lists.values()) {
+    /** The number the item before will have (0 before the first one). */
+    let prev = 0;
+    /** The number the last item that stayed had: a list counts up from 0. */
+    let base = 0;
+    /** The number an item that stayed must have had to go on counting, or null once the count has stopped. */
+    let expect: number | null = null;
+    for (let item = list.firstChild; item; item = item.nextSibling) {
+      // Lines of a list inside a quote put QuoteMark nodes between the items.
+      const mark = item.name === "ListItem" ? listMark(item) : null;
+      if (!mark) continue;
+      const digits = markDigits(mid, mark);
+      if (digits === null) break;
+      const was = Number(digits);
+      let now = was;
+      if (arrived.has(mark.from)) {
+        now = prev + 1;
+        expect = base + 1;
+      } else {
+        const gone = followed.get(mark.from);
+        // What followed a moved item counts on from its new neighbour, and is 1 where it now starts a list.
+        if (gone !== undefined) expect = prev === 0 ? was : gone + 1;
+        if (was === expect) now = prev + 1;
+        expect = now === was ? null : was + 1;
+        base = was;
+      }
+      if (now !== was) {
+        const insert = String(now);
+        changes.push({ from: mark.from, to: mark.from + digits.length, insert });
+        if (insert.length !== digits.length) resized = true;
+      }
+      prev = now;
+    }
+  }
+  if (changes.length === 0) return null;
+
+  const numbers = mid.changes(changes);
+  const all = shift.compose(numbers);
+  if (resized) {
+    const end = numbers.mapPos(to);
+    const after = treeUpTo(state.update({ changes: all }).state, end);
+    if (shapeOf(tree, from, to, numbers) !== shapeOf(after, numbers.mapPos(from, 1), end, null)) return null;
+  }
+  return all;
+}
+
 /**
  * Moves the list items under the selection, each with its whole subtree, one
  * level in (a tab, only under a previous sibling, padded with spaces when the
- * sibling's text starts further right) or out (to the parent's column). Returns
- * false when no selected line belongs to a list item.
+ * sibling's text starts further right) or out (to the parent's column), and
+ * numbers the ordered ones for their new place (`renumberShifted`), all in one
+ * change. Returns false when no selected line belongs to a list item.
  */
 function shiftListItems(state: EditorState, dispatch: (tr: Transaction) => void, dir: 1 | -1): boolean {
   const lines = selectedLines(state);
@@ -529,6 +655,7 @@ function shiftListItems(state: EditorState, dispatch: (tr: Transaction) => void,
   const roots = items.filter((it) => !items.some((o) => o !== it && o.from <= it.from && it.to <= o.to));
   const { doc } = state;
   const changes: ChangeSpec[] = [];
+  const moved: SyntaxNode[] = [];
   for (const item of roots) {
     const depth = quoteDepth(item);
     const first = doc.lineAt(item.from).number;
@@ -549,6 +676,7 @@ function shiftListItems(state: EditorState, dispatch: (tr: Transaction) => void,
       const line = doc.line(n);
       if (line.text.trim() === "") continue;
       const at = quotePrefixLength(line.text, depth);
+      const count = changes.length;
       if (dir > 0) {
         // The padding goes right before the text, where a following tab cannot swallow it.
         const textAt = at + /^[ \t]*/.exec(line.text.slice(at))![0].length;
@@ -561,10 +689,20 @@ function shiftListItems(state: EditorState, dispatch: (tr: Transaction) => void,
         const edit = outdentWhitespace(line.text, at, delta);
         if (edit) changes.push({ from: line.from + edit.from, to: line.from + edit.to, insert: edit.insert });
       }
+      // The item moved when the line of its marker did.
+      if (n === first && changes.length > count) moved.push(item);
     }
   }
-  if (changes.length > 0)
-    dispatch(state.update({ changes, scrollIntoView: true, userEvent: dir > 0 ? "input.indent" : "delete.dedent" }));
+  if (changes.length > 0) {
+    const shift = state.changes(changes);
+    dispatch(
+      state.update({
+        changes: renumberShifted(state, shift, moved) ?? shift,
+        scrollIntoView: true,
+        userEvent: dir > 0 ? "input.indent" : "delete.dedent",
+      }),
+    );
+  }
   return true;
 }
 
@@ -598,11 +736,6 @@ function markupContainer(tree: Tree, pos: number): SyntaxNode | null {
 function markupContext(tree: Tree, pos: number): "item" | "quote" | null {
   const node = markupContainer(tree, pos);
   return node === null ? null : node.name === "ListItem" ? "item" : "quote";
-}
-
-/** The digits of an ordered item's marker ("12." → "12"), or null for a bullet. */
-function markDigits(state: EditorState, mark: SyntaxNode): string | null {
-  return /^\d+/.exec(state.sliceDoc(mark.from, mark.to))?.[0] ?? null;
 }
 
 /**
