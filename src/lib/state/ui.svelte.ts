@@ -22,6 +22,8 @@ export interface MenuState {
   x: number;
   y: number;
   items: MenuEntry[];
+  /** The element whose click opened the menu, which another click on it closes (ContextMenu leaves it alone). */
+  anchor?: HTMLElement;
 }
 
 export interface ConfirmState {
@@ -67,8 +69,8 @@ class UiStore {
     this.modal = null;
   };
 
-  showMenu = (x: number, y: number, items: MenuEntry[]): void => {
-    this.menu = { x, y, items };
+  showMenu = (x: number, y: number, items: MenuEntry[], anchor?: HTMLElement): void => {
+    this.menu = { x, y, items, anchor };
   };
 
   hideMenu = (): void => {

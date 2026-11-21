@@ -73,8 +73,13 @@
    * Recent vaults (the open one skipped; same-named ones by full path), then "Open
    * another folder" and "New window". Opening goes through appCommands, like the
    * Welcome screen; a vault open in another window comes forward there (VAULT-07).
+   * A click while this menu is open closes it.
    */
-  function openVaultMenu(e: MouseEvent & { currentTarget: HTMLButtonElement }): void {
+  function toggleVaultMenu(e: MouseEvent & { currentTarget: HTMLButtonElement }): void {
+    if (ui.menu?.anchor === e.currentTarget) {
+      ui.hideMenu();
+      return;
+    }
     const roots = settings.values.recentVaults.filter((r) => r !== vault.info?.root);
     const names = roots.map(baseName);
     const items: MenuEntry[] = roots.map((root, i) => ({
@@ -88,7 +93,7 @@
 
     // Anchored at the button's top edge: near the window bottom, the menu opens upward.
     const rect = e.currentTarget.getBoundingClientRect();
-    ui.showMenu(rect.left, rect.top, items);
+    ui.showMenu(rect.left, rect.top, items, e.currentTarget);
   }
 </script>
 
@@ -119,7 +124,7 @@
   </div>
 
   <footer class="footer">
-    <button type="button" class="vault" aria-haspopup="menu" onclick={openVaultMenu}>{vaultName}</button>
+    <button type="button" class="vault" aria-haspopup="menu" onclick={toggleVaultMenu}>{vaultName}</button>
     <button type="button" class="icon-btn" aria-label={t("ariaSettings")} onclick={() => ui.openModal("settings")}>
       <Icon name="settings" />
     </button>

@@ -53,6 +53,9 @@
   const enabled = (entry: MenuEntry | undefined): entry is Item =>
     entry !== undefined && !("separator" in entry) && !("run" in entry && entry.disabled === true);
 
+  /** The node lies in the menu's anchor (`ui.showMenu`), whose own click closes the menu. */
+  const onAnchor = (node: EventTarget | null): boolean => node instanceof Node && menu?.anchor?.contains(node) === true;
+
   /** The enabled item after `from` in `list` (before it for -1), wrapping around; `from` when there is none. */
   function next(list: readonly MenuEntry[], from: number, dir: 1 | -1): number {
     const n = list.length;
@@ -234,8 +237,9 @@
         ui.hideMenu();
         break;
       default:
-        // Any other key dismisses the menu and goes on to where focus is.
-        if (!MODIFIER_KEYS.has(e.key)) ui.hideMenu();
+        // Any other key dismisses the menu and goes on to where focus is. Space on the
+        // anchor is left to the click it makes there, which closes the menu.
+        if (!MODIFIER_KEYS.has(e.key) && !(e.key === " " && onAnchor(document.activeElement))) ui.hideMenu();
         return;
     }
     e.preventDefault();
@@ -246,7 +250,8 @@
     const outside = (e: Event): boolean =>
       !(e.target instanceof Node && (el?.contains(e.target) || subEl?.contains(e.target)));
     const onMouseDown = (e: MouseEvent): void => {
-      if (outside(e)) ui.hideMenu();
+      // A press on the anchor is left to its click, which closes the menu instead of opening it again.
+      if (outside(e) && !onAnchor(e.target)) ui.hideMenu();
     };
     const onScroll = (e: Event): void => {
       if (outside(e)) ui.hideMenu();
