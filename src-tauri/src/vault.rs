@@ -493,7 +493,10 @@ fn canonical_root(path: &str) -> AppResult<PathBuf> {
 pub async fn vault_open(window: WebviewWindow, path: String) -> AppResult<VaultInfo> {
     let app = window.app_handle().clone();
     let label = window.label().to_owned();
-    let info = blocking(&window, move |state| open(&app, &label, state, &path)).await?;
+    let opened = blocking(&window, move |state| open(&app, &label, state, &path)).await;
+    // Only now: until the folder is this window's, a request for it finds the plan (§6.9).
+    windows::settled(window.app_handle(), window.label());
+    let info = opened?;
     windows::remember_vaults(window.app_handle());
     Ok(info)
 }
@@ -510,6 +513,7 @@ pub async fn vault_close(window: WebviewWindow) -> AppResult<()> {
         Ok(())
     })
     .await?;
+    windows::settled(window.app_handle(), window.label());
     windows::remember_vaults(window.app_handle());
     Ok(())
 }

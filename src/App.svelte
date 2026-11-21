@@ -14,10 +14,10 @@
   import ContextMenu from "./lib/components/ContextMenu.svelte";
   import ConfirmDialog from "./lib/components/ConfirmDialog.svelte";
   import Toasts from "./lib/components/Toasts.svelte";
-  import { discardNewNote, flushBeforeExit, openVault, quitApp, registerAppCommands } from "./lib/appCommands";
+  import { discardNewNote, flushBeforeExit, openRequest, openVault, quitApp, registerAppCommands } from "./lib/appCommands";
   import { uiLanguage } from "./lib/i18n";
-  import { windowStartup } from "./lib/ipc/commands";
-  import { onFlushRequest } from "./lib/ipc/events";
+  import { windowShow, windowStartup } from "./lib/ipc/commands";
+  import { onFlushRequest, onWindowOpen } from "./lib/ipc/events";
   import { commands } from "./lib/state/commands.svelte";
   import { editor } from "./lib/state/editor.svelte";
   import { settings } from "./lib/state/settings.svelte";
@@ -48,6 +48,8 @@
   /** Startup finished (or the fallback fired): only then may the Welcome screen appear. */
   let booted = $state(false);
   let shown = false;
+  /** Startup as a whole: a request from the command line waits for it (PLAT-14). */
+  let started: Promise<void> = Promise.resolve();
 
   // ── Window title (PLAT-02) ───────────────────────────────────────────────
 
@@ -86,32 +88,46 @@
     shown = true;
     await tick();
     await Promise.race([nextFrame(), new Promise<void>((r) => setTimeout(r, FRAME_WAIT_MS))]);
-    await getCurrentWindow()
-      .show()
-      .catch((e) => console.error("show window failed", e));
+    // The backend shows the window: it knows whether the command line asked for it, and then
+    // brings it forward too (PLAT-14).
+    try {
+      await windowShow();
+    } catch (e) {
+      console.error("show window failed", e);
+      await getCurrentWindow()
+        .show()
+        .catch(() => {});
+    }
   }
 
   /**
    * settings → reopen this window's vault → show (PLAT-03). The backend says which folder this
-   * window had when the app last ran (VAULT-07); a new window has none and shows Welcome, and the
+   * window had when the app last ran (VAULT-07), or which one the command line asked it for, with
+   * the file to show in it (PLAT-14); a new window has none and shows Welcome, and the
    * first window of a run with no saved window list reopens the last vault. An unreachable folder
    * fails silently inside vault.open and stays on the recent list, dimmed (VAULT-02).
+   *
+   * `listening` is the `window:open` listener. The backend is asked only once it listens, so a
+   * request made meanwhile is either in the answer or heard.
    */
-  async function boot(): Promise<void> {
+  async function boot(listening: Promise<unknown>): Promise<void> {
     const fallback = setTimeout(() => void reveal(), SHOW_FALLBACK_MS);
     try {
       const [startup] = await Promise.all([
-        windowStartup().catch((e) => {
-          console.error("window startup failed", e);
-          return null;
-        }),
+        listening
+          .catch(() => {})
+          .then(() => windowStartup())
+          .catch((e) => {
+            console.error("window startup failed", e);
+            return null;
+          }),
         settings.load(),
       ]);
       // PLAT-12: a narrow window starts with the sidebar hidden; checked here, not when it mounts.
       checkNarrowStartup();
       const restoreLast = startup === null || startup.last;
       const target = startup?.vault ?? (restoreLast ? settings.values.lastVault : null);
-      if (target) await openVault(target, { startup: true });
+      if (target) await openVault(target, { startup: true, file: startup?.file });
     } catch (e) {
       console.error("startup failed", e);
     } finally {
@@ -120,8 +136,24 @@
     }
   }
 
+  /**
+   * The command line asked this window for a folder, and maybe a file in it, while the app was
+   * running (`window:open`, PLAT-14). The plan waits in the backend and is taken once startup is
+   * over: startup takes what was planned before it, and no vault opens before the settings load.
+   */
+  async function followRequest(): Promise<void> {
+    await started;
+    try {
+      const request = await windowStartup();
+      if (request.vault !== null) await openRequest(request.vault, request.file);
+    } catch (e) {
+      console.error("open request failed", e);
+    }
+  }
+
   onMount(() => {
     const win = getCurrentWindow();
+    const requests = onWindowOpen(() => void followRequest());
     const unlisten: Promise<UnlistenFn>[] = [
       // The window must always close: flushBeforeExit never rejects and is time-bounded (§8.4).
       win.onCloseRequested(async () => {
@@ -132,12 +164,13 @@
         }
       }),
       onFlushRequest(() => void quitApp()),
+      requests,
     ];
     // Commands carry no settings dependency; registering first keeps reload keys blocked from the start.
     registerAppCommands();
     // The update check (ARCHITECTURE §6.7) runs beside startup; an install flushes like a quit.
     const stopUpdater = updater.start(flushBeforeExit);
-    void boot();
+    started = boot(requests).catch((e) => console.error("startup failed", e));
     return () => {
       stopUpdater();
       for (const p of unlisten) p.then((off) => off()).catch(() => {});

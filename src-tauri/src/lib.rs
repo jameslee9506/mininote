@@ -1,6 +1,7 @@
 //! mininote's Tauri backend: plugins, commands, the macOS menu, the windows and the
 //! exit-flush protocol (ARCHITECTURE §6.6).
 
+mod cli;
 mod error;
 mod fs_ops;
 mod search;
@@ -45,11 +46,14 @@ struct ExitState {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // The folders and files of the command line (PLAT-14). A second launch reports
+    // its own here, hands the line to the first launch below, and exits.
+    let asked = cli::launch();
     let builder = tauri::Builder::default();
     #[cfg(desktop)]
     let builder = builder
-        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            windows::focus_last(app)
+        .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+            cli::relaunched(app, args, cwd)
         }))
         // App updates (ARCHITECTURE §6.7): the frontend checks, downloads, installs and
         // restarts; release builds get the endpoint and public key from a config overlay.
@@ -73,10 +77,16 @@ pub fn run() {
         .manage(Vaults::default())
         .manage(Windows::default())
         .manage(ExitState::default())
-        .setup(|app| {
+        .setup(move |app| {
             // The first window exists already (tauri.conf.json); the others of the last
             // run come back now (VAULT-07).
             windows::restore(app.handle());
+            // Then what the command line asked for, in front of them (§6.9). A restart
+            // repeats the line of the run before it, which has shown that already.
+            let restarted = cli::take_restart(app.handle());
+            if !restarted && !asked.is_empty() {
+                windows::open(app.handle(), asked, true);
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -103,6 +113,7 @@ pub fn run() {
             store::settings_update,
             windows::window_new,
             windows::window_startup,
+            windows::window_show,
             app_quit,
             app_exit_ready,
         ]);
@@ -126,6 +137,9 @@ pub fn run() {
             // A restart (the updater, once the new version is installed) cannot be held
             // back: Tauri ignores `prevent_exit` for it, so the frontend flushes before
             // asking for it (§6.7). Every other exit waits for the flush.
+            if code == Some(tauri::RESTART_EXIT_CODE) {
+                cli::mark_restart(app);
+            }
             if code != Some(tauri::RESTART_EXIT_CODE) && should_flush_first(app) {
                 api.prevent_exit();
                 request_flush(app, code.unwrap_or(0));

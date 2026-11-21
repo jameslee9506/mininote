@@ -217,10 +217,15 @@ export interface SettingsChangedPayload extends SettingsPatch {
   origin: string;
 }
 
-/** What a window opens when its page starts (`window_startup`, VAULT-07). */
+/**
+ * What a window opens (`window_startup`): when its page starts (VAULT-07), and again whenever
+ * `window:open` says the command line asked it for something (PLAT-14).
+ */
 export interface WindowStartup {
-  /** The folder to open as its vault: the one this window had open when the app last ran. */
+  /** The folder to open as its vault: the one this window had open when the app last ran, or the one asked for. */
   vault: string | null;
+  /** The file to show in that folder: its name there, in the spelling the command line gave it. */
+  file: string | null;
   /** No window list was saved yet (an older version ran last): reopen `Settings.lastVault`. */
   last: boolean;
 }

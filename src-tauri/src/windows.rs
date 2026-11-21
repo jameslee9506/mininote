@@ -1,6 +1,7 @@
-//! The app's windows (ARCHITECTURE §6.6, VAULT-07): opening another one, the
-//! folder each one reopens at the next launch, and the window a second launch
-//! brings forward. Each window has a vault of its own (`vault.rs`).
+//! The app's windows (ARCHITECTURE §6.6, §6.9, VAULT-07): opening another one, the
+//! folder each one reopens at the next launch, the window a second launch brings
+//! forward, and the window that shows what the command line asked for. Each window
+//! has a vault of its own (`vault.rs`).
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
@@ -10,13 +11,17 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 use tauri::{
-    AppHandle, Manager, PhysicalPosition, WebviewWindow, WebviewWindowBuilder, WindowEvent,
+    AppHandle, Emitter, EventTarget, Manager, PhysicalPosition, WebviewWindow,
+    WebviewWindowBuilder, WindowEvent,
 };
 
+use crate::cli::Target;
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::fs_ops;
 use crate::vault::{lock, Vaults};
 
+/// Event name; mirrors `EVENT_WINDOW_OPEN` in src/lib/ipc/events.ts.
+const EVENT_WINDOW_OPEN: &str = "window:open";
 /// The window the app starts with. Its entry in tauri.conf.json is the template of
 /// every window.
 pub const MAIN_WINDOW: &str = "main";
@@ -29,11 +34,14 @@ const MAX_RESTORED: usize = 16;
 /// How far a new window sits down and to the right of the one it came from (logical px).
 const CASCADE_STEP: f64 = 28.0;
 
-/// What a window opens when its page starts (`WindowStartup` in src/lib/types.ts).
+/// What a window opens: when its page starts, and again whenever `window:open`
+/// tells it to ask (`WindowStartup` in src/lib/types.ts).
 #[derive(Debug, Clone, Default, Serialize)]
 pub struct WindowStartup {
     /// The folder to open as its vault.
     pub vault: Option<String>,
+    /// The file to show in that folder, by the name the command line gave it (PLAT-14).
+    pub file: Option<String>,
     /// No window list was saved yet (an older version ran last): the window reopens
     /// the settings' last vault instead.
     pub last: bool,
@@ -55,8 +63,8 @@ struct SavedWindows {
 
 /// Window bookkeeping, managed by Tauri.
 pub struct Windows {
-    /// What each window opens when its page starts, until it asks (`window_startup`).
-    startup: Mutex<HashMap<String, WindowStartup>>,
+    /// What the windows are about to show, and which of them come forward.
+    plans: Mutex<Plans>,
     /// The number of the next `w<n>` label.
     next: AtomicU64,
     /// The window focused last.
@@ -70,7 +78,7 @@ pub struct Windows {
 impl Default for Windows {
     fn default() -> Self {
         Self {
-            startup: Mutex::new(HashMap::new()),
+            plans: Mutex::new(Plans::default()),
             next: AtomicU64::new(2),
             focused: Mutex::new(None),
             exiting: AtomicBool::new(false),
@@ -82,6 +90,72 @@ impl Default for Windows {
 impl Windows {
     fn allocate(&self) -> String {
         format!("{LABEL_PREFIX}{}", self.next.fetch_add(1, Ordering::SeqCst))
+    }
+}
+
+/// What the windows are about to show, and which of them come forward (§6.9). All
+/// under one lock, so that a request from the command line finds its window in one
+/// step. Lock order: this, then the `Vaults` map.
+#[derive(Default)]
+struct Plans {
+    /// What each window opens next, until its page asks (`window_startup`).
+    startup: HashMap<String, WindowStartup>,
+    /// The folder a window was told to open, from when its page asked until its next
+    /// `vault_open` or `vault_close`: the folder is not its vault yet.
+    heading: HashMap<String, String>,
+    /// The windows their page has shown (`window_show`).
+    shown: HashSet<String>,
+    /// The windows the command line asked for before they were shown: each comes
+    /// forward when it is.
+    front: HashSet<String>,
+    /// The window the command line asked for last, kept in front of the windows that
+    /// are shown after it.
+    rise: Option<Rise>,
+}
+
+struct Rise {
+    front: String,
+    /// The windows still to be shown: at launch every one, later the others asked for.
+    pending: HashSet<String>,
+}
+
+impl Plans {
+    /// The window that is about to open the folder `vault`.
+    fn heading_to(&self, vault: &str) -> Option<String> {
+        let planned = self
+            .startup
+            .iter()
+            .find(|(_, startup)| startup.vault.as_deref() == Some(vault))
+            .map(|(label, _)| label.clone());
+        planned.or_else(|| {
+            self.heading
+                .iter()
+                .find(|(_, folder)| folder.as_str() == vault)
+                .map(|(label, _)| label.clone())
+        })
+    }
+
+    /// Whether window `label` is not about to open a folder.
+    fn is_free(&self, label: &str) -> bool {
+        !self.heading.contains_key(label)
+            && !self
+                .startup
+                .get(label)
+                .is_some_and(|startup| startup.vault.is_some())
+    }
+
+    /// Window `label` is gone, or was never built.
+    fn forget(&mut self, label: &str) {
+        self.startup.remove(label);
+        self.heading.remove(label);
+        self.shown.remove(label);
+        self.front.remove(label);
+        if let Some(rise) = &mut self.rise {
+            rise.pending.remove(label);
+            if rise.front == label || rise.pending.is_empty() {
+                self.rise = None;
+            }
+        }
     }
 }
 
@@ -108,11 +182,11 @@ fn label_order(label: &str) -> u64 {
 pub fn restore(app: &AppHandle) {
     let windows = app.state::<Windows>();
     let Some(list) = load(app) else {
-        lock(&windows.startup).insert(
+        lock(&windows.plans).startup.insert(
             MAIN_WINDOW.to_owned(),
             WindowStartup {
-                vault: None,
                 last: true,
+                ..Default::default()
             },
         );
         return;
@@ -125,11 +199,11 @@ pub fn restore(app: &AppHandle) {
             .position(|w| w.label == MAIN_WINDOW)
             .unwrap_or(0);
         let first = rest.remove(first);
-        lock(&windows.startup).insert(
+        lock(&windows.plans).startup.insert(
             MAIN_WINDOW.to_owned(),
             WindowStartup {
                 vault: Some(first.vault),
-                last: false,
+                ..Default::default()
             },
         );
     }
@@ -145,9 +219,121 @@ pub fn restore(app: &AppHandle) {
         } else {
             windows.allocate()
         };
-        if let Err(e) = create(app, &label, Some(saved.vault), None) {
+        lock(&windows.plans).startup.insert(
+            label.clone(),
+            WindowStartup {
+                vault: Some(saved.vault),
+                ..Default::default()
+            },
+        );
+        if let Err(e) = create(app, &label, None) {
             log::warn!("restore window {label}: {e}");
         }
+    }
+}
+
+/// Shows the folders the command line asked for (PLAT-14, §6.9), each in one
+/// window, which comes forward and shows the target's file. The one asked for last
+/// ends up in front: of the others asked for and, at `launch`, of every window that
+/// comes back with it.
+pub fn open(app: &AppHandle, targets: Vec<Target>, launch: bool) {
+    let mut asked = Vec::new();
+    for target in targets {
+        match request(app, target) {
+            Ok(label) => asked.push(label),
+            Err(e) => log::warn!("open from the command line: {e}"),
+        }
+    }
+    let Some(front) = asked.last().cloned() else {
+        return;
+    };
+    let rising: Vec<String> = if launch {
+        app.webview_windows().into_keys().collect()
+    } else {
+        asked
+    };
+    let windows = app.state::<Windows>();
+    let mut plans = lock(&windows.plans);
+    let mut pending: HashSet<String> = rising
+        .into_iter()
+        .filter(|label| !plans.shown.contains(label))
+        .collect();
+    if let Some(earlier) = plans.rise.take() {
+        pending.extend(earlier.pending);
+    }
+    if pending.iter().any(|label| *label != front) {
+        plans.rise = Some(Rise { front, pending });
+    }
+}
+
+/// Plans one target for a window and tells that window: the one that has the folder
+/// open or is about to, else one that shows no folder (the window used last first),
+/// else a new one. Returns its label.
+///
+/// The plan is made under the `Plans` lock and the window is built after it, so a
+/// second request for the same folder finds the plan, never a second window.
+fn request(app: &AppHandle, target: Target) -> AppResult<String> {
+    let windows = app.state::<Windows>();
+    let vaults = app.state::<Vaults>();
+    let focused = lock(&windows.focused).clone();
+    // The windows there are: the one used last first, then by label.
+    let mut labels: Vec<String> = app.webview_windows().into_keys().collect();
+    labels.sort_by_key(|label| (Some(label) != focused.as_ref(), label_order(label)));
+
+    let mut plans = lock(&windows.plans);
+    let existing = vaults
+        .owner(Path::new(&target.vault), "")
+        .or_else(|| plans.heading_to(&target.vault))
+        .or_else(|| {
+            labels
+                .iter()
+                .find(|label| {
+                    plans.is_free(label)
+                        && vaults
+                            .get(label)
+                            .is_none_or(|state| state.root_path().is_none())
+                })
+                .cloned()
+        });
+    let created = existing.is_none();
+    let label = existing.unwrap_or_else(|| windows.allocate());
+    let startup = plans.startup.entry(label.clone()).or_default();
+    startup.vault = Some(target.vault);
+    startup.last = false;
+    if target.file.is_some() {
+        startup.file = target.file;
+    }
+    // A window that is not shown yet comes forward when it is (`window_show`).
+    let shown = plans.shown.contains(&label);
+    if !shown {
+        plans.front.insert(label.clone());
+    }
+    drop(plans);
+
+    if created {
+        let from = labels
+            .first()
+            .and_then(|label| app.get_webview_window(label));
+        create(app, &label, from.as_ref())?;
+        return Ok(label);
+    }
+    if shown {
+        focus(app, &label);
+    }
+    // The window asks for the plan (`window_startup`). One whose page has not
+    // started yet does not hear this, and asks when it starts.
+    let target = EventTarget::webview_window(label.as_str());
+    if let Err(e) = app.emit_to(target, EVENT_WINDOW_OPEN, ()) {
+        log::warn!("emit {EVENT_WINDOW_OPEN}: {e}");
+    }
+    Ok(label)
+}
+
+/// Window `label` has opened a folder, could not, or shows none any more: it is no
+/// longer on its way to the folder it was told to open.
+pub fn settled(app: &AppHandle, label: &str) {
+    if let Some(windows) = app.try_state::<Windows>() {
+        lock(&windows.plans).heading.remove(label);
     }
 }
 
@@ -253,7 +439,7 @@ pub fn on_window_event(app: &AppHandle, label: &str, event: &WindowEvent) {
     match event {
         WindowEvent::Focused(true) => *lock(&windows.focused) = Some(label.to_owned()),
         WindowEvent::Destroyed => {
-            lock(&windows.startup).remove(label);
+            lock(&windows.plans).forget(label);
             if let Some(vaults) = app.try_state::<Vaults>() {
                 vaults.remove(label);
             }
@@ -266,14 +452,25 @@ pub fn on_window_event(app: &AppHandle, label: &str, event: &WindowEvent) {
 }
 
 /// Builds window `label` from the main window's configuration, hidden until its
-/// page has painted (PLAT-03). `vault` is the folder it opens at startup; `from`,
-/// the window it was opened from, gives its place.
-fn create(
-    app: &AppHandle,
-    label: &str,
-    vault: Option<String>,
-    from: Option<&WebviewWindow>,
-) -> AppResult<WebviewWindow> {
+/// page has painted (PLAT-03). What it opens is planned before it is built
+/// (`Plans::startup`), and forgotten if it cannot be. `from`, the window it was
+/// opened from, gives its place.
+fn create(app: &AppHandle, label: &str, from: Option<&WebviewWindow>) -> AppResult<WebviewWindow> {
+    match build(app, label) {
+        Ok(window) => {
+            if let Some(from) = from {
+                cascade(&window, from);
+            }
+            Ok(window)
+        }
+        Err(e) => {
+            lock(&app.state::<Windows>().plans).forget(label);
+            Err(e)
+        }
+    }
+}
+
+fn build(app: &AppHandle, label: &str) -> AppResult<WebviewWindow> {
     let mut config = app
         .config()
         .app
@@ -283,28 +480,9 @@ fn create(
         .cloned()
         .ok_or_else(|| AppError::new(ErrorKind::Io, "no window configuration"))?;
     config.label = label.to_owned();
-    let windows = app.state::<Windows>();
-    if let Some(vault) = vault {
-        lock(&windows.startup).insert(
-            label.to_owned(),
-            WindowStartup {
-                vault: Some(vault),
-                last: false,
-            },
-        );
-    }
-    let built = WebviewWindowBuilder::from_config(app, &config).and_then(|builder| builder.build());
-    let window = match built {
-        Ok(window) => window,
-        Err(e) => {
-            lock(&windows.startup).remove(label);
-            return Err(AppError::new(ErrorKind::Io, format!("open a window: {e}")));
-        }
-    };
-    if let Some(from) = from {
-        cascade(&window, from);
-    }
-    Ok(window)
+    WebviewWindowBuilder::from_config(app, &config)
+        .and_then(|builder| builder.build())
+        .map_err(|e| AppError::new(ErrorKind::Io, format!("open a window: {e}")))
 }
 
 /// Places a new window over the one it came from, one step down and to the right,
@@ -376,30 +554,68 @@ pub fn focus_last(app: &AppHandle) {
 pub async fn window_new(window: WebviewWindow) -> AppResult<()> {
     let app = window.app_handle();
     let label = app.state::<Windows>().allocate();
-    create(app, &label, None, Some(&window)).map(|_| ())
+    create(app, &label, Some(&window)).map(|_| ())
 }
 
-/// `window_startup`: what the calling window opens when its page starts, given out
-/// once. A page that starts again in the same window finds the vault it had.
+/// `window_startup`: what is planned for the calling window, given out once: asked
+/// when its page starts, and again whenever `window:open` says there is a plan
+/// (§6.9). With none, a page that starts again in its window finds the vault that
+/// window has.
 #[tauri::command]
 pub async fn window_startup(window: WebviewWindow) -> AppResult<WindowStartup> {
     let app = window.app_handle();
     let label = window.label();
+    let planned = app.try_state::<Windows>().and_then(|windows| {
+        let mut plans = lock(&windows.plans);
+        let startup = plans.startup.remove(label)?;
+        if let Some(vault) = &startup.vault {
+            plans.heading.insert(label.to_owned(), vault.clone());
+        }
+        Some(startup)
+    });
+    if let Some(startup) = planned {
+        return Ok(startup);
+    }
     let open = app
         .try_state::<Vaults>()
         .and_then(|vaults| vaults.get(label))
         .and_then(|state| state.root_path())
         .and_then(|root| root.to_str().map(str::to_owned));
-    let pending = app
-        .try_state::<Windows>()
-        .and_then(|windows| lock(&windows.startup).remove(label));
-    Ok(match open {
-        Some(vault) => WindowStartup {
-            vault: Some(vault),
-            last: false,
-        },
-        None => pending.unwrap_or_default(),
+    Ok(WindowStartup {
+        vault: open,
+        ..Default::default()
     })
+}
+
+/// `window_show`: the calling window's page has painted, so the window is shown
+/// (PLAT-03). It comes forward if the command line asked for it; the window asked
+/// for last, if that is another one, then goes back in front of it (§6.9).
+#[tauri::command]
+pub async fn window_show(window: WebviewWindow) -> AppResult<()> {
+    let app = window.app_handle();
+    let label = window.label();
+    let forward = app.try_state::<Windows>().and_then(|windows| {
+        let mut plans = lock(&windows.plans);
+        plans.shown.insert(label.to_owned());
+        let mut forward = plans.front.remove(label).then(|| label.to_owned());
+        if let Some(mut rise) = plans.rise.take() {
+            let waited = rise.pending.remove(label);
+            if waited && rise.front != label && plans.shown.contains(&rise.front) {
+                forward = Some(rise.front.clone());
+            }
+            if !rise.pending.is_empty() {
+                plans.rise = Some(rise);
+            }
+        }
+        forward
+    });
+    window
+        .show()
+        .map_err(|e| AppError::new(ErrorKind::Io, format!("show the window: {e}")))?;
+    if let Some(label) = forward {
+        focus(app, &label);
+    }
+    Ok(())
 }
 
 #[cfg(test)]

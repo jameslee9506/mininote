@@ -10,6 +10,7 @@ import type { SettingsChangedPayload, VaultChangedPayload } from "../types";
 export const EVENT_VAULT_CHANGED = "vault:changed";
 export const EVENT_FLUSH_REQUEST = "app:flush-request";
 export const EVENT_SETTINGS_CHANGED = "settings:changed";
+export const EVENT_WINDOW_OPEN = "window:open";
 
 /** Batched filesystem changes inside this window's vault (hidden paths excluded). */
 export const onVaultChanged = (cb: (p: VaultChangedPayload) => void): Promise<UnlistenFn> =>
@@ -18,6 +19,13 @@ export const onVaultChanged = (cb: (p: VaultChangedPayload) => void): Promise<Un
 /** Emitted to every window when the app is about to quit; reply with `appExitReady()` after flushing. */
 export const onFlushRequest = (cb: () => void): Promise<UnlistenFn> =>
   getCurrentWebviewWindow().listen<null>(EVENT_FLUSH_REQUEST, () => cb());
+
+/**
+ * The command line asked this window for a folder, and maybe a file in it (PLAT-14). The event
+ * carries nothing: the plan waits in the backend, for `windowStartup()`.
+ */
+export const onWindowOpen = (cb: () => void): Promise<UnlistenFn> =>
+  getCurrentWebviewWindow().listen<null>(EVENT_WINDOW_OPEN, () => cb());
 
 /** A settings patch some window wrote (this one included), in the order the backend applied them. */
 export const onSettingsChanged = (cb: (p: SettingsChangedPayload) => void): Promise<UnlistenFn> =>

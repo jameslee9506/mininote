@@ -129,7 +129,7 @@ Anything not listed is out of scope (§13).
   - Settings apply to every window at once, except the sidebar's visibility and width, which each window keeps for itself (the last one changed is what new windows start with).
   - Mod+W (Close Window in the macOS Window menu), the command palette or the window's close button closes a window. Quitting writes every window's notes first (SAVE-02); closing a window writes its own.
   - The next launch reopens every window that had a vault open, with its size and place (PLAT-04). Closing the last window keeps it in that list; closing another one removes it.
-  - A second launch focuses the window used last (PLAT-05).
+  - A second launch focuses the window used last (PLAT-05), unless it asks for a folder or a file (PLAT-14).
 - **Edge cases.**
   - [critic] ⌥⌘N follows Mail's "New Viewer Window" beside ⌘N and ⇧⌘N (new note and folder). Ctrl+Alt+N would be AltGr+N, which types a character on many Windows layouts (ń, }), so Windows and Linux use OneNote's Ctrl+M. Both can be changed (SET-06).
   - [critic] With no tabs (§13), Mod+W closes the window, as ⌘W does in TextEdit and Ctrl+W in Explorer, not the note ("Close note" stays in the palette). On macOS it belongs to the Window menu and cannot be changed, like Quit; on Windows and Linux it can (SET-06).
@@ -1338,7 +1338,7 @@ Math and diagrams are out of scope.
 - **Sources.** OB §10, MT §9, ZT §10.
 
 #### PLAT-05 · Single instance · P0 [critic] (was P1; file association stays P2)
-- **Behavior.** A second launch focuses the window used last (VAULT-08). Opening `.md` files from the OS (file association, "Open with") is P2.
+- **Behavior.** A second launch focuses the window used last (VAULT-08), or shows the folders and files its command line names (PLAT-14). Opening `.md` files from the OS (file association, "Open with") is P2.
 - [critic] *Priority:* VAULT-07 (P0) relies on it, and `tauri-plugin-single-instance` is already a dependency.
 - **Sources.** OB §10, OT §2.8, ZT §10.
 
@@ -1412,6 +1412,24 @@ Math and diagrams are out of scope.
 - **Edge cases.** If the page reloads anyway (a webview crash, a missed key), startup is idempotent: `vault_open` replaces the watcher, and no listener is registered twice.
 - **Decision.** Nothing in the spec covered the engine defaults, and each one is either a data-loss path (reload) or stray UI (print, zoom, native menus).
 - **Sources.** ZT §10 and MT §9 (navigation lockdown), OB §10 (Ctrl+M must not minimize).
+
+#### PLAT-14 · Command line · P1
+- **Behavior.**
+  - `mininote [path ...]` in a terminal shows what each path names, whether the app is running or not.
+  - A folder opens as a vault. A file opens in the folder it is in: that folder is the vault, and the file is shown in it, in place of the file left open there last time (VAULT-03).
+  - One window shows each folder. The window that has it open comes forward (VAULT-07). Otherwise a window that shows no folder takes it, the one used last first, and otherwise a new window opens for it.
+  - When the app was not running, the windows of the last run come back as at any launch (VAULT-08), and the window asked for stands in front of them. With several paths, the window of the last one does.
+  - Without a path, the app starts, or its window used last comes forward (PLAT-05).
+  - A path that names nothing is reported in the terminal. The other paths still open.
+- **Edge cases.**
+  - The file's name may be typed in another case or Unicode form than it has on disk (PLAT-06, PLAT-07).
+  - A file the tree does not list, a hidden one, is not shown: only its folder opens.
+  - A link to a file opens in the folder the link is in, as that file (TREE-18). A link to a folder is that folder: a vault's root is never a link.
+  - Several files of one folder name one window, which shows the last of them.
+  - One command line opens eight folders at most, so a stray `*` does not fill the screen with windows.
+  - An update's restart does not show the paths again, although it starts the app with the same command line (macOS and Linux; on Windows, where the installer starts the app, it still does).
+- **Decision.** A file always opens the folder it is in, also when a vault that is open, or was, contains that folder: the rule needs no knowledge of other vaults, and a file always has a folder.
+- **Sources.** The owner's request (2026-11-19). OT §2.8 and ZT §10 for a second launch that hands its arguments to the first.
 
 ---
 
@@ -1551,7 +1569,7 @@ The current plan already matches most of this spec. Where it differs, this spec 
 - LINK-04 (headings), LINK-07, LINK-08.
 - READ-08.
 - SET-02, SET-06, SET-07, SET-08.
-- PLAT-01 (Linux), PLAT-11, PLAT-12. ([critic] PLAT-05 single instance moved to P0.)
+- PLAT-01 (Linux), PLAT-11, PLAT-12, PLAT-14. ([critic] PLAT-05 single instance moved to P0.)
 - PERF-04–07.
 
 **P2**

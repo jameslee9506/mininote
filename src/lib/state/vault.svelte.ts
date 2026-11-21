@@ -123,10 +123,11 @@ class VaultStore {
    * to vault:changed (once). A folder that another window has open comes forward
    * there instead, and this window stays as it is (VAULT-07). Returns false (and
    * toasts errVault) on failure; a folder reopened at `startup` fails silently, and
-   * the last vault is forgotten (VAULT-02).
+   * the last vault is forgotten (VAULT-02). `file` names a file of the folder to show,
+   * in place of the session's last one, also when the folder is open here already (PLAT-14).
    */
-  open = (root: string, opts?: { startup?: boolean }): Promise<boolean> =>
-    untrack(() => this.#serial(() => this.#open(root, opts?.startup ?? false)));
+  open = (root: string, opts?: { startup?: boolean; file?: string | null }): Promise<boolean> =>
+    untrack(() => this.#serial(() => this.#open(root, opts?.startup ?? false, opts?.file ?? null)));
 
   /** Back to the Welcome screen (flush editor first); another window may open the folder then. */
   close = (): Promise<void> =>
@@ -385,17 +386,40 @@ class VaultStore {
     return run;
   }
 
-  async #open(root: string, startup: boolean): Promise<boolean> {
-    if (this.info && this.info.root === root) return true;
+  async #open(root: string, startup: boolean, file: string | null): Promise<boolean> {
+    if (this.info && this.info.root === root) {
+      if (file !== null) await this.#showNamed(file, false);
+      return true;
+    }
     // VAULT-07: before anything is flushed or closed here, a folder open in another window.
     if (await this.#shownElsewhere(root)) return true;
     // While one vault replaces another the shell shows nothing, not a flash of the Welcome screen.
     this.switching = this.info !== null;
     try {
-      return await this.#replace(root, startup);
+      return await this.#replace(root, startup, file);
     } finally {
       this.switching = false;
     }
+  }
+
+  /**
+   * Shows the file the command line named (PLAT-14): a name in the vault's folder, in whatever
+   * spelling of it was typed. A name the listing does not have is looked for once more in a new
+   * listing, unless this one is `fresh`: the file may have just been written. A file the tree
+   * does not list (a hidden one) is not opened. Returns whether there was a file to open; like
+   * the session's last file, it may still be loading then.
+   */
+  async #showNamed(name: string, fresh: boolean): Promise<boolean> {
+    let path = this.findExisting(name);
+    if (path === null && !fresh) {
+      await this.#refresh();
+      path = this.findExisting(name);
+    }
+    // A listing that stopped at the entry cap proves nothing: the editor reads the file itself.
+    if (path === null && this.truncated) path = name;
+    if (path === null || this.nodes.get(path)?.kind === "dir") return false;
+    await within(editor.open(path), RESTORE_WAIT_MS);
+    return true;
   }
 
   /** Another window has `root` open and has come forward. A folder that does not resolve is open nowhere. */
@@ -408,7 +432,7 @@ class VaultStore {
     }
   }
 
-  async #replace(root: string, startup: boolean): Promise<boolean> {
+  async #replace(root: string, startup: boolean, file: string | null): Promise<boolean> {
     this.#subscribe();
     // VAULT-05: the old vault's saves are flushed (or kept in recovery copies) before switching.
     if (this.info) await this.#teardown();
@@ -440,6 +464,8 @@ class VaultStore {
     for (const p of session.expanded) if (!complete || this.nodes.get(p)?.kind === "dir") this.expanded.add(p);
     if (this.expanded.size !== session.expanded.length) this.#persistExpanded();
     settings.rememberVault(info.root);
+    // PLAT-14: the file the command line named takes the place of the one left open last time.
+    if (file !== null && (await this.#showNamed(file, true))) return true;
     const last = session.lastFile;
     if (last !== null && (this.nodes.has(last) || !complete))
       await within(editor.open(last, { position: session.last }), RESTORE_WAIT_MS);

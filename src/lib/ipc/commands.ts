@@ -214,8 +214,17 @@ export const settingsUpdate = (patch: SettingsPatch) => call<void>("settings_upd
 /** Opens another window, on the Welcome screen (VAULT-07). */
 export const windowNew = () => call<void>("window_new");
 
-/** What this window opens when its page starts; given out once. */
+/**
+ * What is planned for this window, given out once: asked when its page starts, and again
+ * whenever `window:open` arrives (PLAT-14).
+ */
 export const windowStartup = () => call<WindowStartup>("window_startup");
+
+/**
+ * Shows this window, once its page has painted (PLAT-03). The backend also brings it forward
+ * when the command line asked for it (PLAT-14).
+ */
+export const windowShow = () => call<void>("window_show");
 
 /** Quits: the backend asks every window to flush, then exits (Ctrl+Q on Windows and Linux). */
 export const appQuit = () => call<void>("app_quit");

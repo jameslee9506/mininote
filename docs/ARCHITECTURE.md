@@ -18,7 +18,7 @@ The current build covers every P0 requirement, plus these P1 items:
 - SAVE-09, SAVE-11
 - NAV-02 (Hangul extras, already in `utils/fuzzy.ts`), NAV-03, NAV-06
 - SRCH-01, SRCH-02
-- SET-02, SET-06, SET-07, SET-08, PLAT-05, PLAT-12
+- SET-02, SET-06, SET-07, SET-08, PLAT-05, PLAT-12, PLAT-14
 
 **Deferred** to the next round:
 - SAVE-06 P1 (three-way merge); the conflict copy is the P0 behavior
@@ -69,7 +69,9 @@ The current build covers every P0 requirement, plus these P1 items:
 │ watcher.rs  notify debouncer → "vault:changed"    │─────►│ markdown/  markdown-it reading view,   │
 │ search.rs   full-text scan, cancellable           │      │            link resolution             │
 │ store.rs    settings JSON (patches), recovery     │      │ components/ Svelte UI                  │
-│ windows.rs  new windows, restore list, focus      │      │                                        │
+│ windows.rs  new windows, restore list, focus,     │      │                                        │
+│             what each window is asked to show     │      │                                        │
+│ cli.rs      command-line paths, the restart       │      │                                        │
 │ lib.rs      plugins, menu, exit-flush protocol    │      │ (one webview per window)               │
 └───────────────────────────────────────────────────┘      └────────────────────────────────────────┘
 ```
@@ -93,7 +95,7 @@ src/
     i18n.ts                  t(key) — English UI strings
     appCommands.ts           concrete command list (shortcuts + palette)
     ipc/commands.ts          typed wrappers for every Rust command (epoch injected)
-    ipc/events.ts            vault:changed, app:flush-request
+    ipc/events.ts            vault:changed, app:flush-request, settings:changed, window:open
     utils/                   path · names · codeFiles · fonts · fuzzy · platform · keys · timing
     state/                   settings · vault · editor · ui · commands · updater (*.svelte.ts), tree.ts, settingsSync.ts
     editor/                  setup · theme · syntax · commands · arrows · complete · paste · search panel
@@ -102,7 +104,7 @@ src/
     markdown/                render.ts (+ plugins/) · resolve.ts
     components/              Svelte components (§9)
 src-tauri/src/
-  lib.rs  error.rs  vault.rs  fs_ops.rs  watcher.rs  search.rs  store.rs  windows.rs
+  lib.rs  error.rs  vault.rs  fs_ops.rs  watcher.rs  search.rs  store.rs  windows.rs  cli.rs
 docs/
   ARCHITECTURE.md  DESIGN.md  releasing.md  research/ (OSS analyses, REQUIREMENTS.md, TECHNIQUES.md)
 scripts/prepare-release.mjs  validates the versions and writes the updater overlay for release builds (§6.7)
@@ -156,7 +158,8 @@ Every command marked "scoped" also takes `epoch: u64`, either as an argument or 
 | `settings_load` | – | `string \| null` | Reads `app_config/settings.json`. If it is unparsable JSON, renames it to `settings.corrupt-<ms>.json` and returns null. |
 | `settings_update` | `patch: SettingsPatch` | – | Merges `{ settings?, sessions? }` into the document under one lock: each setting replaces its key, each session its vault root's (`null` removes it). Atomic write; an existing file that is not a JSON object, or cannot be read, is set aside first. Then emits `settings:changed` (§7). |
 | `window_new` | – | – | Opens another window on the Welcome screen, over the calling one (§6.6). |
-| `window_startup` | – | `WindowStartup` | `{ vault, last }`: the folder the calling window opens when its page starts (given out once), or `last: true` for the first window while no window list was saved yet (§6.6). A page that starts again in a window gets the vault that window has open. |
+| `window_startup` | – | `WindowStartup` | `{ vault, file, last }`: what is planned for the calling window, given out once. `vault` is the folder to open: the one it had when the app last ran, or the one the command line asked it for, with `file`, the name of the file to show in it (§6.9). `last: true` is for the first window while no window list was saved yet (§6.6). Asked when the page starts, and again at every `window:open`. With no plan, a page that starts again in a window gets the vault that window has open. |
+| `window_show` | – | – | The calling window's page has painted: the window is shown (PLAT-03), and comes forward when the command line asked for it (§6.9). |
 | `app_quit` | – | – | Ctrl+Q on Windows and Linux: the flush protocol of §6.6, as the macOS Quit item. |
 | `app_exit_ready` | – | – | The calling window has flushed for a quit (§6.6). |
 
@@ -165,6 +168,7 @@ Every command marked "scoped" also takes `epoch: u64`, either as an argument or 
 | `vault:changed` | `VaultChangedPayload` | To the window whose vault changed: debounced batches (about 200 ms) of changes inside the root. Hidden paths, our temp files and self-writes are excluded. A notify `Rescan` flag, an event on the vault folder itself, or a batch of more than 1000 changes becomes one `{kind:"any", path:""}`: re-list and re-check every open or cached note. |
 | `app:flush-request` | `null` | To every window: the app wants to quit (custom Cmd+Q, Ctrl+Q, or an `ExitRequested`). |
 | `settings:changed` | `SettingsChangedPayload` | To every window, the writer included: a patch `settings_update` applied, with the writer's label as `origin`, in the order applied (§7). |
+| `window:open` | `null` | To one window: the command line asked it for a folder, and maybe a file (§6.9). The plan itself waits for `window_startup`. |
 
 ## 6. Backend design (src-tauri)
 
@@ -264,17 +268,17 @@ Every command marked "scoped" also takes `epoch: u64`, either as an argument or 
 ### 6.6 App lifecycle (`lib.rs`, `windows.rs`, SAVE-02, PLAT-05, PLAT-10, VAULT-08)
 
 - **Plugins, in this order:**
-  1. `single-instance` (desktop only): unminimizes, shows and focuses the window focused last (else the first one).
+  1. `single-instance` (desktop only): a second launch hands its command line to the first and exits. Its folders and files open here (§6.9); without any, the window focused last (else the first one) is unminimized, shown and focused.
   2. `process` and `updater` (desktop only): the restart and the signed app updates of §6.7.
   3. `dialog`
   4. `opener`
   5. `window-state`, restoring size, position and maximized only (restoring visibility would show the hidden window before the first paint, PLAT-03), per window label
   6. `mininote-navigation` (inline): the webview may only navigate within the app's own origin (`tauri://localhost`, `http(s)://tauri.localhost`, `about:blank`, and the dev server in dev builds), as defense in depth for READ-04 / PLAT-13
-- **Windows (VAULT-08).** The first window, `main`, comes from tauri.conf.json, whose entry is also the template of every other window (`WebviewWindowBuilder::from_config` under another label). The others are `w2`, `w3`…, a label never given out twice while the app runs; the capability in `capabilities/default.json` covers `main` and `w*`. Every window starts hidden (`visible: false`), and its frontend shows it after the first paint.
+- **Windows (VAULT-08).** The first window, `main`, comes from tauri.conf.json, whose entry is also the template of every other window (`WebviewWindowBuilder::from_config` under another label). The others are `w2`, `w3`…, a label never given out twice while the app runs; the capability in `capabilities/default.json` covers `main` and `w*`. Every window starts hidden (`visible: false`), and its frontend asks for it to be shown after the first paint (`window_show`).
   - `window_new` opens one on the Welcome screen, at the calling window's size, one step (28 logical px) down and to the right, back near the top-left corner of its screen when that would leave the work area; maximized beside a maximized window, placed by the OS beside a full-screen one. That place replaces whatever the window-state plugin restored for the label.
   - **Window list.** `app_config/windows.json` holds `{ windows: [{ label, vault }] }`, the windows with a vault, `main` first. It is rewritten (off the main thread, only when it changed) after every `vault_open` and `vault_close`, and when a window closes while others stay open. Once the app is exiting it stays as it is, and so does the last window to close: that ends the app, and the window comes back next time.
-  - **Restore.** In `setup`, the list's `main` entry (else its first) becomes what `main` opens, and every other entry is created again under its label, so the window-state plugin puts it back at its size and place; new labels start above the highest restored one. At most 16 windows, each label and each folder once, absolute folders only. With no list (an older version ran last), `main` gets `last: true` and reopens `settings.lastVault`. A folder that does not open leaves its window on Welcome, silently (VAULT-02), and drops out of the list at its next write.
-  - `Focused(true)` events record the window focused last; `Destroyed` drops the window's vault state and startup entry.
+  - **Restore.** In `setup`, the list's `main` entry (else its first) becomes what `main` opens (its startup plan, §6.9), and every other entry is created again under its label, so the window-state plugin puts it back at its size and place; new labels start above the highest restored one. At most 16 windows, each label and each folder once, absolute folders only. With no list (an older version ran last), `main` gets `last: true` and reopens `settings.lastVault`. A folder that does not open leaves its window on Welcome, silently (VAULT-02), and drops out of the list at its next write.
+  - `Focused(true)` events record the window focused last; `Destroyed` drops the window's vault state and what was planned for it (§6.9).
 - **Exit flush.**
   - On `RunEvent::ExitRequested { api, code, .. }`: a restart request (`code == RESTART_EXIT_CODE`, §6.7) passes untouched, because Tauri ignores `prevent_exit` for it. Otherwise, if not every window has flushed yet (`ready` is false) and a window is open, call `api.prevent_exit()` and emit `app:flush-request` to every window. An exit that passes freezes the window list.
   - At the same time, start (once per quit, even when the request repeats) a 4000 ms fallback thread that sets `ready` and calls `app.exit(code)`. Every window answers every request, with or without an open vault.
@@ -311,6 +315,30 @@ A link is a symlink (on Windows also a junction, which always leads to a folder)
   - A file outside the vault is not watched. The open note is read again when the window comes forward (§8.2).
   - Echoes: a registry record with a hash (a write) is compared with the metadata of the file the path leads to; one without (a rename) with the entry's own. A write through a link is recorded under both paths, so neither the file's event nor the one passed on to the link reaches the frontend.
 - **Frontend.** No store knows a link from a file, except `vault.assetUrl`. Two notes that are one file (a link and its file, or two links to it) each have a controller of their own. A save through one is an external change for the other (§8.2): the watcher tells the links of their file's change, and a cached state is compared with the file whenever it is shown again. A clean one is replaced; unsaved text becomes a conflict copy.
+
+### 6.9 Command line (`cli.rs`, `windows.rs`, PLAT-14)
+
+`mininote [path ...]` shows folders, and files in their folder. A command line reaches the app in one of two ways, and both end in `windows::open`.
+
+- **Targets.** `cli::targets(args, cwd)` turns a command line into targets `{ vault, file }`.
+  - A folder is its own target. A file's target is the folder it is in, with the file's name. The folder is canonicalized with dunce, as `vault_open` does, so a target names a vault the way the windows do. The name stays as typed: a link remains the entry of its own folder (§6.8), and the frontend finds the spelling the folder lists it under (§4).
+  - The command has no options. An argument that starts with `-` is skipped, and after `--` every argument is a path. Targets with the same folder are one target, with the file named last. A line gives eight targets at most.
+- **Two ways in.**
+  - *The app is not running.* `cli::launch()` resolves the process's own line first thing in `run()`. A path that names nothing is written to stderr and the app starts all the same; the write's failure is ignored, because `eprintln!` panics once the terminal that started the app is gone. `setup` restores the windows (§6.6), then calls `windows::open(targets, launch: true)`.
+  - *The app is running.* The single-instance plugin hands the second launch's arguments and working folder to the first (`cli::relaunched`). They are resolved on the blocking pool; then `windows::open(targets, launch: false)`, or `focus_last` when there is no target (PLAT-05).
+- **Plans** (`windows.rs › Plans`, one mutex; lock order: `Plans`, then the `Vaults` map).
+  - `startup`: what each window opens next, a `WindowStartup`, until its page asks for it.
+  - `heading`: the folder a window was told to open, from when its page asked until its next `vault_open` or `vault_close`. In between, the folder is not that window's vault in `Vaults` yet, and a request for it must still find the window.
+  - `shown`, `front` and `rise`: which windows their page has shown, and which come forward (below).
+- **Finding the window** (`windows::request`). Under the lock, in this order: the window whose vault the folder is (`Vaults::owner`); the window with a plan for it or heading to it; a window with no folder, open or planned, the one focused last first; else a new label. The plan is written before the lock is released and a new window is built after that, so a second request for the same folder finds the plan and never builds a second window.
+- **Telling the window.** A window learns its plan by asking: `window_startup` hands it out and removes it. A page asks when it starts, and again whenever `window:open` arrives. The event carries nothing, so nothing is lost when nobody hears it: a page that has not started yet asks at startup.
+  - The frontend registers the `window:open` listener before it asks at startup (`App.svelte › boot`), so a request made in between is either in the answer or heard. A request heard during startup waits for its end: the settings are loaded then, and startup has taken what was planned before it.
+  - `vault_open` clears `heading` after the folder is claimed (or the open failed), never before.
+- **Showing the file.** `openVault(root, { file })` opens the folder unless it is this window's vault already, then `vault.#showNamed` finds the name with `findExisting` and opens it, in place of the session's last file. A name that is not listed is looked for in a new listing first (the file may have just been written), unless the listing was just made. A file the tree does not list is not opened. While the app runs, the overlays of the window close when what is under them changes (`appCommands.openRequest`).
+- **Coming forward.** `window_show` shows the calling window once its page has painted (PLAT-03), and the backend decides what comes forward.
+  - A window that is shown already comes forward at the request (`windows::focus`, which also activates the app). One that is not is noted in `front` and comes forward when it is shown, never earlier: a window shown before its first paint flashes empty.
+  - `rise` holds the window asked for last and the windows still to be shown: at launch every window, later the others asked for. Showing a window makes it the key window, so each of those that is shown after the one asked for would cover it; `window_show` then brings that one forward again. It ends in front whichever page paints last.
+- **Restart.** An update's restart (§6.7) starts the app with the same command line: Tauri passes the arguments on (on macOS through `open -n … --args`). On `ExitRequested` with `RESTART_EXIT_CODE`, `cli::mark_restart` writes `app_config/restarting`. `setup` reads and removes the mark (`take_restart`), and does not follow the line when the mark is younger than 30 s. On Windows the installer starts the app and no such exit is raised, so there the paths are shown again.
 
 ## 7. Frontend state (`src/lib/state/*.svelte.ts`)
 
@@ -679,5 +707,5 @@ A code file is shown by the same `EditorView`, in a state of its own kind. The e
 The owner wants minimal verification:
 - `npm run check` and `cargo check` must be clean.
 - `vitest` runs unit tests for pure logic only: utils, resolve, tree, syntax, render plugins, the code view's tables and modes, and small state helpers.
-- Rust unit tests cover only the path guard, the listing rules, links (listed, read, written through, moved) and search helpers.
+- Rust unit tests cover only the path guard, the listing rules, links (listed, read, written through, moved), search helpers and the command line's targets.
 - There are no integration or E2E tests, and the app is not launched to verify.

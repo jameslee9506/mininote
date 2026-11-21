@@ -27,9 +27,9 @@ export const unavailableVaults = new SvelteSet<string>();
  * Opens `root` as this window's vault (or brings forward the window that has it,
  * VAULT-07) and records whether it was reachable. vault.open reports failures
  * itself, except the automatic reopen at `startup`, which fails silently and
- * forgets only `lastVault` (VAULT-02).
+ * forgets only `lastVault` (VAULT-02). `file` names a file of the folder to show (PLAT-14).
  */
-export async function openVault(root: string, opts?: { startup?: boolean }): Promise<boolean> {
+export async function openVault(root: string, opts?: { startup?: boolean; file?: string | null }): Promise<boolean> {
   let ok = false;
   try {
     ok = await vault.open(root, opts);
@@ -40,6 +40,16 @@ export async function openVault(root: string, opts?: { startup?: boolean }): Pro
   if (ok) unavailableVaults.delete(root);
   else unavailableVaults.add(root);
   return ok;
+}
+
+/**
+ * Shows what the command line asked this window for while it was running (PLAT-14): the
+ * folder `root` as its vault and, in it, the file named `file`. An overlay closes when what
+ * is under it changes, so that the file is seen; a window that only comes forward keeps its own.
+ */
+export async function openRequest(root: string, file: string | null): Promise<void> {
+  if (file !== null || vault.info?.root !== root) clearOverlays();
+  await openVault(root, { file });
 }
 
 /** Opens another window, on the Welcome screen, to show another folder (VAULT-07). */
