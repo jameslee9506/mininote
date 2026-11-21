@@ -127,11 +127,12 @@ Anything not listed is out of scope (§13).
 - **Behavior.**
   - Mod+Alt+N on macOS, Mod+M on Windows and Linux, the command palette, or "New window" in the vault menu opens another window on the empty state (VAULT-05), at the current window's size, one step down and to the right. Each window has its own vault, tree, editor, history and title.
   - Settings apply to every window at once, except the sidebar's visibility and width, which each window keeps for itself (the last one changed is what new windows start with).
-  - Quitting writes every window's notes first (SAVE-02). Closing a window writes its own.
+  - Mod+W (Close Window in the macOS Window menu), the command palette or the window's close button closes a window. Quitting writes every window's notes first (SAVE-02); closing a window writes its own.
   - The next launch reopens every window that had a vault open, with its size and place (PLAT-04). Closing the last window keeps it in that list; closing another one removes it.
   - A second launch focuses the window used last (PLAT-05).
 - **Edge cases.**
   - [critic] ⌥⌘N follows Mail's "New Viewer Window" beside ⌘N and ⇧⌘N (new note and folder). Ctrl+Alt+N would be AltGr+N, which types a character on many Windows layouts (ń, }), so Windows and Linux use OneNote's Ctrl+M. Both can be changed (SET-06).
+  - [critic] With no tabs (§13), Mod+W closes the window, as ⌘W does in TextEdit and Ctrl+W in Explorer, not the note ("Close note" stays in the palette). On macOS it belongs to the Window menu and cannot be changed, like Quit; on Windows and Linux it can (SET-06).
   - A folder that no longer opens at launch leaves its window on the empty state, silently (VAULT-02).
 - **Sources.** OB §2 (one window per vault, restored at launch), OT §2.6 (window→vault claims, per-label window state).
 
@@ -1384,8 +1385,8 @@ Math and diagrams are out of scope.
   - `Mod` is Cmd on macOS and Ctrl elsewhere.
   - No Option-only chords on macOS, because they type characters. No Ctrl+Alt+letter on Windows, because that is AltGr.
   - Cmd+\` stays free on macOS.
-  - The macOS app menu includes the standard Edit items (WKWebView needs them for clipboard shortcuts) and a custom Quit that flushes first.
-  - Windows and Linux have no menu bar. Ctrl+Q quits after flushing.
+  - The macOS app menu includes the standard Edit items (WKWebView needs them for clipboard shortcuts) and a custom Quit that flushes first. Its Window menu has Close Window (Cmd+W), which closes the window as its close button does.
+  - Windows and Linux have no menu bar. Ctrl+Q quits after flushing, and Ctrl+W closes the window.
   - [critic] Shortcuts match on `e.key` and fall back to the physical key (`e.code`) when `e.key` is not ASCII. In Hangul mode, or with the Korean macOS layout, `e.key` can be a jamo or `₩` (on the backslash key), and Mod+\ would silently fail. CodeMirror's keymap already falls back this way (verified).
   - [critic] CodeMirror's `defaultKeymap` and `searchKeymap` bind keys this spec reuses (verified in `@codemirror/commands` and `@codemirror/search`): `Mod-i` (select parent syntax), `Mod-[` and `Mod-]` (indent), `Alt-←` and `Alt-→` (syntax moves, Windows and Linux), `Mod-Enter` (insert blank line), `Ctrl-m` / `Shift-Alt-m` (tab-focus toggle), `Mod-Alt-g` (a go-to-line panel with a text label) and `Mod-/` (HTML comment). Our bindings take precedence, and the last three are removed.
 - **Sources.** MT §3.10, OT §2.8, ARCHITECTURE.md §6.5.

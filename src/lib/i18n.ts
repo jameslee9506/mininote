@@ -84,6 +84,7 @@ const en = {
   cmdForward: "Go forward",
   cmdOpenVault: "Open folder…",
   cmdNewWindow: "New window",
+  cmdCloseWindow: "Close window",
   cmdRenameActive: "Rename current note",
   cmdDeleteActive: "Delete current note",
   cmdRevealActive: "Reveal current note",

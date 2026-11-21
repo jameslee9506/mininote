@@ -141,8 +141,8 @@ export function canBind(c: Chord, mac = isMac): boolean {
  * the system or the macOS app menu handles before the app could.
  */
 const RESERVED = ["Mod-a", "Mod-c", "Mod-v", "Mod-x", "Mod-z", "Mod-Shift-z", "Mod-f", "Mod-g", "Mod-Shift-g", "F3", "Shift-F3"];
-/** Menu items (Quit, Hide, Hide Others, Minimize, Full Screen), replace, and window cycling (PLAT-10). */
-const RESERVED_MAC = ["Mod-q", "Mod-h", "Mod-Alt-h", "Mod-m", "Ctrl-Mod-f", "Mod-Alt-f", "Mod-`"];
+/** Menu items (Quit, Hide, Hide Others, Minimize, Full Screen, Close Window), replace, and window cycling (PLAT-10). */
+const RESERVED_MAC = ["Mod-q", "Mod-h", "Mod-Alt-h", "Mod-m", "Ctrl-Mod-f", "Mod-w", "Mod-Alt-f", "Mod-`"];
 /** Redo, replace, and closing the window. */
 const RESERVED_OTHER = ["Mod-y", "Mod-h", "Alt-F4"];
 

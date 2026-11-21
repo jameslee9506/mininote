@@ -282,8 +282,8 @@ Every command marked "scoped" also takes `epoch: u64`, either as an argument or 
 - **macOS menu.** Tao never raises a preventable exit for the predefined Quit (Tauri #9198), so build the menu explicitly:
   - **App menu:** About, separator, Hide, Hide Others, Show All, separator, and a **custom "Quit mininote" item with `CmdOrCtrl+Q`**. The custom item emits `app:flush-request` and starts the same fallback.
   - **Edit menu:** the predefined Undo, Redo, Cut, Copy, Paste and Select All. They are required for clipboard keys in WKWebView.
-  - **Window menu:** Minimize, Zoom, Fullscreen. macOS lists the open windows below them, by title (PLAT-02).
-- Windows and Linux have no menu bar. Ctrl+Q there is a frontend command that calls `app_quit`, the same protocol as the macOS Quit item.
+  - **Window menu:** Minimize, Zoom, Fullscreen, a separator, and the predefined Close Window (⌘W). That item is the window's close button (`performClose:`): the close request lets the window flush first (§8.4), and it closes an About panel too. macOS lists the open windows below them, by title (PLAT-02).
+- Windows and Linux have no menu bar. Ctrl+Q there is a frontend command that calls `app_quit`, the same protocol as the macOS Quit item, and Ctrl+W one that closes the window (§8.4).
 
 ### 6.7 App updates (`tauri-plugin-updater`, `tauri-plugin-process`)
 
@@ -412,7 +412,7 @@ Calls go one way: `vault` → `editor` for moves, removals and external changes.
 
 ### 8.4 Quit, close, and recovery (SAVE-02, SAVE-10)
 
-- **Close.** `getCurrentWindow().onCloseRequested(async () => …)` runs these steps, wrapped in try/catch, and the window is always destroyed (its vault is let go, §6.6):
+- **Close.** Every way of closing a window raises its close request: its close button, Close Window in the macOS Window menu (⌘W), and the `close-window` command (Ctrl+W on Windows and Linux, and the palette), which calls `getCurrentWindow().close()`, never `destroy()`. `getCurrentWindow().onCloseRequested(async () => …)` runs these steps, wrapped in try/catch, and the window is always destroyed (its vault is let go, §6.6):
   1. Record the open note's position in the session (VAULT-03), then `Promise.race([editor.flush(), timeout(2000)])`.
   2. On failure or timeout, write a recovery copy for every dirty note (each capped at about 1 s).
   3. `settings.flush()`.
@@ -469,6 +469,7 @@ These are the defaults. Settings → Shortcuts rebinds every global command and 
 | Mod-Shift-E | Focus the file tree at the open note's row, revealing it (TREE-11) | global |
 | Mod-C (the system's copy) | Copy the selected row's absolute path (TREE-11) | focused tree, or right after a click on a row |
 | Mod-V (the system's paste) | Copy the file copied that way into the folder in focus (TREE-19) | the same, while the clipboard holds that copy |
+| Mod-W (Windows/Linux) | Flush and close the window (macOS uses the Window menu's Close Window, ⌘W) | global |
 | Mod-Q (Windows/Linux) | Flush and quit (macOS uses the menu item) | global |
 | F5, Mod-R, Mod-Shift-R, Ctrl-F5, the keyboard's Refresh key | Cancelled: never reload the webview (PLAT-13). Every other browser key (Home, Stop, Search…) is cancelled too, and so are Mod-P and Mod-S (WebView2's print and save page) once no command takes them | global |
 | Mod-Shift-B / Mod-I / Mod-Shift-X / Mod-Shift-H | Toggle bold / italic / strikethrough / highlight | editor |
@@ -488,9 +489,9 @@ These are the defaults. Settings → Shortcuts rebinds every global command and 
 - **Custom shortcuts (SET-06).**
   - `settings.shortcuts` stores only what the user changed: command id → canonical specs (`Mod-Shift-p`; modifiers in the order Ctrl, Mod, Alt, Shift), where `[]` unbinds. Ids are stable because they are persisted: the registry's command ids, and `EDITOR_SHORTCUTS` in `editor/commands.ts` for the editor commands.
   - Both matchers read the user's keys at every press, so a change applies at once. The registry uses `commands.keysOf(cmd)`. The editor's `editorShortcuts(host)` reads `host.shortcutKeys(id)` (§10.1).
-  - `Command.fixedKeys` always apply and show nowhere (BrowserBack/BrowserForward). `Command.fixed` keeps a command out of the settings: the engine-key guard (last in the registry, so a command the user puts on one of its keys wins), and Quit on macOS, which belongs to the app menu.
+  - `Command.fixedKeys` always apply and show nowhere (BrowserBack/BrowserForward). `Command.fixed` keeps a command out of the settings: the engine-key guard (last in the registry, so a command the user puts on one of its keys wins), and Quit and Close window on macOS, which belong to the menu bar.
   - While the recorder listens, `commands.paused` makes the capturing listener return at once. The focused recorder button cancels every key itself: nothing runs or reloads, and Escape cancels recording instead of closing the modal. Tab still moves focus, and the blur ends recording.
-  - A recorded key must pass `canBind` (`utils/keys.ts`): a function key, or a key held with Mod, with Control on macOS, or with Alt elsewhere. It must not be reserved: clipboard, undo/redo, select all, find and its next/previous keys, replace, and the macOS app-menu and window keys (Quit, Hide, Minimize, Full Screen, Cmd+\`). A key belongs to one command at most; a taken key is refused with a toast naming its command.
+  - A recorded key must pass `canBind` (`utils/keys.ts`): a function key, or a key held with Mod, with Control on macOS, or with Alt elsewhere. It must not be reserved: clipboard, undo/redo, select all, find and its next/previous keys, replace, and the macOS app-menu and window keys (Quit, Hide, Minimize, Full Screen, Close Window, Cmd+\`). A key belongs to one command at most; a taken key is refused with a toast naming its command.
 - **Composition.** Every custom key handler returns early on `isComposing(e)`. A Mod-chord that arrives mid-composition is ignored (EDIT-11).
 - **Context menu.** The native context menu is suppressed everywhere except over editable text (the editor, inputs) or selected text (PLAT-13). A read-only editor, a locked note or a code file, is not editable: its menu appears over selected text only, and nothing drops into it.
 - **Menus** (`ContextMenu.svelte`, `ui.showMenu`). A `MenuEntry` is an action, a separator, or an item with a `submenu` of actions (one level). The submenu is a second fixed panel, measured like the first: beside it, on the side with room. The pointer opens it after a short rest on its item and closes it after a longer one on another item, so the way into it may cross a neighbour; → and Enter open it, ← closes it. An action runs within the click or key press that chose it, so it may write to the clipboard. `showMenu`'s `anchor` is the button whose click opened the menu (the vault name): a press on it, or Space while it has focus, does not dismiss the menu, so the button's own click closes it rather than opening it again (VAULT-05).

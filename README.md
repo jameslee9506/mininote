@@ -43,6 +43,7 @@ npm test               # Unit tests (Vitest)
 |---|---|
 | `Mod+N` / `Mod+Shift+N` | New note / new folder |
 | `⌥⌘N` (macOS) · `Ctrl+M` | New window |
+| `Mod+W` | Close the window |
 | `Esc` | Move an untouched new note with its default title and empty body to the trash |
 | `Mod+O` · `Mod+P` · `Mod+Shift+F` | Quick switcher · command palette · full-text search |
 | `Mod+E` | Toggle reading and editing views |

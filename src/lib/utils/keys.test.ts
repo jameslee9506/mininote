@@ -82,6 +82,8 @@ describe("shortcut keys", () => {
     expect(isReserved("Shift-Mod-Z", false)).toBe(true);
     expect(isReserved("Mod-q", true)).toBe(true);
     expect(isReserved("Mod-q", false)).toBe(false);
+    expect(isReserved("Mod-w", true)).toBe(true);
+    expect(isReserved("Mod-w", false)).toBe(false);
     expect(isReserved("Mod-y", false)).toBe(true);
     expect(isReserved("Mod-y", true)).toBe(false);
     expect(isReserved("Mod-e", true)).toBe(false);

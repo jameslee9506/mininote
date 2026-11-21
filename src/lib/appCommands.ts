@@ -426,6 +426,15 @@ export function registerAppCommands(): void {
       run: newWindow,
     },
     {
+      // VAULT-08: as the window's close button, so the window flushes first (§8.4); the last
+      // window to close ends the app. macOS closes through the Window menu's Close Window and its ⌘W.
+      id: "close-window",
+      label: "cmdCloseWindow",
+      keys: isMac ? [] : ["Mod-w"],
+      fixed: isMac,
+      run: safe(() => getCurrentWindow().close()),
+    },
+    {
       // TREE-11: from anywhere, focus the tree at the open file's row, revealing it.
       id: "focus-files",
       label: "cmdFocusFiles",

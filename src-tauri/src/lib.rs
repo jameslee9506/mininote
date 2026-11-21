@@ -289,10 +289,14 @@ fn macos_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
         .paste()
         .select_all()
         .build()?;
+    // Close Window (⌘W) is the window's close button (`performClose:`): the close request
+    // lets the window flush first (§8.4), and it closes an About panel too.
     let window = SubmenuBuilder::with_id(app, WINDOW_SUBMENU_ID, "Window")
         .minimize()
         .maximize()
         .fullscreen()
+        .separator()
+        .close_window()
         .build()?;
     MenuBuilder::new(app)
         .items(&[&app_menu, &edit, &window])
