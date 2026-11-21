@@ -133,13 +133,20 @@ sign it ad hoc, and put it in place of the installed one.
 
 ```sh
 npm run tauri -- build --bundles app
-ditto src-tauri/target/release/bundle/macos/mininote.app /Applications/mininote-new.app
-codesign --force --sign - /Applications/mininote-new.app
+mininote_stage="$(mktemp -d /Applications/.mininote-install.XXXXXX)"
+ditto src-tauri/target/release/bundle/macos/mininote.app "$mininote_stage/mininote.app"
+codesign --force --sign - "$mininote_stage/mininote.app"
+codesign --verify --strict "$mininote_stage/mininote.app"
 # Quit mininote, then:
 rm -rf /Applications/mininote.app
-mv /Applications/mininote-new.app /Applications/mininote.app
-open -g /Applications/mininote.app
+mv "$mininote_stage/mininote.app" /Applications/mininote.app
+rmdir "$mininote_stage"
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f /Applications/mininote.app
 ```
+
+Keep the bundle named `mininote.app` even while staging it: use a temporary parent directory,
+not a `mininote-new.app` bundle name that macOS may retain in its app listings. The owner can
+open the installed app when ready; do not launch it just to verify an installation.
 
 The bundler signs nothing in an ordinary local build: the binary carries only the linker's ad-hoc
 signature. `codesign --sign -` seals the bundle and binds it to the app identifier
