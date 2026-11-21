@@ -1192,6 +1192,7 @@ Replace across files is out of scope.
 #### READ-05 · Local images · P0
 - **Behavior.**
   - `![](relative)` and `![[image]]` display local images. The path is tried relative to the note first, then relative to the vault root, then (for bare names) through the LINK-03 lookup.
+  - A raw-HTML `<img src="relative">`, as a README's centered logo is written, displays the same file `![](relative)` would. In the editor raw HTML stays text.
   - The resolved path is the name as listed on disk, so NFC/NFD differences never break images.
   - Images load through Tauri's asset protocol, scoped to the open vault.
   - Remote `http(s)` images load, as in Obsidian.

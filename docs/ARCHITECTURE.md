@@ -647,7 +647,7 @@ A code file is shown by the same `EditorView`, in a state of its own kind. The e
   - a `loose` class on loose lists, and `has-blocks` on lists whose items directly hold a code block, table, quote, rule, heading or HTML block (their items get the block gap, DESIGN §3.1);
   - a `<div class="table-wrap">` around tables;
   - **table alignment as classes** (`align-left`, `align-center`, `align-right`), because `style` attributes are sanitized away;
-  - image `src` resolved through `ctx.resolveImage`;
+  - image `src` resolved through `ctx.resolveImage`, for `![alt](src)` and `![[image]]`;
   - **source lines** (`plugins/lines.ts`, last): `data-line`, the 0-based start line in the full text (frontmatter included), on paragraphs, headings, quotes, list items, tables and table rows, rules, fences (on their `<code>`) and indented code (on its `<pre>`).
 - **Linkify** autolinks only what can be opened: `ftp:` and protocol-relative `//` are off. A `www.` schema follows the editor's Lezer `Autolink` rules (lowercase `www.`, at least one more dot, no `_` in the last two labels, trailing punctuation, an unbalanced `)` and a trailing entity left out) and gets `https://`. Fuzzy links stay off, so `README.md` stays text.
 - **Sanitizing.** `DOMPurify` with:
@@ -655,7 +655,8 @@ A code file is shown by the same `EditorView`, in a state of its own kind. The e
   - forbidden attributes `style popover popovertarget popovertargetaction command commandfor autofocus srcset`;
   - allowed data attributes `data-wiki`, `data-subpath`, `data-line`, `data-lang`;
   - a URI allowlist of `http(s):`, `mailto:`, `asset:`, `http://asset.localhost`, relative URLs, `#`, and `data:image/`;
-  - an `afterSanitizeAttributes` hook that removes `svelte-*` classes, so raw HTML cannot borrow a component's scoped styles (READ-04).
+  - an `afterSanitizeAttributes` hook that removes `svelte-*` classes, so raw HTML cannot borrow a component's scoped styles (READ-04);
+  - in the same hook, the `src` of a raw-HTML `<img>` resolved like a Markdown image's (`plugins/images.ts › htmlImageSrc`, READ-05). Raw HTML is no token the renderer could rewrite, so the hook reads the attribute the browser parsed; `renderMarkdown` hands it the context of the render in progress. A source with a scheme stays as written, which also leaves alone the asset URL of a Markdown image.
 - **Containment.** `.markdown` has `contain: layout`: it is the containing block and stacking context of fixed and absolute raw-HTML elements, which therefore stay inside the article, under the app's UI, without clipping list markers in the gutter. A raw-HTML table (no `.table-wrap`) scrolls horizontally by itself.
 - **`Reader.svelte`** renders into `<article class="markdown">` and delegates clicks: links go through §9.2, and checkboxes call `editor.toggleTaskAtLine`. `markdown.css` implements DESIGN.md §3.1.
   - It follows `editor.lineRequest` (NAV-05): a request for the shown note scrolls the last block whose `data-line` is at or before that line to the top (a fence's `<code>` maps to its `<pre>`), in a `requestAnimationFrame` after the new HTML is in place. A `seq` guard skips requests that were already shown by the editor or an earlier reading view; a request made in reading mode before this view existed is still followed. Requests for another note are dropped. A line above every block shows the start of the note.

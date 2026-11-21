@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { splitImageSize } from "./plugins/images";
+import { htmlImageSrc, splitImageSize } from "./plugins/images";
 import { anchorKey, BROKEN_IMAGE_SRC, renderUnsafe, type RenderContext } from "./render";
 
 /** Anything containing "Missing"/"missing" is unresolved; images become fake asset URLs. */
@@ -72,6 +72,17 @@ describe("embeds and images", () => {
     expect(render("x ![alt|200](a.png)")).toContain('<img src="asset://localhost/href/a.png" alt="alt" width="200">');
     expect(render("x ![](https://example.com/y.png)")).toContain('<img src="https://example.com/y.png" alt="">');
     expect(render("x ![](missing.png)")).toContain('<img src="missing.png" alt="">');
+  });
+
+  it("resolves a raw-HTML image source as a vault path, never a URL", () => {
+    expect(htmlImageSrc("docs/images/a.png", ctx)).toBe("asset://localhost/href/docs/images/a.png");
+    expect(htmlImageSrc(" a.png\n", ctx)).toBe("asset://localhost/href/a.png");
+    expect(htmlImageSrc("missing.png", ctx)).toBeNull();
+    // A remote image, and a Markdown image the renderer already resolved.
+    expect(htmlImageSrc(" https://example.com/a.png", ctx)).toBeNull();
+    expect(htmlImageSrc("asset://localhost/href/a.png", ctx)).toBeNull();
+    expect(htmlImageSrc("data:image/png;base64,AAAA", ctx)).toBeNull();
+    expect(htmlImageSrc("  ", ctx)).toBeNull();
   });
 
   it("marks an image alone in its paragraph as standalone", () => {

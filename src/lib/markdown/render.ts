@@ -12,7 +12,7 @@ import { envFor } from "./plugins/context";
 import { dialectPlugin } from "./plugins/dialect";
 import { fencePlugin } from "./plugins/fences";
 import { frontmatterPlugin } from "./plugins/frontmatter";
-import { BROKEN_IMAGE_SRC, imagePlugin } from "./plugins/images";
+import { BROKEN_IMAGE_SRC, htmlImageSrc, imagePlugin } from "./plugins/images";
 import { sourceLinePlugin } from "./plugins/lines";
 import { linkPlugin } from "./plugins/links";
 import { listPlugin } from "./plugins/lists";
@@ -197,6 +197,9 @@ const PURIFY_CONFIG: Config = {
 
 let purifier: Purifier | null = null;
 
+/** The context of the render being sanitized: the hook below resolves raw-HTML images through it. */
+let sanitizing: RenderContext | null = null;
+
 /** A private DOMPurify instance (hooks and config never leak to other users), created on first use. */
 function getPurifier(): Purifier | null {
   if (purifier === null) {
@@ -204,10 +207,17 @@ function getPurifier(): Purifier | null {
     if (!instance.isSupported) return null;
     instance.setConfig(PURIFY_CONFIG);
     instance.addHook("afterSanitizeAttributes", (node) => {
-      // An <img> whose src was missing or removed (e.g. "file:") shows the muted broken box.
-      if (node.nodeName === "IMG" && !node.getAttribute("src")) {
-        node.setAttribute("src", BROKEN_IMAGE_SRC);
-        node.classList.add("is-broken");
+      if (node.nodeName === "IMG") {
+        const src = node.getAttribute("src");
+        // A raw-HTML <img> names a vault file as `![](src)` does (READ-05). The parsed
+        // attribute is read here, so quoting, entities and line breaks are the browser's.
+        const local = src && sanitizing ? htmlImageSrc(src, sanitizing) : null;
+        if (local !== null) node.setAttribute("src", local);
+        else if (!src) {
+          // A src that was missing or removed (e.g. "file:") shows the muted broken box.
+          node.setAttribute("src", BROKEN_IMAGE_SRC);
+          node.classList.add("is-broken");
+        }
       }
       // Components' scoped classes ("svelte-…") are the same in every copy of a release, and
       // some draw fixed overlays. The renderer never emits them; raw HTML may not borrow them
@@ -230,9 +240,14 @@ export function renderUnsafe(text: string, ctx: RenderContext): string {
 export function renderMarkdown(text: string, ctx: RenderContext): string {
   try {
     const p = getPurifier();
-    if (p !== null) return p.sanitize(renderUnsafe(text, ctx));
+    if (p !== null) {
+      sanitizing = ctx;
+      return p.sanitize(renderUnsafe(text, ctx));
+    }
   } catch (err) {
     console.error("mininote: rendering failed", err);
+  } finally {
+    sanitizing = null;
   }
   // No working sanitizer, or an unexpected failure: show the source as plain text.
   return `<pre>${md.utils.escapeHtml(text)}</pre>`;

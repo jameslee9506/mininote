@@ -7,9 +7,12 @@
  * - Obsidian sizes: `|300` or `|300x200` at the end of the alt text or embed alias,
  *   and an alt text that is only `300` / `300x200`.
  * - An image alone in its paragraph gets `class="standalone"` (displayed as a block).
+ * - A raw-HTML `<img src>` names its file the way `![alt](src)` does. It is not a
+ *   token of its own, so the sanitizer resolves it, through `htmlImageSrc`.
  */
 import type { MarkdownIt, StateCore, Token } from "markdown-it";
 import type { RenderContext } from "../render";
+import { isExternalHref } from "../resolve";
 import { contextOf } from "./context";
 
 /**
@@ -36,6 +39,17 @@ function imageSrc(src: string, wiki: boolean, ctx: RenderContext | null): string
   const resolved = ctx ? ctx.resolveImage(src, wiki ? "wiki" : "href") : null;
   if (resolved !== null) return resolved;
   return wiki ? BROKEN_IMAGE_SRC : src;
+}
+
+/**
+ * The loadable URL of the vault file a raw-HTML `<img src>` names, or null to keep
+ * the source as written: a URL with a scheme (a remote image, or a Markdown image
+ * that is already an asset URL) and a path that leads to no listed image.
+ */
+export function htmlImageSrc(src: string, ctx: RenderContext): string | null {
+  // HTML drops the blanks around a URL; " https://…" must not be looked up as a file name.
+  const path = src.trim();
+  return path === "" || isExternalHref(path) ? null : ctx.resolveImage(path, "href");
 }
 
 function markStandalone(state: StateCore): void {
