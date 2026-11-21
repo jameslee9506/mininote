@@ -69,6 +69,7 @@ mininote ~/work ~/journal  # One window for each folder
 
 The command is not installed with the app:
 
+- **macOS**: turn on *“mininote” terminal command* in the settings (`Mod+,`). It writes `/usr/local/bin/mininote`, for which macOS may ask for an administrator's password once. Turning it off removes the file.
 - **Linux**: the `.deb` and `.rpm` packages put `mininote` in the PATH. For the AppImage, link the file into a folder of your PATH under that name.
 - **Windows**: add the install folder to the PATH; the installer does not do it yet.
 

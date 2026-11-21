@@ -230,6 +230,12 @@ export interface WindowStartup {
   last: boolean;
 }
 
+/**
+ * Whether the `mininote` command is in the shell's PATH and starts this app (`cli_status`,
+ * PLAT-14); null where the app cannot put it there.
+ */
+export type CliStatus = boolean | null;
+
 /** Error object every rejected `invoke` carries (serialized by Rust). */
 export type IpcErrorKind =
   | "no_vault"

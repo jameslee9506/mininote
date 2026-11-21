@@ -10,6 +10,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   Baseline,
+  CliStatus,
   FileContent,
   IpcErrorKind,
   IpcErrorPayload,
@@ -225,6 +226,19 @@ export const windowStartup = () => call<WindowStartup>("window_startup");
  * when the command line asked for it (PLAT-14).
  */
 export const windowShow = () => call<void>("window_show");
+
+/** Whether the `mininote` terminal command is installed for this app; null where it cannot be. */
+export const cliStatus = () => call<CliStatus>("cli_status");
+
+/**
+ * Installs the `mininote` terminal command and returns the status afterwards. Where the system
+ * asks for an administrator's password, it does so under `prompt`; declining changes nothing.
+ * Rejects with "exists" when another program has that name.
+ */
+export const cliInstall = (prompt: string) => call<CliStatus>("cli_install", { prompt });
+
+/** Removes the `mininote` terminal command this app installed; asks and answers as `cliInstall`. */
+export const cliUninstall = (prompt: string) => call<CliStatus>("cli_uninstall", { prompt });
 
 /** Quits: the backend asks every window to flush, then exits (Ctrl+Q on Windows and Linux). */
 export const appQuit = () => call<void>("app_quit");

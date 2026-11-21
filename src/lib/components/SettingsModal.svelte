@@ -1,14 +1,32 @@
+<script lang="ts" module>
+  import type { CliStatus } from "../types";
+
+  /** Declared here, where the snippets below see it too: in the instance script alone, they read `Option` as the DOM's. */
+  interface Option {
+    value: string | number;
+    label: string;
+  }
+
+  /**
+   * The terminal command's status when last asked (PLAT-14), kept between openings so that its
+   * row is there at once; null hides the row.
+   */
+  let knownCommand: CliStatus = null;
+</script>
+
 <script lang="ts">
   // Settings (SET-02): one row per setting, label left and control right, no
   // descriptions. Every change applies at once through settings.update. An icon set
   // is chosen by its own folder and note, drawn instead of named (SET-08). The code
   // font is a monospaced family installed here, listed or typed by hand (SET-07).
-  // The shortcuts row opens the shortcut list in the same panel (SET-06); a quiet
-  // last row shows the app version.
-  import { tick } from "svelte";
+  // The terminal command's switch is no setting: it shows whether the command is
+  // installed, and installs or removes it (PLAT-14). The shortcuts row opens the
+  // shortcut list in the same panel (SET-06); a quiet last row shows the app version.
+  import { onMount, tick } from "svelte";
   import Icon from "./Icon.svelte";
   import Modal from "./Modal.svelte";
   import ShortcutSettings from "./ShortcutSettings.svelte";
+  import { cliInstall, cliStatus, cliUninstall, isIpcError } from "../ipc/commands";
   import { FONT_SIZE_MAX, FONT_SIZE_MIN, settings } from "../state/settings.svelte";
   import { ui } from "../state/ui.svelte";
   import { updater } from "../state/updater.svelte";
@@ -18,11 +36,6 @@
   import { validateName } from "../utils/names";
   import { nfc } from "../utils/path";
   import { isComposing } from "../utils/platform";
-
-  interface Option {
-    value: string | number;
-    label: string;
-  }
 
   const LINE_WIDTHS = [640, 720, 800, 960];
   const THEMES: Option[] = [
@@ -75,6 +88,36 @@
   let customFont = $state(settings.values.codeFont !== "" && !monoFonts.includes(settings.values.codeFont));
   let fontDraft = $state(settings.values.codeFont);
   let fontInvalid = $state(false);
+  /** Whether the `mininote` terminal command is installed; null where the app cannot install it (PLAT-14). */
+  let command = $state<CliStatus>(knownCommand);
+  let commandBusy = false;
+
+  function setCommand(status: CliStatus): void {
+    command = knownCommand = status;
+  }
+
+  onMount(() => {
+    cliStatus()
+      .then(setCommand)
+      .catch((e) => console.error("terminal command status failed", e));
+  });
+
+  /**
+   * Installs or removes the terminal command. The switch follows what the backend reports
+   * afterwards: where the system asks for an administrator's password, declining leaves it as it was.
+   */
+  async function toggleCommand(install: boolean): Promise<void> {
+    if (commandBusy) return;
+    commandBusy = true;
+    try {
+      setCommand(await (install ? cliInstall(t("terminalCommandInstall")) : cliUninstall(t("terminalCommandRemove"))));
+    } catch (e) {
+      console.error("terminal command failed", e);
+      ui.notify(t(!install ? "errCommandRemove" : isIpcError(e, "exists") ? "errCommandTaken" : "errCommandInstall"));
+    } finally {
+      commandBusy = false;
+    }
+  }
 
   function stepFontSize(delta: number): void {
     const size = v.fontSize + delta;
@@ -333,6 +376,10 @@
       {/if}
 
       {@render toggle("confirm", t("confirmDeleteSetting"), v.confirmDelete, (on) => settings.update({ confirmDelete: on }))}
+
+      {#if command !== null}
+        {@render toggle("command", t("terminalCommand"), command, (on) => void toggleCommand(on))}
+      {/if}
 
       <button type="button" class="row page" bind:this={shortcutsRow} onclick={() => show("shortcuts")}>
         <span class="label">{t("shortcuts")}</span>

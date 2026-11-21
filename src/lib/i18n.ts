@@ -68,6 +68,9 @@ const en = {
   attachmentRoot: "Vault root",
   attachmentFolder: "Folder",
   confirmDeleteSetting: "Confirm before deleting",
+  terminalCommand: "“mininote” terminal command",
+  terminalCommandInstall: "mininote wants to install the “mininote” terminal command.",
+  terminalCommandRemove: "mininote wants to remove the “mininote” terminal command.",
   shortcuts: "Shortcuts",
   version: "Version",
 
@@ -120,6 +123,9 @@ const en = {
   errShortcutTaken: "{key} is already used by “{name}”.",
   errUpdate: "Couldn’t update to {version}. {message}",
   errRestart: "Couldn’t restart. Quit and reopen mininote to finish updating.",
+  errCommandInstall: "Couldn’t install the “mininote” terminal command.",
+  errCommandRemove: "Couldn’t remove the “mininote” terminal command.",
+  errCommandTaken: "Another program is already installed as “mininote”.",
 
   ariaSearch: "Search",
   ariaClearSearch: "Clear search",

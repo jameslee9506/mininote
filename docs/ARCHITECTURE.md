@@ -71,7 +71,7 @@ The current build covers every P0 requirement, plus these P1 items:
 │ store.rs    settings JSON (patches), recovery     │      │ components/ Svelte UI                  │
 │ windows.rs  new windows, restore list, focus,     │      │                                        │
 │             what each window is asked to show     │      │                                        │
-│ cli.rs      command-line paths, the restart       │      │                                        │
+│ cli.rs      command-line paths, the PATH command  │      │                                        │
 │ lib.rs      plugins, menu, exit-flush protocol    │      │ (one webview per window)               │
 └───────────────────────────────────────────────────┘      └────────────────────────────────────────┘
 ```
@@ -160,6 +160,9 @@ Every command marked "scoped" also takes `epoch: u64`, either as an argument or 
 | `window_new` | – | – | Opens another window on the Welcome screen, over the calling one (§6.6). |
 | `window_startup` | – | `WindowStartup` | `{ vault, file, last }`: what is planned for the calling window, given out once. `vault` is the folder to open: the one it had when the app last ran, or the one the command line asked it for, with `file`, the name of the file to show in it (§6.9). `last: true` is for the first window while no window list was saved yet (§6.6). Asked when the page starts, and again at every `window:open`. With no plan, a page that starts again in a window gets the vault that window has open. |
 | `window_show` | – | – | The calling window's page has painted: the window is shown (PLAT-03), and comes forward when the command line asked for it (§6.9). |
+| `cli_status` | – | `bool \| null` | Whether the `mininote` command is in the shell's PATH and starts this copy of the app; `null` where the app cannot install it (§6.9). |
+| `cli_install` | `prompt` | `bool \| null` | macOS: writes the command to `/usr/local/bin/mininote`. Where that needs an administrator, the system asks for the password under `prompt`, and declining changes nothing. Returns the status afterwards. Errors: `exists` (another program has that name), `io`. |
+| `cli_uninstall` | `prompt` | `bool \| null` | Removes the command, if this app wrote it; asks and answers as `cli_install`. |
 | `app_quit` | – | – | Ctrl+Q on Windows and Linux: the flush protocol of §6.6, as the macOS Quit item. |
 | `app_exit_ready` | – | – | The calling window has flushed for a quit (§6.6). |
 
@@ -339,6 +342,15 @@ A link is a symlink (on Windows also a junction, which always leads to a folder)
   - A window that is shown already comes forward at the request (`windows::focus`, which also activates the app). One that is not is noted in `front` and comes forward when it is shown, never earlier: a window shown before its first paint flashes empty.
   - `rise` holds the window asked for last and the windows still to be shown: at launch every window, later the others asked for. Showing a window makes it the key window, so each of those that is shown after the one asked for would cover it; `window_show` then brings that one forward again. It ends in front whichever page paints last.
 - **Restart.** An update's restart (§6.7) starts the app with the same command line: Tauri passes the arguments on (on macOS through `open -n … --args`). On `ExitRequested` with `RESTART_EXIT_CODE`, `cli::mark_restart` writes `app_config/restarting`. `setup` reads and removes the mark (`take_restart`), and does not follow the line when the mark is younger than 30 s. On Windows the installer starts the app and no such exit is raised, so there the paths are shown again.
+- **The command** (`cli::shell`, macOS only). An app bundle is in no PATH and nothing installs it, so the command is a shell script that the app writes, on request, to `/usr/local/bin/mininote`. That folder is on every Mac's PATH (`/etc/paths`); a folder that a shell profile adds is not known to an app started from the Dock.
+  - The script makes its paths absolute, because an app starts in `/`, and reports those that name nothing. It starts the app with `open -n -a <bundle> --args …`: through LaunchServices, so that macOS counts the files the app reads as the app's and not as the terminal's, and the shell is free at once. The new process becomes the app, or hands the paths over and exits. When the app runs already (`pgrep -x mininote`; the script's own process is `sh`), `-g` keeps that short-lived process in the background, and the app brings its window forward itself. Without a path the script runs `open -a <bundle>`.
+  - It is never a link to the executable. Tauri refuses an executable path that goes through a symlink on macOS (`tauri-utils › StartingBinary`), which breaks the restart of §6.7, and the shell would wait until the app quits.
+  - The script names the bundle that wrote it. `cli_status` is true when the file starts with the fixed header (`HEAD`, which must never change) and names this bundle: an earlier version's script counts, another program never does, and a moved app reads as not installed. There is no status (`null`, so no switch) for a build outside an app bundle, and for an app that macOS runs from a random path because it was not moved after its download (App Translocation).
+  - `cli_install` refuses a path that holds anything but this app's script (`exists`). It writes as the user: a temporary file in the folder, mode 755, renamed into place. On `PermissionDenied` it runs a fixed AppleScript with `/usr/bin/osascript` (`do shell script … with administrator privileges`), for which macOS asks an administrator's password. Root copies the script from a file in the user's temporary folder under a temporary name and renames it, so a link at the command's path is replaced, never written through. The only variable parts are that file's path and the prompt text; both are passed as arguments after `--` and never spliced into the script. A declined password (error -128) is no error: the status comes back as it was.
+  - `cli_uninstall` removes the file the same way, and only this app's script.
+  - No capability is involved: the commands are the app's own, and take no path from the webview.
+- **Other platforms.** `cli_status` is `null`. A `.deb` or `.rpm` installs `/usr/bin/mininote`, so the command is there. On Windows the PATH is the installer's work, which is not done yet; the arguments are followed all the same.
+- **Settings** (`SettingsModal.svelte`). The switch shows `cli_status`, asked each time the modal opens; the last answer is kept in the module, so the row is there at once. It then shows what `cli_install` or `cli_uninstall` returned. Nothing is stored: it is not a setting.
 
 ## 7. Frontend state (`src/lib/state/*.svelte.ts`)
 
@@ -468,7 +480,7 @@ App.svelte
        ├─ Reader.svelte      rendered HTML (reading view)
        ├─ ImageView.svelte   image files (TREE-15)
        └─ UnsupportedView.svelte any other file: a notice naming its unsupported extension (TREE-16)
-├─ QuickSwitcher · CommandPalette · SettingsModal (on Modal.svelte; its shortcuts page is ShortcutSettings.svelte; a last row shows the app version)
+├─ QuickSwitcher · CommandPalette · SettingsModal (on Modal.svelte; its shortcuts page is ShortcutSettings.svelte; on macOS a switch installs the terminal command, §6.9; a last row shows the app version)
 ├─ UpdateButton.svelte       the update control of §6.7: download tray → percentage → restart arrow
 ├─ ContextMenu · ConfirmDialog · Toasts   the menu is one panel, and a second one beside it for an item's submenu (TREE-09)
 └─ Icon.svelte               inline SVG icon set; a folder is solid where its parent sets --icon-fill (tree rows, by icon set)

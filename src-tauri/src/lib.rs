@@ -114,6 +114,9 @@ pub fn run() {
             windows::window_new,
             windows::window_startup,
             windows::window_show,
+            cli::cli_status,
+            cli::cli_install,
+            cli::cli_uninstall,
             app_quit,
             app_exit_ready,
         ]);

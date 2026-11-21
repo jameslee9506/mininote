@@ -1,5 +1,6 @@
-//! The command line (PLAT-14, ARCHITECTURE §6.9): the folders and files it names,
-//! and the restart that repeats one.
+//! The `mininote` command (PLAT-14, ARCHITECTURE §6.9): the folders and files a
+//! command line names, the restart that repeats one, and the command's place in the
+//! shell's PATH, which Settings turns on and off (macOS).
 
 use std::ffi::OsStr;
 use std::fs;
@@ -9,6 +10,8 @@ use std::time::Duration;
 
 use tauri::{AppHandle, Manager};
 
+use crate::error::AppResult;
+use crate::vault::background;
 use crate::windows;
 
 /// A command line opens this many folders at most: a stray glob never fills the screen.
@@ -149,6 +152,304 @@ pub fn take_restart(app: &AppHandle) -> bool {
         .is_some_and(|age| age < RESTART_WINDOW);
     let _ = fs::remove_file(&mark);
     fresh
+}
+
+/// `cli_status`: whether the `mininote` command is in the shell's PATH and starts
+/// this app; `null` where the app cannot put it there (`CliStatus` in src/lib/types.ts).
+#[tauri::command]
+pub async fn cli_status() -> AppResult<Option<bool>> {
+    background(|| Ok(shell::status())).await
+}
+
+/// `cli_install`: puts the command in the shell's PATH. Where that needs an
+/// administrator, the system asks for the password under `prompt`; declining it
+/// changes nothing. Another program's `mininote` is never replaced (`exists`).
+/// Returns the status afterwards.
+#[tauri::command]
+pub async fn cli_install(prompt: String) -> AppResult<Option<bool>> {
+    background(move || shell::install(&prompt)).await
+}
+
+/// `cli_uninstall`: removes the command this app installed, asking as `cli_install`
+/// does. Returns the status afterwards.
+#[tauri::command]
+pub async fn cli_uninstall(prompt: String) -> AppResult<Option<bool>> {
+    background(move || shell::uninstall(&prompt)).await
+}
+
+/// macOS: an app bundle is in no PATH, and nothing installs it, so the command is a
+/// script the app writes on request. Its place is `/usr/local/bin`: the one folder
+/// of every Mac's PATH (`/etc/paths`) that is meant for such commands. A folder the
+/// user's shell profile adds is not known to an app started from the Dock.
+#[cfg(target_os = "macos")]
+mod shell {
+    use std::fs;
+    use std::io::{self, Write};
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::Path;
+    use std::process::Command;
+
+    use crate::error::{AppError, AppResult, ErrorKind};
+
+    const BIN_DIR: &str = "/usr/local/bin";
+    const COMMAND: &str = "/usr/local/bin/mininote";
+
+    /// How the script begins: what tells this app's command from another program of
+    /// that name. Never change it, or installed commands are no longer recognized.
+    const HEAD: &str =
+        "#!/bin/sh\n# mininote [path ...]: opens folders, and files in their folder, in mininote.\n";
+
+    /// The rest of the script; `@APP@` is the app bundle, quoted for the shell.
+    ///
+    /// The paths go to the app as arguments, absolute because an app starts in `/`.
+    /// `open` starts it, so that macOS counts the files it reads as the app's and not
+    /// as the terminal's, and the shell is free at once. `-n` starts a new process,
+    /// which becomes the app, or hands the paths to the running app and exits
+    /// (single-instance). In that second case it stays in the background (`-g`): it
+    /// would take the place in front and then quit, and the running app brings the
+    /// window it opens forward itself. `pgrep -x` matches the app's process, never
+    /// this script, whose own process is `sh`.
+    const BODY: &str = r#"# Written by mininote. Its setting for this command removes the file again.
+app=@APP@
+
+case ${1-} in
+  -h | --help)
+    printf '%s\n' 'usage: mininote [path ...]'
+    exit 0
+    ;;
+  --) shift ;;
+esac
+[ "$#" -gt 0 ] || exec /usr/bin/open -a "$app"
+
+status=0
+n=$#
+while [ "$n" -gt 0 ]; do
+  p=$1
+  shift
+  n=$((n - 1))
+  case $p in
+    /*) ;;
+    *) p=$PWD/$p ;;
+  esac
+  if [ -e "$p" ]; then
+    set -- "$@" "$p"
+  else
+    printf 'mininote: %s: No such file or directory\n' "$p" >&2
+    status=1
+  fi
+done
+[ "$#" -gt 0 ] || exit "$status"
+
+if /usr/bin/pgrep -qx mininote; then
+  /usr/bin/open -n -g -a "$app" --args "$@" || exit
+else
+  /usr/bin/open -n -a "$app" --args "$@" || exit
+fi
+exit "$status"
+"#;
+
+    /// AppleScript for `osascript`, which is given the staged script and the prompt.
+    /// Root copies the script under a temporary name and renames it, so a link at
+    /// the command's path is replaced and never written through.
+    const INSTALL: &[&str] = &[
+        "on run argv",
+        "do shell script \"/bin/mkdir -p /usr/local/bin && t=$(/usr/bin/mktemp /usr/local/bin/.mininote.XXXXXX) && /bin/cat \" & quoted form of (item 1 of argv) & \" > $t && /bin/chmod 755 $t && /bin/mv -f $t /usr/local/bin/mininote\" with prompt (item 2 of argv) with administrator privileges",
+        "end run",
+    ];
+    /// AppleScript for `osascript`, which is given the prompt.
+    const REMOVE: &[&str] = &[
+        "on run argv",
+        "do shell script \"/bin/rm -f /usr/local/bin/mininote\" with prompt (item 1 of argv) with administrator privileges",
+        "end run",
+    ];
+
+    pub fn status() -> Option<bool> {
+        let app = bundle()?;
+        Some(fs::read_to_string(COMMAND).is_ok_and(|text| starts(&text, &app)))
+    }
+
+    pub fn install(prompt: &str) -> AppResult<Option<bool>> {
+        let app = bundle().ok_or_else(|| {
+            AppError::new(ErrorKind::Io, "the app does not run from an app bundle")
+        })?;
+        let taken = fs::symlink_metadata(COMMAND).is_ok();
+        if taken && !fs::read_to_string(COMMAND).is_ok_and(|text| is_ours(&text)) {
+            return Err(AppError::new(
+                ErrorKind::Exists,
+                format!("{COMMAND} is another program"),
+            ));
+        }
+        let script = script(&app);
+        match write(&script) {
+            Ok(()) => {}
+            // The folder is root's, as on every Mac that nothing changed it on.
+            Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
+                write_as_root(&script, prompt)?
+            }
+            Err(e) => return Err(AppError::from_io(e, "install the command")),
+        }
+        Ok(status())
+    }
+
+    pub fn uninstall(prompt: &str) -> AppResult<Option<bool>> {
+        // Only a command this app wrote is removed, whichever copy of the app it starts.
+        if fs::read_to_string(COMMAND).is_ok_and(|text| is_ours(&text)) {
+            match fs::remove_file(COMMAND) {
+                Ok(()) => {}
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
+                    as_root(REMOVE, &[prompt])?;
+                }
+                Err(e) => return Err(AppError::from_io(e, "remove the command")),
+            }
+        }
+        Ok(status())
+    }
+
+    /// The app bundle this process runs from, which the command starts. `None` for a
+    /// build that is in no bundle (development), and for a downloaded app that macOS
+    /// runs from a random read-only path until it is moved (App Translocation): that
+    /// path does not last.
+    fn bundle() -> Option<String> {
+        let exe = fs::canonicalize(std::env::current_exe().ok()?).ok()?;
+        let macos = exe.parent()?;
+        let app = macos.parent()?.parent()?;
+        let bundled = macos.ends_with("Contents/MacOS")
+            && app.extension().is_some_and(|ext| ext == "app")
+            && !app
+                .components()
+                .any(|part| part.as_os_str() == "AppTranslocation");
+        if !bundled {
+            return None;
+        }
+        app.to_str().map(str::to_owned)
+    }
+
+    fn script(app: &str) -> String {
+        format!("{HEAD}{}", BODY.replace("@APP@", &quote(app)))
+    }
+
+    /// `text` in single quotes, for `sh`.
+    fn quote(text: &str) -> String {
+        format!("'{}'", text.replace('\'', r"'\''"))
+    }
+
+    fn is_ours(text: &str) -> bool {
+        text.starts_with(HEAD)
+    }
+
+    /// The script is this app's and starts the bundle `app`. The rest of it may be
+    /// an earlier version's, which works as well.
+    fn starts(text: &str, app: &str) -> bool {
+        is_ours(text) && text.contains(&format!("\napp={}\n", quote(app)))
+    }
+
+    /// Writes the command as the user, replacing it in one step.
+    fn write(script: &str) -> io::Result<()> {
+        fs::create_dir_all(BIN_DIR)?;
+        let temp = Path::new(BIN_DIR).join(format!(".mininote.{}", std::process::id()));
+        let written = fs::write(&temp, script)
+            .and_then(|()| fs::set_permissions(&temp, fs::Permissions::from_mode(0o755)))
+            .and_then(|()| fs::rename(&temp, COMMAND));
+        if written.is_err() {
+            let _ = fs::remove_file(&temp);
+        }
+        written
+    }
+
+    /// Writes the command as root, which copies it from a file in the user's own
+    /// temporary folder: what root runs is fixed text and that file's path. The
+    /// file is created new, so it is never a link somebody else left there.
+    fn write_as_root(script: &str, prompt: &str) -> AppResult<()> {
+        let staged = std::env::temp_dir().join(format!("mininote-command.{}", std::process::id()));
+        let _ = fs::remove_file(&staged);
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&staged)
+            .and_then(|mut file| file.write_all(script.as_bytes()))
+            .map_err(|e| AppError::from_io(e, "stage the command"))?;
+        let done = match staged.to_str() {
+            Some(path) => as_root(INSTALL, &[path, prompt]),
+            None => Err(AppError::new(
+                ErrorKind::InvalidPath,
+                "the temporary folder is not valid UTF-8",
+            )),
+        };
+        let _ = fs::remove_file(&staged);
+        done
+    }
+
+    /// Runs one of the AppleScripts above, for which macOS asks an administrator's
+    /// password. Declining is not an error: nothing was done.
+    fn as_root(lines: &[&str], args: &[&str]) -> AppResult<()> {
+        let mut osascript = Command::new("/usr/bin/osascript");
+        for line in lines {
+            osascript.arg("-e").arg(line);
+        }
+        // After `--` nothing is read as an option of osascript itself.
+        let output = osascript
+            .arg("--")
+            .args(args)
+            .output()
+            .map_err(|e| AppError::from_io(e, "ask for an administrator"))?;
+        if output.status.success() {
+            return Ok(());
+        }
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // -128 is AppleScript's "user canceled".
+        if stderr.contains("(-128)") {
+            return Ok(());
+        }
+        Err(AppError::new(
+            ErrorKind::Io,
+            format!("the administrator's command failed: {}", stderr.trim()),
+        ))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn the_script_names_its_app() {
+            let app = "/Applications/It's mine/mininote.app";
+            let text = script(app);
+            assert!(text.contains("\napp='/Applications/It'\\''s mine/mininote.app'\n"));
+            assert!(!text.contains("@APP@"));
+            assert!(is_ours(&text) && starts(&text, app));
+            assert!(!starts(&text, "/Applications/mininote.app"));
+            // An earlier version's script still counts, and another program never does.
+            assert!(starts(&format!("{HEAD}app='/a.app'\nexit 0\n"), "/a.app"));
+            assert!(!is_ours("#!/bin/sh\nexec something-else \"$@\"\n"));
+        }
+    }
+}
+
+/// Windows and Linux: nothing to do here. A Linux package installs `mininote` into
+/// the PATH itself, and on Windows that is the installer's work.
+#[cfg(not(target_os = "macos"))]
+mod shell {
+    use crate::error::{AppError, AppResult, ErrorKind};
+
+    pub fn status() -> Option<bool> {
+        None
+    }
+
+    pub fn install(_prompt: &str) -> AppResult<Option<bool>> {
+        Err(unsupported())
+    }
+
+    pub fn uninstall(_prompt: &str) -> AppResult<Option<bool>> {
+        Err(unsupported())
+    }
+
+    fn unsupported() -> AppError {
+        AppError::new(
+            ErrorKind::Io,
+            "the command is not installed by the app on this system",
+        )
+    }
 }
 
 #[cfg(test)]

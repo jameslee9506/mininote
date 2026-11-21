@@ -1252,6 +1252,7 @@ Math and diagrams are out of scope.
   - Spellcheck.
   - Source mode.
   - Confirm before deleting.
+  - Terminal command (macOS): a switch that installs and removes the `mininote` command (PLAT-14). It is off until someone turns it on, and it shows what is installed, not a stored setting.
   - Shortcuts: the last row opens the shortcut list (SET-06).
 - **Sources.** OB §11, MT §10, OT §4.9, DESIGN.md §4.
 
@@ -1421,14 +1422,19 @@ Math and diagrams are out of scope.
   - When the app was not running, the windows of the last run come back as at any launch (VAULT-08), and the window asked for stands in front of them. With several paths, the window of the last one does.
   - Without a path, the app starts, or its window used last comes forward (PLAT-05).
   - A path that names nothing is reported in the terminal. The other paths still open.
+  - The command is not installed with the app. Whoever wants it turns it on in the settings (SET-02), and off again there.
 - **Edge cases.**
   - The file's name may be typed in another case or Unicode form than it has on disk (PLAT-06, PLAT-07).
   - A file the tree does not list, a hidden one, is not shown: only its folder opens.
   - A link to a file opens in the folder the link is in, as that file (TREE-18). A link to a folder is that folder: a vault's root is never a link.
   - Several files of one folder name one window, which shows the last of them.
   - One command line opens eight folders at most, so a stray `*` does not fill the screen with windows.
+  - macOS: the switch writes the command to `/usr/local/bin/mininote`, a folder of every Mac's PATH. Where that folder belongs to the system, macOS asks for an administrator's password, once to install and once to remove; declining leaves everything as it was. Another program named `mininote` there is never replaced, and an error toast says so. The command starts the copy of the app that installed it, so a moved app shows the switch off, and turning it on writes the command again.
+  - macOS: the switch is not shown where the command could not start the app: a build that runs outside an app bundle (development), or a downloaded app that was not moved out of its download folder yet.
+  - Linux: a `.deb` or `.rpm` package puts `mininote` in the PATH itself, so there is no switch. An AppImage is one file, which its user links into the PATH.
+  - Windows: the installer does not put the app in the PATH, and there is no switch yet. The command works once the install folder is in the PATH.
   - An update's restart does not show the paths again, although it starts the app with the same command line (macOS and Linux; on Windows, where the installer starts the app, it still does).
-- **Decision.** A file always opens the folder it is in, also when a vault that is open, or was, contains that folder: the rule needs no knowledge of other vaults, and a file always has a folder.
+- **Decision.** A file always opens the folder it is in, also when a vault that is open, or was, contains that folder: the rule needs no knowledge of other vaults, and a file always has a folder. Installing the command is a choice, never a side effect of installing the app: it writes outside the app, into a folder of the system.
 - **Sources.** The owner's request (2026-11-19). OT §2.8 and ZT §10 for a second launch that hands its arguments to the first.
 
 ---
