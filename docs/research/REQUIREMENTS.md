@@ -104,6 +104,7 @@ Anything not listed is out of scope (§13).
   - Up to 10 recent vaults, most recent first. They appear on the empty state and in the vault menu, which opens from the vault name in the sidebar footer.
   - In the sidebar menu, each recent vault name has a leading bound notebook icon.
   - Actions: open; remove from the list (never deletes files); open another folder.
+  - A folder of the tree opens as the vault from its context menu (TREE-09).
   - Switching flushes saves, then replaces the window's vault.
   - [critic] If that flush fails, recovery copies are written first (SAVE-10), then every save retry of the old vault is cancelled. File commands carry the vault epoch (PLAT-08), so nothing started for the old vault can write into the new one.
 - **Sources.** OB §2, MS §1, OT §3.
@@ -255,8 +256,9 @@ Anything not listed is out of scope (§13).
 #### TREE-09 · Context menus · P0
 - **Items.** Text only, with no icons and no shortcut hints.
   - File: Rename, Reveal in Finder / Show in Explorer / Show in file manager (label per OS), Copy, Delete.
-  - Folder: New note, New folder, then the items of a file.
+  - Folder: New note, New folder, Open as vault, then the items of a file.
   - Empty tree area: New note and New folder, both in the root.
+- **Open as vault.** The folder becomes the window's vault, as a recent vault does when it is picked (VAULT-05): saves are flushed first, and the folder opens with a session of its own. A folder that another window has open comes forward there, and this window stays as it is (VAULT-07). The vault it was in stays on the recent list, so the vault menu leads back to it.
 - **Copy.** *Changed:* one item with a submenu, where a single "Copy path" was planned (P1).
   - The submenu holds Absolute path, Relative path (from the vault root, with the separator of the OS) and Name (the file's name with its extension, or the folder's). The three are never items of the menu itself.
   - A submenu is a second panel beside the menu, its first item level with the item that opened it, on the side that has room. An item that has one shows a chevron at its right edge.

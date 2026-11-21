@@ -109,7 +109,7 @@
   // of vault.rows with keyboard navigation, context menus and drag-to-move.
   import { untrack } from "svelte";
   import TreeRow from "./TreeRow.svelte";
-  import { newFolder, newNote } from "../appCommands";
+  import { newFolder, newNote, openVault } from "../appCommands";
   import { vault, type TreeRow as RowData } from "../state/vault.svelte";
   import { editor } from "../state/editor.svelte";
   import { ui, type MenuEntry } from "../state/ui.svelte";
@@ -513,9 +513,15 @@
 
   function folderMenu(node: TreeNode): MenuEntry[] {
     const path = node.path;
+    // The folder as it is on disk now, in the vault this menu opened in.
+    const root = vault.absPath(path);
     return [
       { label: t("newNote"), run: () => safely(newNote({ dir: path })) },
       { label: t("newFolder"), run: () => safely(newFolder(path)) },
+      { separator: true },
+      // VAULT-05: the folder replaces this window's vault, as a recent vault does; a window
+      // that has it open already comes forward instead (VAULT-07).
+      { label: t("openAsVault"), run: () => safely(openVault(root)) },
       { separator: true },
       ...fileMenu(node),
     ];

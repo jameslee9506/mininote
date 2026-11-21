@@ -11,6 +11,7 @@ const en = {
 
   newNote: "New note",
   newFolder: "New folder",
+  openAsVault: "Open as vault",
   rename: "Rename",
   delete: "Delete",
   cancel: "Cancel",
