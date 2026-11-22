@@ -21,7 +21,8 @@ const MAX_LINES_PER_FILE: usize = 20;
 const SNIPPET_CHARS: usize = 240;
 /// Characters kept before the first hit in a trimmed line.
 const SNIPPET_LEAD: usize = 30;
-const MAX_LIMIT: u32 = 1000;
+/// The most files one search lists, whatever `limit` asks for.
+pub const MAX_LIMIT: u32 = 1000;
 const ELLIPSIS: char = '…';
 
 /// `SearchMatch` in src/lib/types.ts.
@@ -80,7 +81,9 @@ pub async fn search_text(
     .await
 }
 
-fn search_vault(
+/// Searches the notes of the vault `root` (`search_text`): the best `limit`
+/// files, or fewer and `truncated` once `cancelled` says to stop.
+pub fn search_vault(
     root: &Path,
     query: &str,
     case_sensitive: bool,

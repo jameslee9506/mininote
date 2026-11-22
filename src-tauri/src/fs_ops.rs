@@ -637,7 +637,7 @@ fn list_threads() -> usize {
 /// complete listing: a level keeps the order of the folders it was read from, and
 /// each folder the order its entries were read in. Our temp files left by a crash
 /// are deleted on the way (SAVE-04).
-fn list_vault(root: &Path, cap: usize) -> AppResult<ListResult> {
+pub fn list_vault(root: &Path, cap: usize) -> AppResult<ListResult> {
     fs::read_dir(root).map_err(|e| {
         AppError::new(
             ErrorKind::RootUnavailable,
@@ -860,7 +860,8 @@ fn stat_note(abs: &Path, rel: &str) -> AppResult<Metadata> {
     Ok(meta)
 }
 
-fn read_note(abs: &Path, rel: &str) -> AppResult<FileContent> {
+/// Reads the note at `abs` (`note_read`); `rel` names it in errors.
+pub fn read_note(abs: &Path, rel: &str) -> AppResult<FileContent> {
     let mut attempt = 0;
     loop {
         let before = stat_note(abs, rel)?;
@@ -1327,7 +1328,9 @@ pub async fn note_write(window: WebviewWindow, request: Request<'_>) -> AppResul
     .await
 }
 
-fn write_note(
+/// Writes `bytes` as the note at `abs` (`note_write`, ARCHITECTURE §6.2). With
+/// `expected`, the note must still be what that baseline describes.
+pub fn write_note(
     state: &VaultState,
     root: &Path,
     abs: &Path,
@@ -1453,22 +1456,32 @@ pub async fn note_create(
 ) -> AppResult<Baseline> {
     blocking(&window, move |state| {
         let root = state.check(epoch)?;
-        let abs = vault::resolve(&root, &path)?;
-        if path.is_empty() {
-            return Err(AppError::new(ErrorKind::Exists, "the vault folder exists"));
-        }
-        ensure_parent_dirs(&root, &abs)?;
-        let bytes = content.as_bytes();
-        create_exclusive(&abs, bytes, &path)?;
-        state.registry().remove(&abs);
-        let meta = lstat(&abs, &path)?;
-        Ok(Baseline {
-            mtime: mtime_ms(&meta),
-            size: meta.len(),
-            hash: hash_hex(bytes),
-        })
+        create_note(state, &root, &path, content.as_bytes())
     })
     .await
+}
+
+/// Creates the new note `rel` with `bytes` (`note_create`), and its missing
+/// folders; never over an entry that is there.
+pub fn create_note(
+    state: &VaultState,
+    root: &Path,
+    rel: &str,
+    bytes: &[u8],
+) -> AppResult<Baseline> {
+    let abs = vault::resolve(root, rel)?;
+    if rel.is_empty() {
+        return Err(AppError::new(ErrorKind::Exists, "the vault folder exists"));
+    }
+    ensure_parent_dirs(root, &abs)?;
+    create_exclusive(&abs, bytes, rel)?;
+    state.registry().remove(&abs);
+    let meta = lstat(&abs, rel)?;
+    Ok(Baseline {
+        mtime: mtime_ms(&meta),
+        size: meta.len(),
+        hash: hash_hex(bytes),
+    })
 }
 
 /// `binary_write` (scoped, raw body): a new file only (pasted or dropped images).
@@ -1496,19 +1509,25 @@ pub async fn binary_write(window: WebviewWindow, request: Request<'_>) -> AppRes
 pub async fn dir_create(window: WebviewWindow, epoch: u64, path: String) -> AppResult<()> {
     blocking(&window, move |state| {
         let root = state.check(epoch)?;
-        let abs = vault::resolve(&root, &path)?;
-        if path.is_empty() || fs::symlink_metadata(&abs).is_ok() {
-            return Err(AppError::new(
-                ErrorKind::Exists,
-                format!("already exists: {path}"),
-            ));
-        }
-        ensure_parent_dirs(&root, &abs)?;
-        fs::create_dir(&abs).map_err(|e| AppError::from_write(e, &path))?;
-        state.registry().remove(&abs);
-        Ok(())
+        create_dir(state, &root, &path)
     })
     .await
+}
+
+/// Creates the folder `rel` and its missing parents (`dir_create`); never where
+/// an entry is.
+pub fn create_dir(state: &VaultState, root: &Path, rel: &str) -> AppResult<()> {
+    let abs = vault::resolve(root, rel)?;
+    if rel.is_empty() || fs::symlink_metadata(&abs).is_ok() {
+        return Err(AppError::new(
+            ErrorKind::Exists,
+            format!("already exists: {rel}"),
+        ));
+    }
+    ensure_parent_dirs(root, &abs)?;
+    fs::create_dir(&abs).map_err(|e| AppError::from_write(e, rel))?;
+    state.registry().remove(&abs);
+    Ok(())
 }
 
 // ---------------------------------------------------------------- copy
@@ -1584,7 +1603,13 @@ pub async fn path_rename(
     .await
 }
 
-fn rename_entry(state: &VaultState, root: &Path, from_rel: &str, to_rel: &str) -> AppResult<()> {
+/// Gives the entry `from_rel` the path `to_rel` (`path_rename`).
+pub fn rename_entry(
+    state: &VaultState,
+    root: &Path,
+    from_rel: &str,
+    to_rel: &str,
+) -> AppResult<()> {
     if from_rel.is_empty() || to_rel.is_empty() {
         return Err(invalid("the vault folder cannot be renamed"));
     }
@@ -1829,25 +1854,31 @@ fn case_rename_temp(from: &Path) -> io::Result<PathBuf> {
 pub async fn path_trash(window: WebviewWindow, epoch: u64, path: String) -> AppResult<()> {
     blocking(&window, move |state| {
         let root = state.check(epoch)?;
-        if path.is_empty() {
-            return Err(invalid("the vault folder cannot be deleted"));
-        }
-        let abs = vault::resolve(&root, &path)?;
-        lstat(&abs, &path)?;
-        #[allow(unused_mut)]
-        let mut trash = trash::TrashContext::default();
-        #[cfg(target_os = "macos")]
-        {
-            // The default method drives Finder through AppleScript and can raise
-            // an Automation permission prompt (TREE-08).
-            use trash::macos::{DeleteMethod, TrashContextExtMacos};
-            trash.set_delete_method(DeleteMethod::NsFileManager);
-        }
-        trash
-            .delete(&abs)
-            .map_err(|e| AppError::new(ErrorKind::TrashFailed, format!("{path}: {e}")))
+        trash_entry(&root, &path)
     })
     .await
+}
+
+/// Moves the entry `rel` to the OS trash (`path_trash`): a link itself, never its
+/// file.
+pub fn trash_entry(root: &Path, rel: &str) -> AppResult<()> {
+    if rel.is_empty() {
+        return Err(invalid("the vault folder cannot be deleted"));
+    }
+    let abs = vault::resolve(root, rel)?;
+    lstat(&abs, rel)?;
+    #[allow(unused_mut)]
+    let mut trash = trash::TrashContext::default();
+    #[cfg(target_os = "macos")]
+    {
+        // The default method drives Finder through AppleScript and can raise
+        // an Automation permission prompt (TREE-08).
+        use trash::macos::{DeleteMethod, TrashContextExtMacos};
+        trash.set_delete_method(DeleteMethod::NsFileManager);
+    }
+    trash
+        .delete(&abs)
+        .map_err(|e| AppError::new(ErrorKind::TrashFailed, format!("{rel}: {e}")))
 }
 
 /// `path_delete` (scoped): permanent, recursive; only after confirmation.
@@ -1855,19 +1886,25 @@ pub async fn path_trash(window: WebviewWindow, epoch: u64, path: String) -> AppR
 pub async fn path_delete(window: WebviewWindow, epoch: u64, path: String) -> AppResult<()> {
     blocking(&window, move |state| {
         let root = state.check(epoch)?;
-        if path.is_empty() {
-            return Err(invalid("the vault folder cannot be deleted"));
-        }
-        let abs = vault::resolve(&root, &path)?;
-        let meta = lstat(&abs, &path)?;
-        let removed = if meta.is_dir() {
-            fs::remove_dir_all(&abs)
-        } else {
-            fs::remove_file(&abs)
-        };
-        removed.map_err(|e| AppError::from_io(e, &path))
+        delete_entry(&root, &path)
     })
     .await
+}
+
+/// Deletes the entry `rel` for good (`path_delete`): a folder with all it holds,
+/// a link itself.
+pub fn delete_entry(root: &Path, rel: &str) -> AppResult<()> {
+    if rel.is_empty() {
+        return Err(invalid("the vault folder cannot be deleted"));
+    }
+    let abs = vault::resolve(root, rel)?;
+    let meta = lstat(&abs, rel)?;
+    let removed = if meta.is_dir() {
+        fs::remove_dir_all(&abs)
+    } else {
+        fs::remove_file(&abs)
+    };
+    removed.map_err(|e| AppError::from_io(e, rel))
 }
 
 /// `path_exists` (scoped).

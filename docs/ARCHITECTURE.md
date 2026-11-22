@@ -18,7 +18,7 @@ The current build covers every P0 requirement, plus these P1 items:
 - SAVE-09, SAVE-11
 - NAV-02 (Hangul extras, already in `utils/fuzzy.ts`), NAV-03, NAV-06
 - SRCH-01, SRCH-02
-- SET-02, SET-06, SET-07, SET-08, PLAT-05, PLAT-12, PLAT-14
+- SET-02, SET-06, SET-07, SET-08, PLAT-05, PLAT-12, PLAT-14, PLAT-15
 
 **Deferred** to the next round:
 - SAVE-06 P1 (three-way merge); the conflict copy is the P0 behavior
@@ -73,6 +73,7 @@ The current build covers every P0 requirement, plus these P1 items:
 │ windows.rs  new windows, restore list, focus,     │      │                                        │
 │             what each window is asked to show     │      │                                        │
 │ cli.rs      command-line paths, the PATH command  │      │                                        │
+│ headless.rs subcommands, answered without the app │      │                                        │
 │ lib.rs      plugins, menu, exit-flush protocol    │      │ (one webview per window)               │
 └───────────────────────────────────────────────────┘      └────────────────────────────────────────┘
 ```
@@ -106,7 +107,7 @@ src/
     pdf/                     engine.ts (PDF.js, loaded on demand) · zoom.ts (zoom steps, typed page and zoom)
     components/              Svelte components (§9)
 src-tauri/src/
-  lib.rs  error.rs  vault.rs  fs_ops.rs  watcher.rs  search.rs  store.rs  windows.rs  cli.rs
+  lib.rs  error.rs  vault.rs  fs_ops.rs  watcher.rs  search.rs  store.rs  windows.rs  cli.rs  headless.rs
 docs/
   ARCHITECTURE.md  DESIGN.md  releasing.md  research/ (OSS analyses, REQUIREMENTS.md, TECHNIQUES.md)
 vite.config.ts               the build; its `pdfAssets` plugin serves and publishes the files PDF.js fetches (§10.5)
@@ -325,11 +326,11 @@ A link is a symlink (on Windows also a junction, which always leads to a folder)
 
 ### 6.9 Command line (`cli.rs`, `windows.rs`, PLAT-14)
 
-`mininote [path ...]` shows folders, and files in their folder. A command line reaches the app in one of two ways, and both end in `windows::open`.
+`mininote [path ...]` shows folders, and files in their folder. A command line reaches the app in one of two ways, and both end in `windows::open`. One that begins with a subcommand reaches no app at all (§6.10).
 
 - **Targets.** `cli::targets(args, cwd)` turns a command line into targets `{ vault, file }`.
   - A folder is its own target. A file's target is the folder it is in, with the file's name. The folder is canonicalized with dunce, as `vault_open` does, so a target names a vault the way the windows do. The name stays as typed: a link remains the entry of its own folder (§6.8), and the frontend finds the spelling the folder lists it under (§4).
-  - The command has no options. An argument that starts with `-` is skipped, and after `--` every argument is a path. Targets with the same folder are one target, with the file named last. A line gives eight targets at most.
+  - Opening has no options. An argument that starts with `-` is skipped, and after `--` every argument is a path. Targets with the same folder are one target, with the file named last. A line gives eight targets at most.
 - **Two ways in.**
   - *The app is not running.* `cli::launch()` resolves the process's own line first thing in `run()`. A path that names nothing is written to stderr and the app starts all the same; the write's failure is ignored, because `eprintln!` panics once the terminal that started the app is gone. `setup` restores the windows (§6.6), then calls `windows::open(targets, launch: true)`.
   - *The app is running.* The single-instance plugin hands the second launch's arguments and working folder to the first (`cli::relaunched`). They are resolved on the blocking pool; then `windows::open(targets, launch: false)`, or `focus_last` when there is no target (PLAT-05).
@@ -347,14 +348,56 @@ A link is a symlink (on Windows also a junction, which always leads to a folder)
   - `rise` holds the window asked for last and the windows still to be shown: at launch every window, later the others asked for. Showing a window makes it the key window, so each of those that is shown after the one asked for would cover it; `window_show` then brings that one forward again. It ends in front whichever page paints last.
 - **Restart.** An update's restart (§6.7) starts the app with the same command line: Tauri passes the arguments on (on macOS through `open -n … --args`). On `ExitRequested` with `RESTART_EXIT_CODE`, `cli::mark_restart` writes `app_config/restarting`. `setup` reads and removes the mark (`take_restart`), and does not follow the line when the mark is younger than 30 s. On Windows the installer starts the app and no such exit is raised, so there the paths are shown again.
 - **The command** (`cli::shell`, macOS only). An app bundle is in no PATH and nothing installs it, so the command is a shell script that the app writes, on request, to `/usr/local/bin/mininote`. That folder is on every Mac's PATH (`/etc/paths`); a folder that a shell profile adds is not known to an app started from the Dock.
-  - The script makes its paths absolute, because an app starts in `/`, and reports those that name nothing. It starts the app with `open -n -a <bundle> --args …`: through LaunchServices, so that macOS counts the files the app reads as the app's and not as the terminal's, and the shell is free at once. The new process becomes the app, or hands the paths over and exits. When the app runs already (`pgrep -x mininote`; the script's own process is `sh`), `-g` keeps that short-lived process in the background, and the app brings its window forward itself. Without a path the script runs `open -a <bundle>`.
+  - A subcommand goes to the app's program, not to the app. The script runs `<bundle>/Contents/MacOS/<program> --is-subcommand "$1"` and, when that exits with 0, replaces itself with the program and all its arguments (`exec`): standard input, the output and the exit status are the program's (§6.10). The script names no subcommand, and stays as it is when one is added.
+  - Any other arguments are paths. The script makes its paths absolute, because an app starts in `/`, and reports those that name nothing. It starts the app with `open -n -a <bundle> --args …`: through LaunchServices, so that macOS counts the files the app reads as the app's and not as the terminal's, and the shell is free at once. The new process becomes the app, or hands the paths over and exits. When the app runs already (`pgrep -x mininote`; the script's own process is `sh`), `-g` keeps that short-lived process in the background, and the app brings its window forward itself. Without a path the script runs `open -a <bundle>`.
   - It is never a link to the executable. Tauri refuses an executable path that goes through a symlink on macOS (`tauri-utils › StartingBinary`), which breaks the restart of §6.7, and the shell would wait until the app quits.
-  - The script names the bundle that wrote it. `cli_status` is true when the file starts with the fixed header (`HEAD`, which must never change) and names this bundle: an earlier version's script counts, another program never does, and a moved app reads as not installed. There is no status (`null`, so no switch) for a build outside an app bundle, and for an app that macOS runs from a random path because it was not moved after its download (App Translocation).
+  - The script names the bundle that wrote it. `cli_status` is true when the file starts with the fixed header (`HEAD`, which must never change), names this bundle and asks the program about subcommands (`--is-subcommand`): another version's script counts when it does all three, another program never does, and a moved app reads as not installed. So does a script from before the subcommands, which would open them as paths: the switch reads off, and turning it on writes the script again. There is no status (`null`, so no switch) for a build outside an app bundle, and for an app that macOS runs from a random path because it was not moved after its download (App Translocation).
   - `cli_install` refuses a path that holds anything but this app's script (`exists`). It writes as the user: a temporary file in the folder, mode 755, renamed into place. On `PermissionDenied` it runs a fixed AppleScript with `/usr/bin/osascript` (`do shell script … with administrator privileges`), for which macOS asks an administrator's password. Root copies the script from a file in the user's temporary folder under a temporary name and renames it, so a link at the command's path is replaced, never written through. The only variable parts are that file's path and the prompt text; both are passed as arguments after `--` and never spliced into the script. A declined password (error -128) is no error: the status comes back as it was.
   - `cli_uninstall` removes the file the same way, and only this app's script.
   - No capability is involved: the commands are the app's own, and take no path from the webview.
 - **Other platforms.** `cli_status` is `null`. A `.deb` or `.rpm` installs `/usr/bin/mininote`, so the command is there. On Windows the PATH is the installer's work, which is not done yet; the arguments are followed all the same.
 - **Settings** (`SettingsModal.svelte`). The switch shows `cli_status`, asked each time the modal opens; the last answer is kept in the module, so the row is there at once. It then shows what `cli_install` or `cli_uninstall` returned. Nothing is stored: it is not a setting.
+
+### 6.10 Subcommands (`headless.rs`, PLAT-15)
+
+`mininote <subcommand> …` works on the files of a vault and prints in the terminal. It is the app's own program, run without the app.
+
+- **Before the app.** `run()` calls `headless::answer()` first. When the first argument is a subcommand's name, `-h` / `--help` or `-V` / `--version`, it answers and ends the process (`process::exit`). No Tauri runtime is built: there is no window, no Dock icon and no hand-over to a running app (§6.6), and a running app is neither needed nor asked. Any other command line returns from there and goes on to §6.9.
+  - A word is a subcommand in first place only: `mininote ./ls` and `mininote -- ls` open a folder of that name.
+  - `mininote --is-subcommand <word>` exits with 0 when a line that begins with `<word>` is answered here, with 1 when it is not, and prints nothing. The macOS script asks this before it takes its arguments as paths (§6.9).
+- **One implementation.** A subcommand calls the function that the IPC command of the same action calls, with a `VaultState` of its own that nothing reads. The path guard (§6.1), the write algorithm (§6.2), the listing rules (§6.3), search (§6.5) and links (§6.8) are therefore the app's. There is no epoch: the process has one vault for all of its short life.
+
+  | Subcommand | Does | Prints: plain · `--json` |
+  |---|---|---|
+  | `vaults` | `store::known_vaults`: the settings' `recentVaults`, with `lastVault` in front when the list lacks it. | `name<TAB>path` on a line · `[{ name, path, available }]`, `available` false when the folder is not there. |
+  | `ls [<folder>] [-R]` | `fs_ops::list_vault`, then the entries right in the folder, or all below it with `-R` / `--recursive`, ordered by path component, so that a folder stands right before what it holds. | A path on a line, a folder's with `/` at its end · `[{ path, type, mtime? }]`: `type` is `folder` or `file`, and `mtime` (ms) is there for notes and images, which the listing stats. |
+  | `read <file>` | `fs_ops::read_note`. | The text without its BOM, and nothing after it · `{ path, content, bom, readOnly, created, mtime, size, hash }`. |
+  | `create <note>` | `fs_ops::create_note` with the text, or with none. | Nothing · `{ path, mtime, size, hash }`. |
+  | `write <note>` | `fs_ops::write_note` without a baseline: the bytes as they were given. | As `create`. |
+  | `append <note>` | `read_note`, the text added on a line of its own, then `write_note` with the baseline of that read. A missing note is written as by `write`. | As `create`. |
+  | `edit <note> --old <text> --new <text> [--all]` | `read_note`, the one replacement (every one with `--all`), then `write_note` with the baseline of that read. | Nothing · as `create`, plus `replaced`. |
+  | `mkdir <folder>` | `fs_ops::create_dir`. | Nothing · `{ path }`. |
+  | `mv <from> <to>` | `fs_ops::rename_entry`. | Nothing · `{ from, to }`. |
+  | `rm <path> [--permanent]` | `fs_ops::trash_entry`, or `delete_entry`. | Nothing · `{ path, trashed }`. |
+  | `search <word> ... [--case-sensitive] [--limit <n>]` | `search::search_vault` with the words joined by spaces, for 50 files unless `--limit` says (1000 at most). | `path:line:text` for each line found, lines counted from 1, and the bare path of a note found by its name alone · `{ results: [{ path, nameMatch, matches: [{ line, text }] }], truncated }`. |
+
+- **The vault** (`vault_root`).
+  - `--vault <value>`: a value with a path separator in it, or `.` or `..`, is the path of a folder, read from the working folder. Any folder will do. Any other value is the name of a known vault, its folder's name, compared in NFC and whatever its case; no such vault, or several, is `no_vault`, with their paths in the message.
+  - Without `--vault`: the innermost known vault the working folder is in, else `lastVault`, else the first recent vault.
+  - The folder is made canonical as `vault_open` makes it, and must be a folder (`root_unavailable`). Nothing recalls that it was a mount point (§6.1): the process is a new one each time.
+- **Settings.** The known vaults are read from `settings.json`, once, and nothing is written there: a subcommand adds no recent vault. Without an app there is no Tauri path resolver, so `store::config_dir_alone` puts together the folder `app_config_dir` names: `~/Library/Application Support`, `%APPDATA%`, or `$XDG_CONFIG_HOME` (else `~/.config`), and the app's identifier in it. A test holds that identifier to the one in tauri.conf.json.
+- **Paths** (`vault_path`). An argument is a `VaultPath` (§4), with `./` in front and `/` at the end allowed: what `ls` prints and what a shell completes in the vault's folder are both taken. An absolute path is refused, and so is a path with a name that starts with a dot: the tree lists none (§6.3), and `vault::resolve` alone would let `.git/config` through. `create`, `write`, `append` and `edit` take a note's path only (`fs_ops::is_note_name`), because the app writes no other file (§10.4).
+- **Text.** `--text`, else standard input when that is not a terminal: UTF-8, 20 MB at most.
+  - Without `--text`, `write` and `append` fail (`usage`) when nothing is piped in, or a stream with nothing in it: a script's forgotten pipe is often `/dev/null`, and must not empty a note. `create` makes an empty note then.
+  - `create` and `write` store the text as it is given. `append` and `edit` work as the editor does (§8.1): on the text with LF line breaks, written back with the note's first line break and its BOM (`Opened`, after `state/lineEndings.ts`). The baseline of their read goes to `write_note`, so another program's write in between is `conflict`, and nothing is lost.
+- **Command line** (`parse`). One table, `SUBS`, holds each subcommand's name, arguments, options and help; the parser, the usage line and `--help` all read it. Options stand anywhere after the subcommand. A value follows after a space or `=` and is taken as it is, so `--text "- item"` works. `--` ends the options, and a lone `-` is an argument. `-R` and `-h` are the only short forms, and short forms are not bundled.
+- **Output** (`run`). A subcommand returns a `Done { text, json, remark }` or a `Failure { kind, message }`, and `run` prints. Nothing is printed with `println!`, which panics on a closed pipe, and a broken pipe (`mininote ls | head`) ends the process quietly.
+  - Standard output gets the text, or one line of JSON with `--json`. A remark goes to standard error: a listing cut at 100 000 entries, more search results than the limit.
+  - A failure is `mininote: <message>` on standard error, followed by the subcommand's usage line after a misuse; with `--json` it is `{"error":{"kind","message"}}`. The kinds are the IPC error kinds (§5) under their wire names, plus `usage`, and `no_match` and `ambiguous` for `edit`.
+  - Exit status: 0, 1 for a failure, 2 for a misuse.
+- **With the app running.** A subcommand's write is another process's atomic rename. The window that shows the vault hears of it from its watcher and takes it as an external change (§8.2), unsaved text in that window included.
+- **Platforms.** On Linux the packaged `mininote` is the program itself. On macOS the script of §6.9 runs the program in the bundle. On Windows a release build has no console (`windows_subsystem = "windows"`): the output reaches a pipe or a file, not the console window.
+- **Contract.** Scripts and agents depend on the subcommands' names, their options, the plain line formats, the JSON fields and the exit statuses: add to them, and never rename or reshape one.
 
 ## 7. Frontend state (`src/lib/state/*.svelte.ts`)
 
@@ -756,5 +799,5 @@ A PDF is not text, so it has no controller in the editor store: `editor.kind` is
 The owner wants minimal verification:
 - `npm run check` and `cargo check` must be clean.
 - `vitest` runs unit tests for pure logic only: utils, resolve, tree, syntax, render plugins, the code view's tables and modes, the PDF view's zoom steps, and small state helpers.
-- Rust unit tests cover only the path guard, the listing rules, links (listed, read, written through, moved), the binary read's limits, search helpers and the command line's targets.
+- Rust unit tests cover only the path guard, the listing rules, links (listed, read, written through, moved), the binary read's limits, search helpers, the command line's targets and its subcommands.
 - There are no integration or E2E tests, and the app is not launched to verify.

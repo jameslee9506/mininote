@@ -37,7 +37,7 @@ npm test               # Unit tests (Vitest)
 | PDFs | PDFs open in a viewer that works like Chrome's: continuous pages, a toolbar with the page number, zoom, fit and rotate, a side panel with thumbnails and the document outline, text selection, links and find (`Mod+F`). A link to a PDF in a note opens it. |
 | Search | Quick switcher (`Mod+O`) with fuzzy matching, including Hangul initial consonants; full-text search in Rust (`Mod+Shift+F`); and a command palette (`Mod+P`). |
 | Updates | Signed releases on GitHub. The app checks once at launch; when a newer version exists, an update icon appears that downloads it, installs it and restarts. Settings show the running version. |
-| Command line | `mininote .` opens a folder from a terminal, and `mininote notes/todo.md` opens a file in its folder: in the window that shows that folder already, else in an empty or a new window. See [below](#command-line). |
+| Command line | `mininote .` opens a folder from a terminal, and `mininote notes/todo.md` opens a file in its folder: in the window that shows that folder already, else in an empty or a new window. Commands such as `mininote ls`, `read`, `append` and `edit` list, read and change notes right in the terminal, for scripts and AI agents. See [below](#command-line). |
 
 ## Keyboard shortcuts (`Mod` = ⌘ on macOS, Ctrl elsewhere)
 
@@ -69,11 +69,34 @@ mininote notes/todo.md     # Open the folder notes and show todo.md in it
 mininote ~/work ~/journal  # One window for each folder
 ```
 
+When the first word is a command, mininote works on the notes of a vault right in the terminal and opens no window. A script or an AI agent can use it this way, whether the app is running or not:
+
+```bash
+mininote vaults                                # The vaults mininote knows: name and path
+mininote ls -R --vault notes                   # Every file of the vault "notes"
+mininote read journal/today.md                 # Print a note
+mininote create ideas/cli.md --text "# CLI"    # A new note; fails if the path is taken
+echo "- call Mina" | mininote append todo.md   # Add a line to a note, or create the note
+mininote edit todo.md --old "- call Mina" --new "- [x] call Mina"
+mininote write todo.md < draft.md              # Replace the whole text of a note
+mininote mkdir archive/2026                    # A new folder
+mininote mv todo.md archive/2026/todo.md       # Rename or move
+mininote rm archive/2026/todo.md               # Into the system's trash
+mininote search meeting notes --json           # Full-text search, as JSON
+```
+
+- **The vault** is the one `--vault` names, by its name or by the path of a folder. Without it, a command works in the vault the current folder belongs to, else in the vault opened last.
+- **Paths** are relative to the vault's folder, as `mininote ls` prints them. Hidden files are out of reach, and only notes (`.md`, `.markdown`) are written.
+- **Text** comes from `--text`, or from standard input. `write` replaces the text of a note, `append` adds to it, and `edit` replaces one exact piece of it (`--all` for every place it is in).
+- **Output** is plain lines, or JSON with `--json`. Errors go to standard error, and the exit status is 0, 1 for a failure, or 2 for a command that was not understood. `mininote --help` and `mininote <command> --help` explain each command.
+- A running app shows what a command changed, as it shows any other program's change.
+- A folder or a file named like a command opens as `mininote ./ls`.
+
 The command is not installed with the app:
 
 - **macOS**: turn on *“mininote” terminal command* in the settings (`Mod+,`). It writes `/usr/local/bin/mininote`, for which macOS may ask for an administrator's password once. Turning it off removes the file.
 - **Linux**: the `.deb` and `.rpm` packages put `mininote` in the PATH. For the AppImage, link the file into a folder of your PATH under that name.
-- **Windows**: add the install folder to the PATH; the installer does not do it yet.
+- **Windows**: add the install folder to the PATH; the installer does not do it yet. The app has no console of its own, so a command's output is read through a pipe or a file (`mininote vaults | more`).
 
 ## Documentation
 

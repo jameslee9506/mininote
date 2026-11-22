@@ -51,6 +51,12 @@ npm run release:prepare    # validate the versions and write the updater overlay
   - Settings are written as patches of what one window changed (`settings_update`), and every window hears each one (`settings:changed`); never write the whole document from a window.
   - A window learns what to show by asking for its plan (`window_startup`): when its page starts, and at every `window:open`, which carries nothing (PLAT-14, ARCHITECTURE §6.9). What a command line asks for goes through `windows::open` and its `Plans`; never send a folder or a file to a window inside an event. A page shows its window with `window_show`, not `getCurrentWindow().show()`: the backend decides which window comes forward.
   - The `mininote` terminal command is a script the app writes on macOS (`cli.rs › shell`), and only when its switch in the settings is turned on: nothing installs it otherwise. The script's `HEAD` is how the app knows its own file; never change it.
+  - A command line that begins with a subcommand (`mininote ls`, `read`, `edit`…; PLAT-15, ARCHITECTURE §6.10) is answered by `headless.rs` before there is an app: `run()` asks it first, and it exits.
+    - A subcommand calls the function its IPC command calls (`fs_ops`, `search`). Never write a file operation a second time for it.
+    - It reads the settings for the known vaults and never writes them.
+    - A new subcommand goes into its table (`SUBS`). The macOS script asks the program what a subcommand is (`--is-subcommand`) and names none.
+    - Scripts and agents depend on the names, the options, the plain output, the JSON fields and the exit statuses (0, 1, 2): add to them, never rename or reshape one.
+    - Nothing there prints with `println!` or `eprintln!`: a closed pipe would panic.
   - `src/lib/editor/host.ts` is the only bridge from CodeMirror extensions to app state; editor modules never import stores.
   - Lezer node names (`WikiLink`, `WikiLinkMark`, `WikiLinkTarget`, `WikiLinkAlias`, `WikiEmbed`, `Highlight`, `HighlightMark`) are defined in `src/lib/editor/syntax.ts`.
   - What counts as a code file, and its language, is the table in `src/lib/utils/codeFiles.ts`. Its extensions, names and name prefixes are mirrored in `src-tauri/src/fs_ops.rs` (`CODE_EXTS`, `CODE_NAMES`, `CODE_NAME_PREFIXES`); change both together, and give a new language a loader in `src/lib/editor/code/languages.ts`. `codeFiles.test.ts` fails when the two sides differ.

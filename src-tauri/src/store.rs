@@ -19,6 +19,8 @@ use crate::vault::{self, background, blocking, lock};
 /// Event name; mirrors `EVENT_SETTINGS_CHANGED` in src/lib/ipc/events.ts.
 const EVENT_SETTINGS_CHANGED: &str = "settings:changed";
 const SETTINGS_FILE: &str = "settings.json";
+/// The app's identifier in tauri.conf.json: the OS keeps the app's folders under it.
+const APP_ID: &str = "com.mininote.desktop";
 const RECOVERY_DIR: &str = "recovery";
 /// Recovery copies whose note is gone are pruned after this long (SAVE-10).
 const RECOVERY_MAX_AGE: Duration = Duration::from_secs(30 * 24 * 60 * 60);
@@ -66,6 +68,69 @@ fn data_dir(app: &AppHandle) -> AppResult<PathBuf> {
     app.path()
         .app_data_dir()
         .map_err(|e| AppError::new(ErrorKind::Io, format!("app data folder: {e}")))
+}
+
+/// The app config folder, found without the app: a subcommand of `mininote` runs
+/// before there is one (PLAT-15). It is the folder Tauri's `app_config_dir` names,
+/// the OS's folder for settings with the app's identifier in it.
+pub fn config_dir_alone() -> Option<PathBuf> {
+    let absolute =
+        |dir: std::ffi::OsString| Some(PathBuf::from(dir)).filter(|dir| dir.is_absolute());
+    let home = || std::env::home_dir().filter(|home| home.is_absolute());
+    let base = if cfg!(target_os = "macos") {
+        home()?.join("Library").join("Application Support")
+    } else if cfg!(windows) {
+        std::env::var_os("APPDATA").and_then(absolute)?
+    } else {
+        match std::env::var_os("XDG_CONFIG_HOME").and_then(absolute) {
+            Some(dir) => dir,
+            None => home()?.join(".config"),
+        }
+    };
+    Some(base.join(APP_ID))
+}
+
+/// What the settings say of the vaults (`Settings` in src/lib/types.ts): the
+/// folders opened as one, the most recent first, and the one opened last.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KnownVaults {
+    pub recent: Vec<String>,
+    pub last: Option<String>,
+}
+
+/// The vaults the settings in `config_dir` remember; none when there are no
+/// settings, or none that can be read. For the subcommands of `mininote`
+/// (PLAT-15), which only ever read the settings: the app alone writes them.
+pub fn known_vaults(config_dir: &Path) -> KnownVaults {
+    fs::read(config_dir.join(SETTINGS_FILE))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .map(|doc| vaults_in(&doc))
+        .unwrap_or_default()
+}
+
+/// `recentVaults` and `lastVault` of a settings document: absolute paths, each
+/// once. The vault opened last is one of them, the first if the list lacks it.
+fn vaults_in(doc: &Value) -> KnownVaults {
+    let settings = &doc["settings"];
+    let folder = |value: &Value| {
+        value
+            .as_str()
+            .filter(|path| Path::new(path).is_absolute())
+            .map(str::to_owned)
+    };
+    let last = folder(&settings["lastVault"]);
+    let listed = settings["recentVaults"].as_array();
+    let mut recent: Vec<String> = Vec::new();
+    for path in listed.into_iter().flatten().filter_map(folder) {
+        if !recent.contains(&path) {
+            recent.push(path);
+        }
+    }
+    if let Some(last) = last.as_ref().filter(|last| !recent.contains(last)) {
+        recent.insert(0, last.clone());
+    }
+    KnownVaults { recent, last }
 }
 
 fn parses_as_json(bytes: &[u8]) -> bool {
@@ -335,6 +400,7 @@ fn note_is_gone(root: &Path, rel: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn patches_replace_their_own_keys_and_sessions() {
@@ -370,6 +436,27 @@ mod tests {
             serde_json::from_str::<Value>(r#"{"settings":{"theme":"light"},"sessions":{}}"#)
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn the_settings_name_the_known_vaults() {
+        // The folder found without the app is the one Tauri finds with it.
+        let conf: Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(conf["identifier"], APP_ID);
+
+        let (a, b, c) = if cfg!(windows) {
+            ("C:\\a", "C:\\b", "C:\\c")
+        } else {
+            ("/a", "/b", "/c")
+        };
+        let doc =
+            json!({ "settings": { "recentVaults": [a, 3, "relative", b, a], "lastVault": c } });
+        let known = vaults_in(&doc);
+        assert_eq!(known.recent, [c, a, b]);
+        assert_eq!(known.last.as_deref(), Some(c));
+        // No settings yet, or settings of another shape: no vault is known.
+        assert_eq!(vaults_in(&json!({})), KnownVaults::default());
+        assert_eq!(vaults_in(&json!({ "settings": 3 })), KnownVaults::default());
     }
 
     #[test]

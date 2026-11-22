@@ -1470,6 +1470,47 @@ Math and diagrams are out of scope.
 - **Decision.** A file always opens the folder it is in, also when a vault that is open, or was, contains that folder: the rule needs no knowledge of other vaults, and a file always has a folder. Installing the command is a choice, never a side effect of installing the app: it writes outside the app, into a folder of the system.
 - **Sources.** The owner's request (2026-11-19). OT §2.8 and ZT §10 for a second launch that hands its arguments to the first.
 
+#### PLAT-15 · Subcommands of the command line · P1
+- **Behavior.**
+  - `mininote <subcommand>` works on the files of a vault from a terminal, so a person, a script or an AI agent can list, read and change notes without a window. It prints its answer and exits, whether the app is running or not, and it never starts the app.
+  - The subcommands:
+    - `vaults` lists the vaults the app knows, the one opened last first: the name and the path of each.
+    - `ls [<folder>]` lists a folder of a vault, and with `-R` everything below it.
+    - `read <file>` prints a note, or another text file.
+    - `create <note>` writes a new note. `write <note>` replaces the whole text of a note, or creates the note. `append <note>` adds text after its last line, or creates the note. `edit <note> --old <text> --new <text>` replaces one piece of its text.
+    - `mkdir <folder>` creates a folder, `mv <from> <to>` renames or moves a file or a folder, and `rm <path>` moves one to the trash.
+    - `search <word> ...` finds notes by their text and name, as the search panel does (SRCH-01).
+  - The vault is the one `--vault` names: by its name, which is its folder's and which `vaults` lists, or by the path of any folder, known to the app or not. Without `--vault` it is the known vault the terminal's folder is in, else the vault opened last.
+  - A path is relative to the vault's folder, and spelled as `ls` prints it.
+  - The text to write is `--text`, else what is piped in.
+  - A subcommand follows the conventions of command-line tools:
+    - options anywhere after the subcommand, a value after a space or `=`, and `--` before arguments that begin with `-`;
+    - `-h` / `--help` for the command and for each subcommand, and `-V` / `--version`;
+    - the answer on standard output, in plain lines that `grep` and `cut` take apart, or as JSON with `--json`, and errors on standard error;
+    - exit status 0 when it worked, 1 when it failed, 2 when it was not understood;
+    - no output from a subcommand that only changes something.
+  - Each subcommand does what the app does for the same action: the tree's listing rules (TREE-01), atomic writes that keep a note's permissions and dates (SAVE-04), the same refusals (a taken path, a read-only note, the vault's own folder) and the system's trash (TREE-08). A running app sees the change as it sees any other program's (SAVE-06).
+- **Edge cases.**
+  - A word is a subcommand only as the first argument. A folder or a file with such a name opens as `mininote ./ls` or `mininote -- ls`.
+  - A hidden name, one that starts with a dot, is refused anywhere in a path: a subcommand reaches what the tree shows (TREE-01), so `.git` and `.obsidian` stay as they are.
+  - Only notes are written (`create`, `write`, `append`, `edit`): the app writes no other file (TREE-17). `read` prints any UTF-8 text file of up to 20 MB (SAVE-11), and `mv`, `rm` and `mkdir` take any file or folder.
+  - `create` never replaces a file. `write` does, and with nothing piped in and no `--text` it fails instead of emptying the note; `--text ''` empties one.
+  - `append` and `edit` keep the note's line endings and its byte-order mark, as a save in the app does (EDIT-02), and compare line breaks as the editor does: a piece of text that spans lines is found in a CRLF note too. They fail with `conflict` when the note changed between their read and their write.
+  - `edit` fails when the note has the text of `--old` nowhere, or more than once without `--all`: a replacement never lands where it was not meant.
+  - `mv` takes the new path itself, not a folder to move into, and fails when that path is taken.
+  - `rm` takes a folder with all it holds. `--permanent` deletes instead of moving to the trash.
+  - A vault's name is compared whatever its case and Unicode form (PLAT-06). Two known vaults of one name are told apart by their path.
+  - A subcommand never changes the settings: a folder it worked in is not added to the recent vaults.
+  - With `--json`, a failure is `{"error": {"kind", "message"}}` on standard error. The kinds are those of the app's own errors (`not_found`, `exists`, `conflict`, …), plus `usage`, and `no_match` and `ambiguous` for `edit`.
+  - A subcommand keeps nothing between two runs, so it cannot know that a vault's folder was a mount point (VAULT-06): it requires that the folder is there, and never creates it.
+  - macOS: the terminal command (PLAT-14) hands a subcommand to the app's program, which runs in the terminal like any other tool. A command installed by a version without subcommands shows its switch off (SET-02), and turning it on writes it again.
+  - Windows: the app is built without a console, so the output of a subcommand is seen through a pipe or a file (`mininote vaults | more`), which is how a script or an agent reads it anyway.
+- **Decision.**
+  - The subcommands are the app's own program, started without its windows. They are not a second program and not requests to a running app: there is one thing to install, the code is the code of the app's own commands, and it works while the app is closed. The app already takes another program's writes as a normal event.
+  - A path is relative to the vault and not to the terminal's folder: a vault and a path name a note the same way wherever the command runs, which is what a script or an agent needs.
+  - Subcommand names, options, output and exit statuses are a contract once scripts use them: they are added to, never renamed or reshaped.
+- **Sources.** The owner's request (2026-11-22): work on the notes from a terminal, the way an agent does through MCP tools. The usual conventions of command-line tools such as `git` and `gh`: subcommands, `--` and `--help`, `--json`, exit statuses.
+
 ---
 
 ## 12. Performance (PERF)
@@ -1608,7 +1649,7 @@ The current plan already matches most of this spec. Where it differs, this spec 
 - LINK-04 (headings), LINK-07, LINK-08.
 - READ-08.
 - SET-02, SET-06, SET-07, SET-08.
-- PLAT-01 (Linux), PLAT-11, PLAT-12, PLAT-14. ([critic] PLAT-05 single instance moved to P0.)
+- PLAT-01 (Linux), PLAT-11, PLAT-12, PLAT-14, PLAT-15. ([critic] PLAT-05 single instance moved to P0.)
 - PERF-04–07.
 
 **P2**

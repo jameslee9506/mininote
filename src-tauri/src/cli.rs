@@ -1,6 +1,7 @@
 //! The `mininote` command (PLAT-14, ARCHITECTURE §6.9): the folders and files a
 //! command line names, the restart that repeats one, and the command's place in the
-//! shell's PATH, which Settings turns on and off (macOS).
+//! shell's PATH, which Settings turns on and off (macOS). A line that begins with
+//! a subcommand never comes here: `headless.rs` answers it (PLAT-15).
 
 use std::ffi::OsStr;
 use std::fs;
@@ -35,8 +36,8 @@ pub struct Target {
 /// The folders and files the command line `args` names (its first entry is the
 /// program), and one message for each path that names nothing. A relative path
 /// starts from `cwd`. A folder is its own target; a file's is the folder it is in.
-/// The command has no options: an argument that looks like one is skipped, and
-/// after `--` every argument is a path.
+/// Opening has no options: an argument that looks like one is skipped, and after
+/// `--` every argument is a path.
 pub fn targets(args: &[String], cwd: &Path) -> (Vec<Target>, Vec<String>) {
     let mut targets: Vec<Target> = Vec::new();
     let mut errors = Vec::new();
@@ -190,6 +191,7 @@ mod shell {
     use std::process::Command;
 
     use crate::error::{AppError, AppResult, ErrorKind};
+    use crate::headless;
 
     const BIN_DIR: &str = "/usr/local/bin";
     const COMMAND: &str = "/usr/local/bin/mininote";
@@ -199,9 +201,16 @@ mod shell {
     const HEAD: &str =
         "#!/bin/sh\n# mininote [path ...]: opens folders, and files in their folder, in mininote.\n";
 
-    /// The rest of the script; `@APP@` is the app bundle, quoted for the shell.
+    /// The rest of the script; `@APP@` is the app bundle and `@EXE@` the name of its
+    /// program, each quoted for the shell.
     ///
-    /// The paths go to the app as arguments, absolute because an app starts in `/`.
+    /// A subcommand (PLAT-15) is the program's own work: it prints in the terminal
+    /// and shows no window, so the script runs the program itself, in place of the
+    /// shell. It asks the program first whether the first word is one, and so
+    /// stays as it is when a subcommand is added.
+    ///
+    /// Anything else is paths. They go to the app as arguments, absolute because an
+    /// app starts in `/`.
     /// `open` starts it, so that macOS counts the files it reads as the app's and not
     /// as the terminal's, and the shell is free at once. `-n` starts a new process,
     /// which becomes the app, or hands the paths to the running app and exits
@@ -211,12 +220,15 @@ mod shell {
     /// this script, whose own process is `sh`.
     const BODY: &str = r#"# Written by mininote. Its setting for this command removes the file again.
 app=@APP@
+bin=$app/Contents/MacOS/@EXE@
+
+# A subcommand (mininote --help lists them) is answered here in the terminal, by
+# the app's program itself. The program says whether the first word is one.
+if [ "$#" -gt 0 ] && "$bin" @PROBE@ "$1" 2>/dev/null; then
+  exec "$bin" "$@"
+fi
 
 case ${1-} in
-  -h | --help)
-    printf '%s\n' 'usage: mininote [path ...]'
-    exit 0
-    ;;
   --) shift ;;
 esac
 [ "$#" -gt 0 ] || exec /usr/bin/open -a "$app"
@@ -264,12 +276,12 @@ exit "$status"
     ];
 
     pub fn status() -> Option<bool> {
-        let app = bundle()?;
-        Some(fs::read_to_string(COMMAND).is_ok_and(|text| starts(&text, &app)))
+        let bundle = bundle()?;
+        Some(fs::read_to_string(COMMAND).is_ok_and(|text| starts(&text, &bundle.app)))
     }
 
     pub fn install(prompt: &str) -> AppResult<Option<bool>> {
-        let app = bundle().ok_or_else(|| {
+        let bundle = bundle().ok_or_else(|| {
             AppError::new(ErrorKind::Io, "the app does not run from an app bundle")
         })?;
         let taken = fs::symlink_metadata(COMMAND).is_ok();
@@ -279,7 +291,7 @@ exit "$status"
                 format!("{COMMAND} is another program"),
             ));
         }
-        let script = script(&app);
+        let script = script(&bundle);
         match write(&script) {
             Ok(()) => {}
             // The folder is root's, as on every Mac that nothing changed it on.
@@ -306,11 +318,17 @@ exit "$status"
         Ok(status())
     }
 
+    /// An app bundle, and the name of its program in `Contents/MacOS`.
+    struct Bundle {
+        app: String,
+        program: String,
+    }
+
     /// The app bundle this process runs from, which the command starts. `None` for a
     /// build that is in no bundle (development), and for a downloaded app that macOS
     /// runs from a random read-only path until it is moved (App Translocation): that
     /// path does not last.
-    fn bundle() -> Option<String> {
+    fn bundle() -> Option<Bundle> {
         let exe = fs::canonicalize(std::env::current_exe().ok()?).ok()?;
         let macos = exe.parent()?;
         let app = macos.parent()?.parent()?;
@@ -322,11 +340,18 @@ exit "$status"
         if !bundled {
             return None;
         }
-        app.to_str().map(str::to_owned)
+        Some(Bundle {
+            app: app.to_str()?.to_owned(),
+            program: exe.file_name()?.to_str()?.to_owned(),
+        })
     }
 
-    fn script(app: &str) -> String {
-        format!("{HEAD}{}", BODY.replace("@APP@", &quote(app)))
+    fn script(bundle: &Bundle) -> String {
+        let body = BODY
+            .replace("@PROBE@", headless::PROBE)
+            .replace("@EXE@", &quote(&bundle.program))
+            .replace("@APP@", &quote(&bundle.app));
+        format!("{HEAD}{body}")
     }
 
     /// `text` in single quotes, for `sh`.
@@ -338,10 +363,14 @@ exit "$status"
         text.starts_with(HEAD)
     }
 
-    /// The script is this app's and starts the bundle `app`. The rest of it may be
-    /// an earlier version's, which works as well.
+    /// The script is this app's, starts the bundle `app`, and asks its program
+    /// about subcommands. The rest of it may be another version's, which works as
+    /// well. One written before there were subcommands (PLAT-15) opens them as
+    /// paths: it reads as not installed, and the switch writes it again.
     fn starts(text: &str, app: &str) -> bool {
-        is_ours(text) && text.contains(&format!("\napp={}\n", quote(app)))
+        is_ours(text)
+            && text.contains(&format!("\napp={}\n", quote(app)))
+            && text.contains(headless::PROBE)
     }
 
     /// Writes the command as the user, replacing it in one step.
@@ -413,14 +442,26 @@ exit "$status"
 
         #[test]
         fn the_script_names_its_app() {
-            let app = "/Applications/It's mine/mininote.app";
-            let text = script(app);
+            let bundle = Bundle {
+                app: "/Applications/It's mine/mininote.app".into(),
+                program: "mininote".into(),
+            };
+            let text = script(&bundle);
             assert!(text.contains("\napp='/Applications/It'\\''s mine/mininote.app'\n"));
-            assert!(!text.contains("@APP@"));
-            assert!(is_ours(&text) && starts(&text, app));
+            assert!(text.contains("\nbin=$app/Contents/MacOS/'mininote'\n"));
+            assert!(text.contains("\"$bin\" --is-subcommand \"$1\""));
+            assert!(
+                !text.contains("@APP@") && !text.contains("@EXE@") && !text.contains("@PROBE@")
+            );
+            assert!(is_ours(&text) && starts(&text, &bundle.app));
             assert!(!starts(&text, "/Applications/mininote.app"));
-            // An earlier version's script still counts, and another program never does.
-            assert!(starts(&format!("{HEAD}app='/a.app'\nexit 0\n"), "/a.app"));
+            // Another version's script counts when it asks about subcommands; one
+            // from before them is still ours, to replace or remove. Another program
+            // never is.
+            let later = format!("{HEAD}app='/a.app'\n\"$app/x\" --is-subcommand \"$1\"\n");
+            assert!(starts(&later, "/a.app"));
+            let earlier = format!("{HEAD}app='/a.app'\nexit 0\n");
+            assert!(is_ours(&earlier) && !starts(&earlier, "/a.app"));
             assert!(!is_ours("#!/bin/sh\nexec something-else \"$@\"\n"));
         }
     }

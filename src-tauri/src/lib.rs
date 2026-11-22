@@ -4,6 +4,7 @@
 mod cli;
 mod error;
 mod fs_ops;
+mod headless;
 mod search;
 mod store;
 mod vault;
@@ -46,6 +47,9 @@ struct ExitState {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // A subcommand (`mininote ls`, PLAT-15) is answered here, by this process alone,
+    // which then exits: no app starts for it, and none that runs is asked.
+    headless::answer();
     // The folders and files of the command line (PLAT-14). A second launch reports
     // its own here, hands the line to the first launch below, and exits.
     let asked = cli::launch();
