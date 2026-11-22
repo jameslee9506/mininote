@@ -14,6 +14,7 @@
   import { ui } from "../state/ui.svelte";
   import { vault } from "../state/vault.svelte";
   import { editor } from "../state/editor.svelte";
+  import { fresh } from "../state/newNote.svelte";
   import { isIpcError, searchText } from "../ipc/commands";
   import type { SearchFileResult, SearchMatch, VaultPath } from "../types";
   import { t } from "../i18n";
@@ -246,6 +247,8 @@
   function onclick(e: MouseEvent): void {
     const i = targetAt(e);
     if (i < 0) return;
+    // A result in a new note with nothing typed in it changes nothing, like its tree row (TREE-04).
+    if (fresh.holds(index.targets[i]?.path)) return;
     input?.focus({ preventScroll: true });
     openTarget(i, false);
   }
@@ -339,6 +342,7 @@
           tabindex="-1"
           aria-selected={active === base}
           data-target={base}
+          data-path={r.path}
         >
           <span class="name">{titleFor(r.path)}</span>
           {#if folder}<span class="folder">{folder}</span>{/if}
@@ -353,6 +357,7 @@
             tabindex="-1"
             aria-selected={active === k}
             data-target={k}
+            data-path={r.path}
           >
             {#each segments(m) as s}{#if s.hit}<b>{s.text}</b>{:else}{s.text}{/if}{/each}
           </div>

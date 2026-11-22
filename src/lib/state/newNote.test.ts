@@ -11,6 +11,12 @@ describe("canDiscardNewNote", () => {
     expect(canDiscardNewNote(english, english, "", "Untitled 1")).toBe(true);
   });
 
+  it("accepts the empty title field of a new note, whose name is only a placeholder", () => {
+    expect(canDiscardNewNote(created, created, "", "")).toBe(true);
+    expect(canDiscardNewNote(created, created, "", " \u3000")).toBe(true);
+    expect(canDiscardNewNote(created, { ...created, revision: 6 }, "", "")).toBe(false);
+  });
+
   it("preserves existing notes, even when their name looks like a new note", () => {
     expect(canDiscardNewNote(null, created, "")).toBe(false);
     expect(canDiscardNewNote(created, { ...created, path: "Notes/\uC81C\uBAA9 \uC5C6\uC74C.md" }, "")).toBe(false);
@@ -27,6 +33,5 @@ describe("canDiscardNewNote", () => {
     expect(canDiscardNewNote(created, { ...created, path: "Notes/Meeting.md" }, "")).toBe(false);
     expect(canDiscardNewNote(created, created, "", "Meeting")).toBe(false);
     expect(canDiscardNewNote(created, created, "", "\uC81C\uBAA9 \uC5C6\uC74C 3")).toBe(false);
-    expect(canDiscardNewNote(created, created, "", "")).toBe(false);
   });
 });

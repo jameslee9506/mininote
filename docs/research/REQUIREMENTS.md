@@ -188,10 +188,15 @@ Anything not listed is out of scope (§13).
   - Mod+N, the header icon, or a folder's context menu immediately creates `Untitled.md` on disk. The create is exclusive and never overwrites.
   - The location is the clicked folder; otherwise the active note's folder; otherwise the vault root (setting, SET-02).
   - The base name is localized (`t("untitled")`). Collisions get `Untitled 1`, `Untitled 2` and so on, checked ignoring case and Unicode form.
-  - The note opens in editing mode with the caret at the start of the body, ready for typing. Clicking the inline title or pressing F2 edits the name (EDIT-15).
-  - Esc in the title or body trashes the new note while its body is still untouched and empty and its title is the generated default (including a numeric suffix). It follows TREE-08, including the optional deletion confirmation and previous-note navigation. Existing notes and notes revisited after navigating away are excluded; editing and then clearing or undoing the body does not make a note eligible again. A custom title being typed is reverted on Esc instead. Menus, dialogs, find panels and completions take Esc first; IME composition and key repeat never delete a note.
+  - The note opens in editing mode with the caret in its inline title (EDIT-15). The title's field is empty, and the generated name shows in it as a placeholder, in `--c-text-faint`. A name typed there renames the note. Enter, Tab or ↓ on the empty field keeps the generated name and moves to the body. *Changed:* the caret used to start in the body, under a title that held the generated name as its text.
+  - The placeholder stays for as long as nothing is typed in the note, title or body, wherever the keyboard is. The first edit of the body makes the generated name the note's title, in the title's own color.
+  - While nothing is typed in it, the note is not kept yet. Two things delete it:
+    - Esc in the title or body trashes it. It follows TREE-08, including the optional deletion confirmation and previous-note navigation. A title being typed is reverted on Esc instead. Menus, dialogs, find panels and completions take Esc first; IME composition and key repeat never delete a note.
+    - A click or a right-click anywhere in the sidebar trashes it with no question, after what was clicked has acted: the file a row opens is shown, and a new folder starts beside the note. A press that is no click (dragging the window by the sidebar's header, dragging a row, the scrollbar) deletes nothing.
+  - Two places in the sidebar keep it. Its own tree row, or a search result in it, changes nothing and leaves the keyboard where it is, unlike the row of any other open file (NAV-04). The new-note icon keeps it as the new note and puts the caret back in its title; so does Mod+N. When the new note is asked for in another folder, this one is trashed first.
+  - Existing notes and notes revisited after navigating away are never deleted this way, whatever their name; editing and then clearing or undoing the body does not make a note eligible again. A title typed in the field keeps the note, also while its rename is on its way.
 - **Edge cases.**
-  - The sidebar or inline title may be hidden; the body still takes focus. Creating from reading view or an image also opens the editor before focusing it.
+  - The inline title may be hidden: the body takes the caret, and Esc and the sidebar delete the untouched note as above. Creating from reading view or an image also opens the editor before focusing.
   - If creation fails, an error toast appears and nothing opens.
 - **Decision.** Create the real file at once (OB, WR). The alternatives are worse: an unsaved draft (OT) is never autosaved, which breaks principle 6, and a name-first inline row (ZT, MT) delays writing.
 - **Sources.** OB §3, §4.2; WR (tauri-notes-discovery §4.1); OT §4.3 (avoid); ZT §3.3; MT §2.
@@ -594,10 +599,11 @@ Live-preview rendering is specified separately, in §4 (LIVE).
 - **Behavior.**
   - The note's file name, without `.md`, is shown above the text in heading style. It is not part of the file.
   - Clicking it, or pressing F2, edits it.
-  - Enter, Tab or ↓ commits the rename and moves to the body. ↑ on the body's first line moves to the title. Esc reverts, except that it cancels an untouched new note with its default title (TREE-04).
-  - An invalid or colliding name keeps the title in edit mode and shows an error toast.
+  - Enter, Tab or ↓ commits the rename and moves to the body. ↑ on the body's first line moves to the title. Esc reverts, except that it cancels an untouched new note (TREE-04).
+  - A new note's field is empty over its generated name, which shows as a placeholder until something is typed in the note; committing the empty field keeps that name (TREE-04).
+  - An invalid or colliding name, or an empty one, keeps the title in edit mode, and the reason shows under the title in red (`--c-error`), on the creation date's line. It stays until the text changes. *Changed:* the reason used to be a toast at the bottom of the window.
   - Editor shortcuts are inactive while the title has focus.
-  - [critic] Blur commits a valid, changed name, as in TREE-06. An invalid one reverts on blur, with the error toast.
+  - [critic] Blur commits a valid, changed name, as in TREE-06. An invalid one reverts on blur, and the reason shows under the title for 4 s.
   - [critic] Pasted line breaks become spaces; the title is always one line.
   - [critic] For a virtual note (LINK-05), committing a name only changes its target path. Nothing is written until the first edit of the body.
   - Under the title, small and muted with no label, the day the file was created: for notes and code files, on macOS and Windows, where a save keeps a file's creation time (SAVE-04). Linux cannot set that time, so every save would reset it, and no date is shown there. A virtual note shows today, the day its first edit creates the file, so the text does not move down while that edit is typed.
@@ -949,7 +955,7 @@ Math and diagrams are out of scope.
 - **Create.**
   - When no result's title equals the query, a last row shows a plus icon and the typed name. Enter on that row creates the note, in the new-note location or at the typed path; folders in `a/b/name` are created too.
   - Shift+Enter always creates.
-  - A newly created note opens in editing mode with the body focused, as in TREE-04.
+  - A newly created note opens in editing mode with the body focused: it has its name already.
   - Names are validated (TREE-07).
   - [critic] Every `/`-separated segment is validated, and `.`, `..` and a leading `/` are rejected. Existing folders are matched by `key()` and their stored names reused, so `Projects/x` goes into an existing `projects/` instead of creating a case twin on Linux.
 - **Sources.** OB §6.1, SB §0, OT §4.4, MT §5, MS §5.
@@ -990,7 +996,7 @@ Math and diagrams are out of scope.
   - The sidebar header holds faint icons: new note, new folder, collapse all. The search field sits below it, above the file tree, always visible (SRCH-01).
   - The main area's top strip holds faint icons: show sidebar (when hidden), back and forward, reading view, and before it a copy icon for the open file's text (NAV-09).
   - On macOS both strips are window drag regions.
-  - A press anywhere in the sidebar takes the keyboard out of the main area: no caret stays in the note or in its title. What is pressed takes the keyboard where it can (the tree, the search field, a name being typed), and a click that opens a file, on a tree row (TREE-11) or a search result (SRCH-01), leaves it in the sidebar. From there the keyboard moves into the note with Enter or Esc in the tree, Enter in the search field, or a click in the text. The commands that are about typing are the exception: a new note opens ready for it (TREE-04). *Changed:* a click on a row or a result used to hand the keyboard to the note it opened, and a click on the open file's row gave it back to that note.
+  - A press anywhere in the sidebar takes the keyboard out of the main area: no caret stays in the note or in its title. What is pressed takes the keyboard where it can (the tree, the search field, a name being typed), and a click that opens a file, on a tree row (TREE-11) or a search result (SRCH-01), leaves it in the sidebar. From there the keyboard moves into the note with Enter or Esc in the tree, Enter in the search field, or a click in the text. The commands that are about typing are the exception: a new note opens ready for it (TREE-04). And a new note with nothing typed in it is one more: a press on its own row leaves the keyboard in the note, and a click anywhere else in the sidebar deletes it (TREE-04). *Changed:* a click on a row or a result used to hand the keyboard to the note it opened, and a click on the open file's row gave it back to that note.
   - [critic] On macOS, with the sidebar hidden, the main strip reserves the traffic lights' area; otherwise they sit on top of the show-sidebar icon. In full screen, where the traffic lights are hidden, the reserved space collapses, leaving no dead click zone [OB §10].
 - **Sources.** DESIGN.md §4, MT §9, OB §10.
 

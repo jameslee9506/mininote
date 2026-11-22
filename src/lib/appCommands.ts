@@ -12,10 +12,12 @@ import { appExitReady, appQuit, windowNew } from "./ipc/commands";
 import { commands, type Command } from "./state/commands.svelte";
 import { editor } from "./state/editor.svelte";
 import { canDiscardNewNote, type NewNoteSnapshot } from "./state/newNote";
+import { fresh } from "./state/newNote.svelte";
 import { settings } from "./state/settings.svelte";
 import { ui } from "./state/ui.svelte";
 import { vault } from "./state/vault.svelte";
 import type { VaultPath } from "./types";
+import { dirname } from "./utils/path";
 import { isMac } from "./utils/platform";
 
 // ── Vault opening ──────────────────────────────────────────────────────────
@@ -167,8 +169,9 @@ function showFilesPanel(): void {
 
 // ── New note and folder (shared by the commands, the sidebar header and the tree menus) ──
 
-let newNoteDraft: NewNoteSnapshot | null = null;
 let discardingNewNote: NewNoteSnapshot | null = null;
+/** The discard a click in the sidebar started (leaveNewNote): over once the note's name is free again. */
+let leaving: Promise<void> = Promise.resolve();
 
 function noteSnapshot(): NewNoteSnapshot {
   return { epoch: vault.info?.epoch ?? null, path: editor.path, revision: editor.revision };
@@ -193,12 +196,26 @@ function refocusEditor(): void {
 }
 
 /**
- * New note (TREE-04): created on disk, then opened with the caret at the start of its body.
- * Focus is released first (DS-4); the editor gets it back when nothing opens.
+ * New note (TREE-04): created on disk, then opened with the caret in its title, where its name
+ * shows as a placeholder (in its body where the title is hidden). `fresh` holds it for as long
+ * as nothing is typed in it. Focus is released first (DS-4); the editor gets it back when
+ * nothing opens.
  */
 export async function newNote(opts?: { dir?: VaultPath }): Promise<VaultPath | null> {
+  await leaving;
+  // The note made a moment ago, with nothing typed in it, is the new note already: asking
+  // again brings the caret back to its title. It makes way when another folder is asked for.
+  const blank = fresh.blank ? editor.path : null;
+  if (blank !== null) {
+    if (dirname(blank) === (opts?.dir ?? vault.newNoteDir())) {
+      await editor.open(blank, { focus: "title" });
+      return blank;
+    }
+    fresh.note = null;
+    await vault.discard(blank);
+  }
   const epoch = vault.info?.epoch;
-  newNoteDraft = null;
+  fresh.note = null;
   await releaseFocus();
   let created: VaultPath | null = null;
   try {
@@ -206,18 +223,22 @@ export async function newNote(opts?: { dir?: VaultPath }): Promise<VaultPath | n
   } finally {
     if (created === null) refocusEditor();
   }
-  if (created !== null && editor.path === created && vault.info?.epoch === epoch) newNoteDraft = noteSnapshot();
+  if (created !== null && editor.path === created && vault.info?.epoch === epoch) fresh.note = noteSnapshot();
   return created;
 }
 
-/** Escape in the title/body cancels only the untouched note just created by newNote(). */
+/**
+ * Escape in the title/body cancels only the untouched note just created by newNote(). From the
+ * body, a title typed for it keeps it: its rename may still be on its way.
+ */
 export function discardNewNote(title?: string): boolean {
-  const draft = newNoteDraft;
+  const draft = fresh.note;
   if (!draft || ui.modal !== null || ui.menu !== null || ui.confirmDialog !== null) return false;
   const eligible = (): boolean =>
-    newNoteDraft === draft &&
+    fresh.note === draft &&
     !editor.loading &&
     !editor.readOnly &&
+    (title !== undefined || !fresh.titled) &&
     canDiscardNewNote(draft, noteSnapshot(), editor.getText(), title);
   if (!eligible() || draft.path === null) return false;
   if (discardingNewNote === draft) return true;
@@ -225,12 +246,31 @@ export function discardNewNote(title?: string): boolean {
   discardingNewNote = draft;
   void safe(async () => {
     try {
-      if ((await vault.remove(path, eligible)) && newNoteDraft === draft) newNoteDraft = null;
+      if ((await vault.remove(path, eligible)) && fresh.note === draft) fresh.note = null;
     } finally {
       if (discardingNewNote === draft) discardingNewNote = null;
     }
   })();
   return true;
+}
+
+/**
+ * A click in the sidebar leaves the new note that has nothing typed in it, title or text, and
+ * that note goes to the trash with no question (TREE-04). A file the click opens is shown
+ * first: the editor then drops a note it no longer shows, and no open is cut short.
+ */
+export function leaveNewNote(): void {
+  const draft = fresh.note;
+  if (draft === null || draft.path === null || !fresh.blank || discardingNewNote === draft) return;
+  const path = draft.path;
+  leaving = safe(async () => {
+    await editor.settled();
+    // Not a note of another vault, and not one the user came back to and typed in meanwhile.
+    if (fresh.note !== draft || vault.info?.epoch !== draft.epoch) return;
+    if (editor.path === path && !fresh.blank) return;
+    fresh.note = null;
+    await vault.discard(path);
+  })();
 }
 
 /** New folder (TREE-05): a draft row in the tree, which must be on screen; nothing is written until its name is committed. */

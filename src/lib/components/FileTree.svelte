@@ -85,6 +85,7 @@
   import { newFolder, newNote, openVault } from "../appCommands";
   import { vault, type TreeRow as RowData } from "../state/vault.svelte";
   import { editor } from "../state/editor.svelte";
+  import { fresh } from "../state/newNote.svelte";
   import { ui, type MenuEntry } from "../state/ui.svelte";
   import { t } from "../i18n";
   import { isMac, revealLabelKey } from "../utils/platform";
@@ -474,8 +475,10 @@
    * tree being the focusable element under a row; the click makes sure of it.
    */
   function onclick(e: MouseEvent): void {
-    if (document.activeElement !== scroller) scroller?.focus({ preventScroll: true });
     const node = nodeAt(e.target);
+    // The row of a new note with nothing typed in it changes nothing: the keyboard stays in the note (TREE-04).
+    if (node && fresh.holds(node.path)) return;
+    if (document.activeElement !== scroller) scroller?.focus({ preventScroll: true });
     if (!node) return;
     vault.selected = node.path;
     activate(node, false);

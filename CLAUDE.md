@@ -64,6 +64,7 @@ npm run release:prepare    # validate the versions and write the updater overlay
   - The block dialect (no setext headings, no lazy continuation lines) has two halves that must agree: `Dialect` in `src/lib/editor/syntax.ts` and `src/lib/markdown/plugins/dialect.ts`. Change both, and their tests, together.
   - The icon set (`settings.iconTheme`, SET-08) is CSS only: the settings store puts it on `<html>` as `data-icons`, and `tokens.css` maps that to `--tree-folder` and `--tree-folder-fill`. Components use those two variables and never read the setting. A new set needs its rule there, its name in `IconTheme` and in the store's list, and an option in the settings modal.
   - Command ids (`src/lib/appCommands.ts`) and `EDITOR_SHORTCUTS` ids (`src/lib/editor/commands.ts`) are persisted: the user's shortcuts are stored under them. Never rename one.
+  - A new note is not kept until something is typed in it (TREE-04, ARCHITECTURE §8.3). The `fresh` store (`state/newNote.svelte.ts`) says whether the open note is that note (`open`: its title is a placeholder) and whether no title is typed either (`blank`: Esc, or a click in the sidebar, deletes it). What decides is `canDiscardNewNote` (`state/newNote.ts`): the exact path, vault epoch and editor revision of the creation, never the name. Delete such a note with `vault.discard`, after `editor.settled()`; a removal of the shown note cuts short an open that has not shown its file yet.
 - **Paths.**
   - A `VaultPath` is vault-relative, `/`-separated, and byte-identical to the backend listing. Never normalize it for I/O.
   - For display and matching, use `nfc()` and `key()` from `utils/path.ts`. Comparisons are case- and NFC-insensitive.
@@ -72,9 +73,9 @@ npm run release:prepare    # validate the versions and write the updater overlay
   - Every string goes through `t()` in `src/lib/i18n.ts` (English).
   - Keep documentation and comments in English. Use Unicode escapes for Hangul fixtures and character tables so Unicode and IME coverage stays intact.
   - Show no visible labels unless essential. Icons carry `aria-label`, not `title`.
-  - Report errors only, through `ui.notify`.
+  - Report errors only, through `ui.notify`. A name refused in the inline title is the exception: its reason shows under the title (EDIT-15).
 - **CSS.**
-  - Use only the variables in `src/styles/tokens.css`, and only grays. The two exceptions are the `--c-syn-*` syntax colors, used by the code view's highlight style and nothing else (DESIGN §6), and `--c-icon-folder-tint`, the folder color of the "Color" icon set and nothing else (DESIGN §4). What the app draws on a PDF's page takes the `--c-pdf-*` grays, which have one value for both themes (DESIGN §7).
+  - Use only the variables in `src/styles/tokens.css`, and only grays. The three exceptions are the `--c-syn-*` syntax colors, used by the code view's highlight style and nothing else (DESIGN §6), `--c-icon-folder-tint`, the folder color of the "Color" icon set and nothing else (DESIGN §4), and `--c-error`, the red of a refused name under the inline title and nothing else (DESIGN §4). What the app draws on a PDF's page takes the `--c-pdf-*` grays, which have one value for both themes (DESIGN §7).
   - A Markdown construct looks the same in the reading view (`markdown.css`) and the editor (`editor.css`): both take its measures from the `--md-*` tokens. Change the token, never one stylesheet.
   - In the editor a blank line is a body line. Never shrink or restyle it; block gaps are padding on a block's first line (`livePreview/flow.ts`, DESIGN §3.2).
   - Inside rendered Markdown, blocks have **no margins**. Vertical space comes only from sibling-pair rules (`CONTAINER > :where(A + B)`).

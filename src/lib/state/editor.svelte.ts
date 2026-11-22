@@ -126,8 +126,14 @@ export interface OpenOptions {
   select?: string;
   /** Without `line`: restore this selection, scroll position and view mode (VAULT-03 session restore). */
   position?: NotePosition;
-  /** Default "editor"; "start" switches to editing and focuses the body's first position after rendering. */
-  focus?: "editor" | "start" | "none";
+  /**
+   * Default "editor"; "start" switches to editing and focuses the body's first position after
+   * rendering; "title" does the same for the inline title, or for the body where the title is
+   * hidden (a new note, TREE-04).
+   */
+  focus?: "editor" | "start" | "title" | "none";
+  /** False leaves the tree's selection and scroll alone (default: the opened file's row is revealed). */
+  reveal?: boolean;
 }
 
 type Timer = ReturnType<typeof setTimeout>;
@@ -277,6 +283,8 @@ class EditorStore {
   #installed: Note | null = null;
   #history = new NavHistory(HISTORY_LIMIT);
   #openSeq = 0;
+  /** The latest open(), settled once it is over (settled()). */
+  #opening: Promise<void> = Promise.resolve();
   #useSeq = 0;
   #lineSeq = 0;
   #scrollToken = 0;
@@ -412,8 +420,26 @@ class EditorStore {
    * On read failure: toast (errOpen/errNotText/errTooLarge) and keep the
    * previous document bound to its own path. Returns success.
    */
-  open = (path: VaultPath, opts?: OpenOptions): Promise<boolean> =>
-    untrack(() => this.#open(path, opts ?? {})).then((r) => r === "ok");
+  open = (path: VaultPath, opts?: OpenOptions): Promise<boolean> => {
+    const opening = untrack(() => this.#open(path, opts ?? {}));
+    this.#opening = opening.then(
+      () => {},
+      () => {},
+    );
+    return opening.then((r) => r === "ok");
+  };
+
+  /**
+   * Resolves once no open() is under way: each has shown its file, failed, or given way to a
+   * later one. What removes the shown note waits for it, since a removal cuts short an open
+   * that has not shown its file yet.
+   */
+  settled = async (): Promise<void> => {
+    for (let seen: Promise<void> | null = null; seen !== this.#opening; ) {
+      seen = this.#opening;
+      await seen;
+    }
+  };
 
   /**
    * Opens a note that does not exist yet (unresolved link target). Shows an empty
@@ -575,9 +601,10 @@ class EditorStore {
   /**
    * A file/folder is gone (in-app delete): drop its controllers without saving,
    * show the previous history entry (or nothing) if it was open, prune history,
-   * recent list and cache.
+   * recent list and cache. With `reveal` false, the entry shown is not revealed in the tree.
    */
-  onPathRemoved = (path: VaultPath): void => untrack(() => this.#forget((p) => isSameOrAncestor(path, p)));
+  onPathRemoved = (path: VaultPath, opts?: { reveal?: boolean }): void =>
+    untrack(() => this.#forget((p) => isSameOrAncestor(path, p), opts?.reveal));
 
   /**
    * A note with live state changed on disk (watcher, focus re-check, or a removal
@@ -897,17 +924,20 @@ class EditorStore {
     if (opts.history !== false) this.#history.push({ path, virtual: false });
     this.#syncHistory();
     this.#remember(path, isNote);
-    vault.revealInTree(path);
+    if (opts.reveal !== false) vault.revealInTree(path);
     this.#focus(opts.focus);
   }
 
   #focus(focus: OpenOptions["focus"] = "editor"): void {
-    if (focus === "start" && this.kind === "note") {
+    if ((focus === "start" || focus === "title") && this.kind === "note") {
       this.viewMode = "edit";
       const seq = this.#openSeq;
+      const title = focus === "title" && settings.values.inlineTitle;
       // The editor can still be hidden after opening from the blank state, an image or reading view.
       void tick().then(() => {
-        if (seq === this.#openSeq && this.kind === "note" && this.viewMode === "edit") this.focusEditor("start");
+        if (seq !== this.#openSeq || this.kind !== "note" || this.viewMode !== "edit") return;
+        if (title) ui.focusTitle();
+        else this.focusEditor("start");
       });
     } else if (focus === "editor" && this.#editorShown()) this.#view?.focus();
   }
@@ -1204,22 +1234,23 @@ class EditorStore {
     this.#syncHistory();
   }
 
-  #openEntry(e: HistoryEntry, focus?: OpenOptions["focus"]): Promise<OpenResult> {
+  #openEntry(e: HistoryEntry, focus?: OpenOptions["focus"], reveal?: boolean): Promise<OpenResult> {
     const listed = vault.node(e.path) !== undefined;
     if (!listed && e.virtual) return this.#openVirtual(e.path, { history: false, focus });
     if (!listed && !vault.truncated) return Promise.resolve("failed");
-    return this.#open(e.path, { history: false, focus });
+    return this.#open(e.path, { history: false, focus, reveal });
   }
 
   /**
    * After the open file was removed: the previous history entry, else nothing (TREE-08, SAVE-07).
    * It takes keyboard focus only as the editor had it: a delete from the tree keeps the tree's.
+   * With `reveal` false the tree keeps its selection too (a new note left by a click there, TREE-04).
    */
-  async #fallback(focus: OpenOptions["focus"]): Promise<void> {
+  async #fallback(focus: OpenOptions["focus"], reveal?: boolean): Promise<void> {
     for (let guard = 0; guard < HISTORY_LIMIT; guard++) {
       const entry = this.#history.current;
       if (!entry) break;
-      const r = await this.#openEntry(entry, focus);
+      const r = await this.#openEntry(entry, focus, reveal);
       if (r !== "failed") break;
       this.#history.remove((e) => e === entry);
     }
@@ -1232,7 +1263,7 @@ class EditorStore {
   }
 
   /** Drops every controller whose path matches, plus history and session entries. */
-  #forget(match: (p: VaultPath) => boolean): void {
+  #forget(match: (p: VaultPath) => boolean, reveal?: boolean): void {
     let wasShown = this.path !== null && match(this.path);
     // Read before anything is disposed: dropping the shown note empties the view (and its find panel).
     const active = document.activeElement;
@@ -1250,7 +1281,7 @@ class EditorStore {
     if (wasShown) {
       ++this.#openSeq;
       this.#showNothing();
-      void this.#fallback(focus);
+      void this.#fallback(focus, reveal);
     }
   }
 

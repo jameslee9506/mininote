@@ -201,7 +201,8 @@ class VaultStore {
   /**
    * Creates a note named `name` (default t("untitled"), made unique) inside `dir`
    * (default newNoteDir()). Opens it (unless open === false) in editing mode with
-   * the caret at the start of the body. Returns the new path.
+   * the caret at the start of the body, or in its title when it got the default name
+   * (TREE-04). Returns the new path.
    */
   createNote = (opts?: { dir?: VaultPath; name?: string; content?: string; open?: boolean }): Promise<VaultPath | null> =>
     untrack(() => this.#createNote(opts ?? {}));
@@ -298,6 +299,16 @@ class VaultStore {
    * An optional guard is rechecked after waits, before any destructive IPC call.
    */
   remove = (path: VaultPath, guard?: () => boolean): Promise<boolean> => untrack(() => this.#remove(path, guard));
+
+  /**
+   * Lets go of a note that was created a moment ago and never typed in (TREE-04): the editor
+   * drops it at once, showing the previous note if it was the open one, and its file goes to
+   * the trash. Nothing is asked, flushed or frozen: such a note has no text to keep and no
+   * save under way. The tree keeps the selection the user's click gave it; only a selection
+   * on the note itself is cleared. Where the volume has no trash, remove() takes over, with
+   * its question. Returns true when the file is gone.
+   */
+  discard = (path: VaultPath): Promise<boolean> => untrack(() => this.#discard(path));
 
   revealInOs = (path: VaultPath): Promise<void> =>
     untrack(async () => {
@@ -740,11 +751,36 @@ class VaultStore {
       }
       await this.#refresh();
       const actual = this.findExisting(path) ?? path;
-      if (opts.open !== false) await editor.open(actual, { focus: "start" });
+      if (opts.open !== false) await editor.open(actual, { focus: opts.name === undefined ? "title" : "start" });
       return actual;
     }
     ui.notify(t("errCreate", { name: base }));
     return null;
+  }
+
+  async #discard(path: VaultPath): Promise<boolean> {
+    const info = this.info;
+    if (!info || this.nodes.get(path)?.kind !== "file" || editor.busyUnder(path)) return false;
+    const label = this.#label(path);
+    // The click that left the note chose its own row, or none: the note shown next does not take the selection.
+    editor.onPathRemoved(path, { reveal: false });
+    if (this.selected === path) this.selected = null;
+    if (this.#lostSelection === path) this.#lostSelection = null;
+    if (this.renaming === path) this.renaming = null;
+    try {
+      await pathTrash(path, info.epoch);
+    } catch (e) {
+      if (this.info !== info) return false;
+      if (isIpcError(e, "trash_failed")) return this.#remove(path);
+      if (!isIpcError(e, "not_found")) {
+        console.error("vault: trash failed", e);
+        ui.notify(t("errTrash", { name: label }));
+        return false;
+      }
+    }
+    if (this.info !== info) return false;
+    await this.#refresh();
+    return true;
   }
 
   async #createNoteFromLink(target: string): Promise<VaultPath | null> {

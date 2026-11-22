@@ -47,7 +47,8 @@
   import Icon from "./Icon.svelte";
   import FileTree from "./FileTree.svelte";
   import SearchPanel from "./SearchPanel.svelte";
-  import { newFolder, newNote, newWindow, openFolderDialog, openVault } from "../appCommands";
+  import { leaveNewNote, newFolder, newNote, newWindow, openFolderDialog, openVault } from "../appCommands";
+  import { fresh } from "../state/newNote.svelte";
   import { vault } from "../state/vault.svelte";
   import { ui, type MenuEntry } from "../state/ui.svelte";
   import { t } from "../i18n";
@@ -55,6 +56,7 @@
   import { key, nfc } from "../utils/path";
 
   const vaultName = $derived(vault.info ? vault.info.name || vault.info.root : "");
+  let newNoteButton: HTMLButtonElement | undefined = $state();
 
   function safely(p: Promise<unknown>): void {
     p.catch((err) => {
@@ -104,16 +106,46 @@
    * such as a rename input's, is left alone.
    */
   function releaseKeyboard(e: MouseEvent & { currentTarget: HTMLElement }): void {
+    // The one exception (TREE-04): a new note with nothing typed in it keeps the keyboard when
+    // what is pressed stands for that very note. The press is cancelled, so nothing takes it.
+    if (onBlankNote(e.target)) {
+      e.preventDefault();
+      return;
+    }
     const active = document.activeElement;
     if (active instanceof HTMLElement && active !== document.body && !e.currentTarget.contains(active)) active.blur();
   }
+
+  /** What is pressed stands for the new note that has nothing typed in it: its tree row, or a search result in it. */
+  function onBlankNote(target: EventTarget | null): boolean {
+    const row = target instanceof Element ? target.closest<HTMLElement>("[data-path]") : null;
+    return row !== null && fresh.holds(row.dataset.path);
+  }
+
+  /**
+   * A click or a right-click in the sidebar leaves the new note that has nothing typed in it,
+   * and that note is deleted (TREE-04). Not on what stands for the note itself, and not on the
+   * new-note button, which keeps it as the new note. It runs after what was clicked has acted,
+   * so a new folder still starts beside the note, and a press that is no click (a drag of the
+   * window or of a row, the scrollbar) deletes nothing.
+   */
+  function leaveBlankNote(e: MouseEvent): void {
+    if (onBlankNote(e.target) || (e.target instanceof Node && newNoteButton?.contains(e.target))) return;
+    leaveNewNote();
+  }
 </script>
 
-<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-<aside class="sidebar" onmousedown={releaseKeyboard}>
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions, a11y_click_events_have_key_events -->
+<aside class="sidebar" onmousedown={releaseKeyboard} onclick={leaveBlankNote} oncontextmenu={leaveBlankNote}>
   <!-- Buttons are direct children: Tauri drags only on the region element itself. -->
   <header class="header" class:mac={isMac} data-tauri-drag-region={isMac ? "" : undefined}>
-    <button type="button" class="icon-btn first" aria-label={t("ariaNewNote")} onclick={() => safely(newNote())}>
+    <button
+      bind:this={newNoteButton}
+      type="button"
+      class="icon-btn first"
+      aria-label={t("ariaNewNote")}
+      onclick={() => safely(newNote())}
+    >
       <Icon name="note-plus" />
     </button>
     <button

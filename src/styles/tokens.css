@@ -1,7 +1,8 @@
 /*
  * Design tokens — the single source of visual truth (see docs/DESIGN.md).
  * Monotone: every color is a gray, except the syntax colors of the code view
- * (--c-syn-*) and the folders of the "color" icon set (--c-icon-folder-tint).
+ * (--c-syn-*), the folders of the "color" icon set (--c-icon-folder-tint) and the
+ * reason a name was refused, under the inline title (--c-error).
  * The --c-pdf-* grays are drawn on a PDF's pages and have one value: a page is
  * paper in either theme (DESIGN §7).
  * Components must use these variables only.
@@ -28,7 +29,8 @@
   --c-text-faint: #a8a8a8;      /* markdown syntax marks, placeholders, idle icons */
   --c-icon-tree: #9a9a9a;       /* tree row icons: a step past faint */
   --c-icon-folder: #8f8f8f;     /* a solid folder ("filled" icons): a step past the row icons */
-  --c-icon-folder-tint: #7fa3d1; /* a solid folder in the "color" icons: the one hue in the chrome */
+  --c-icon-folder-tint: #7fa3d1; /* a solid folder in the "color" icons: a hue the user chooses */
+  --c-error: #d0342c;           /* why a name was refused, under the inline title: the one red */
   --c-selection: rgba(0, 0, 0, 0.1);
   --c-caret: #111111;
   --c-focus: rgba(0, 0, 0, 0.3);
@@ -177,6 +179,7 @@
   --c-icon-tree: #6c6c6c;
   --c-icon-folder: #767676;
   --c-icon-folder-tint: #5f86b8;
+  --c-error: #f2776d;
   --c-selection: rgba(255, 255, 255, 0.13);
   --c-caret: #f0f0f0;
   --c-focus: rgba(255, 255, 255, 0.32);
@@ -219,6 +222,7 @@
     --c-icon-tree: #6c6c6c;
     --c-icon-folder: #767676;
     --c-icon-folder-tint: #5f86b8;
+    --c-error: #f2776d;
     --c-selection: rgba(255, 255, 255, 0.13);
     --c-caret: #f0f0f0;
     --c-focus: rgba(255, 255, 255, 0.32);

@@ -1,11 +1,13 @@
 <script lang="ts">
   // The open file's name above the text, edited in place (EDIT-15), and under it the day
-  // the file was created. The name is always one line of text that wraps visually: a
-  // textarea sized by a hidden replica (CSS grid), never by measuring layout.
+  // the file was created, or the reason a typed name was refused. The name is always one
+  // line of text that wraps visually: a textarea sized by a hidden replica (CSS grid), never
+  // by measuring layout. A new note's name is a placeholder until something is typed (TREE-04).
   import { tick, untrack } from "svelte";
   import { discardNewNote } from "../appCommands";
   import { t, type MessageKey } from "../i18n";
   import { editor } from "../state/editor.svelte";
+  import { fresh } from "../state/newNote.svelte";
   import { ui } from "../state/ui.svelte";
   import { vault } from "../state/vault.svelte";
   import type { VaultPath } from "../types";
@@ -18,6 +20,8 @@
   const NOTE_EXT = /\.(md|markdown)$/i;
   /** The creation date as the system writes a long date ("November 22, 2026"). */
   const DATE = new Intl.DateTimeFormat(undefined, { dateStyle: "long" });
+  /** How long a refusal stays under a title that went back to its name: a toast's time. */
+  const ERROR_MS = 4000;
 
   /** What committing a typed title means: nothing, a refusal, or a rename to `target` (stored as `stored`). */
   type Plan = { kind: "same" } | { kind: "invalid"; message: MessageKey } | { kind: "ok"; target: string; stored: string };
@@ -28,8 +32,18 @@
   const path = $derived(editor.path);
   /** Notes without ".md"; images, code and other files with their full name (TREE-15, TREE-16, TREE-17). */
   const original = $derived(path === null ? "" : titleFor(path));
-  /** The field's text: follows `original` and resets whenever it changes (another file, a rename). */
-  let value = $derived(original);
+  /**
+   * The open note was made a moment ago and its text is untouched (TREE-04): its field is empty
+   * over its name as a placeholder, and committing the empty field keeps that name.
+   */
+  const placeholder = $derived(fresh.open);
+  /** The field's text while nothing is typed in it. */
+  const rest = $derived(placeholder ? "" : original);
+  /** The field's text: follows `rest` and resets whenever it changes (another file, a rename, a first edit of a new note). */
+  let value = $derived(rest);
+  /** Why the typed name was refused: shown under the title, where the date is (EDIT-15). */
+  let error = $state<MessageKey | null>(null);
+  let errorTimer: ReturnType<typeof setTimeout> | undefined;
   /** A rename this field started and that is still running (exact paths; `to` is where it should land). */
   let moving = $state.raw<{ from: VaultPath; to: VaultPath } | null>(null);
   /** The shown file is the one being renamed from here: its title is read-only and commits nothing meanwhile. */
@@ -102,6 +116,22 @@
     el?.setAttribute("autocorrect", "off");
   });
 
+  // A title typed for the new note keeps it from being discarded as blank (TREE-04).
+  $effect(() => {
+    fresh.titled = value.trim() !== "";
+  });
+  $effect(() => () => {
+    fresh.titled = false;
+    clearTimeout(errorTimer);
+  });
+
+  /** Shows why a name was refused, or nothing. A `passing` one goes by itself after a while. */
+  function report(message: MessageKey | null, passing = false): void {
+    clearTimeout(errorTimer);
+    error = message;
+    if (message !== null && passing) errorTimer = setTimeout(() => (error = null), ERROR_MS);
+  }
+
   // F2: focus and select the title. ↑ from the body's first line focuses it
   // with the caret at the end instead (EDIT-15). Waiting a tick lets a note switch that
   // requested it land first, so the new title is the one selected.
@@ -119,10 +149,14 @@
     });
   });
 
-  // UI-4: another file is shown while the field still holds uncommitted text.
+  // UI-4: another file is shown while the field still holds uncommitted text. A refusal was
+  // about the file shown before.
   $effect.pre(() => {
     const shown = path;
-    untrack(() => settleDraft(shown));
+    untrack(() => {
+      settleDraft(shown);
+      report(null);
+    });
   });
 
   /**
@@ -150,7 +184,8 @@
 
   /**
    * Renames to the typed title. "body" (Enter, Tab, ↓ at the end) moves on to the text; an
-   * invalid or taken name keeps the title in edit mode. "blur" reverts on failure (EDIT-15).
+   * invalid or taken name keeps the title in edit mode. "blur" reverts on failure. Either way
+   * the reason shows under the title (EDIT-15). A new note's empty field is its name (TREE-04).
    */
   async function commit(exit: "body" | "blur"): Promise<void> {
     const from = editor.path;
@@ -158,18 +193,21 @@
     if (from === null || locked) return;
     const typed = value;
     draft = null;
-    const verdict = editor.readOnly ? SAME : plan(from, typed);
+    const verdict = editor.readOnly || (placeholder && typed.trim() === "") ? SAME : plan(from, typed);
     if (verdict.kind === "same") {
-      value = original;
+      value = rest;
+      report(null);
       if (exit === "body") leave("start");
       return;
     }
     if (verdict.kind === "invalid") {
-      ui.notify(t(verdict.message));
-      if (exit === "blur") value = original;
+      // It stays for as long as the refused text does; under a title that went back, a while.
+      report(verdict.message, exit === "blur");
+      if (exit === "blur") value = rest;
       else draft = { from, text: typed };
       return;
     }
+    report(null);
     const mine = { from, to: join(dirname(from), verdict.stored) };
     moving = mine;
     // The field closes before the rename starts (TREE-06), and the caret is in the body at once:
@@ -189,7 +227,7 @@
     }
     if (to !== null || editor.path !== from) return;
     if (exit === "blur") {
-      value = original;
+      value = rest;
       return;
     }
     // Refused after all: back to the title with the typed text, unless the user went elsewhere.
@@ -232,7 +270,8 @@
       if (e.repeat) return;
       if (plain && !locked) discardNewNote(value);
       draft = null;
-      value = original;
+      value = rest;
+      report(null);
       leave();
     }
   }
@@ -247,7 +286,10 @@
       field.setSelectionRange(caret, caret);
     }
     value = clean;
-    if (editor.path !== null) draft = { from: editor.path, text: clean };
+    report(null);
+    // A new note's field emptied again holds nothing to commit: its name stands (TREE-04).
+    if (editor.path === null || (placeholder && clean.trim() === "")) draft = null;
+    else draft = { from: editor.path, text: clean };
   }
 
   function onBlur(): void {
@@ -264,20 +306,27 @@
       bind:this={el}
       rows={1}
       {value}
+      placeholder={placeholder ? original : undefined}
       readonly={editor.readOnly || locked}
       spellcheck="false"
       autocomplete="off"
       autocapitalize="off"
       writingsuggestions="false"
       aria-label={t("ariaTitle")}
+      aria-invalid={error !== null}
       oninput={onInput}
       onkeydown={onKeydown}
       onblur={onBlur}
     ></textarea>
   </div>
-  {#if created !== null}
-    <time class="created" datetime={created.toISOString()}>{DATE.format(created)}</time>
-  {/if}
+  <div class="under">
+    {#if created !== null}
+      <time class="created" class:covered={error !== null} datetime={created.toISOString()}>{DATE.format(created)}</time>
+    {/if}
+    {#if error !== null}
+      <p class="error" role="alert">{t(error)}</p>
+    {/if}
+  </div>
 </div>
 
 <style>
@@ -305,12 +354,39 @@
     color: var(--c-text-muted);
   }
 
+  /* The line under the title: the date, and over it the reason a name was refused. */
+  .under {
+    position: relative;
+  }
+
   /* The day the file was created: small and muted, with no label (EDIT-15). */
   .created {
     display: block;
     font-size: var(--fs-ui);
     line-height: var(--lh-ui);
     color: var(--c-text-muted);
+  }
+
+  .created.covered {
+    visibility: hidden;
+  }
+
+  /*
+   * Why the typed name was refused (EDIT-15), in the one red of the chrome. It takes the date's
+   * line, or hangs in the gap to the body where no date shows, so the text never moves.
+   */
+  .error {
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+    margin: 0;
+    overflow: hidden;
+    font-size: var(--fs-ui);
+    line-height: var(--lh-ui);
+    color: var(--c-error);
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   /* The replica: same text, same wrapping, invisible; it gives the grid cell its height. */
@@ -347,5 +423,11 @@
 
   .title > textarea:focus-visible {
     outline: none;
+  }
+
+  /* A new note's name until one is typed, a step back like every placeholder (TREE-04). */
+  .title > textarea::placeholder {
+    color: var(--c-text-faint);
+    opacity: 1;
   }
 </style>
