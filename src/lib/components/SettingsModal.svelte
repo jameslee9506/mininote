@@ -7,22 +7,28 @@
     label: string;
   }
 
+  type Tab = "general" | "appearance" | "shortcuts";
+
   /**
    * The terminal command's status when last asked (PLAT-14), kept between openings so that its
    * row is there at once; null hides the row.
    */
   let knownCommand: CliStatus = null;
+  /** The tab shown last: the settings open on it again until the window closes. */
+  let lastTab: Tab = "general";
 </script>
 
 <script lang="ts">
-  // Settings (SET-02): one row per setting, label left and control right, no
-  // descriptions. Every change applies at once through settings.update. An icon set
-  // is chosen by its own folder and note, drawn instead of named (SET-08). The code
-  // font is a monospaced family installed here, listed or typed by hand (SET-07).
-  // The terminal command's switch is no setting: it shows whether the command is
-  // installed, and installs or removes it (PLAT-14). The shortcuts row opens the
-  // shortcut list in the same panel (SET-06); a quiet last row shows the app version.
-  import { onMount, tick } from "svelte";
+  // Settings (SET-02), in three tabs: General (editing, where new notes and attachments
+  // go, deleting, the terminal command), Appearance (theme, icons, fonts, line width,
+  // title) and Shortcuts (SET-06). In the first two, one row per setting, label left and
+  // control right, no descriptions; every change applies at once through settings.update.
+  // An icon set is chosen by its own folder and note, drawn instead of named (SET-08). A
+  // font is a family installed here, listed or typed by hand: any family for the text and
+  // the headings (SET-09), a monospaced one for code (SET-07). The terminal command's
+  // switch is no setting: it shows whether the command is installed, and installs or
+  // removes it (PLAT-14). A quiet last row in General shows the app version.
+  import { onMount } from "svelte";
   import Icon from "./Icon.svelte";
   import Modal from "./Modal.svelte";
   import ShortcutSettings from "./ShortcutSettings.svelte";
@@ -32,11 +38,24 @@
   import { updater } from "../state/updater.svelte";
   import { t } from "../i18n";
   import type { IconTheme, Settings, ThemeMode } from "../types";
-  import { installedMonoFonts, monoFontProbe, sanitizeFontFamily } from "../utils/fonts";
+  import {
+    fontProbe,
+    installedMonoFonts,
+    installedTextFonts,
+    monoFontProbe,
+    SANS_SERIF,
+    sanitizeFontFamily,
+    SERIF,
+  } from "../utils/fonts";
   import { validateName } from "../utils/names";
   import { nfc } from "../utils/path";
   import { isComposing } from "../utils/platform";
 
+  const TABS: { id: Tab; label: string }[] = [
+    { id: "general", label: t("settingsGeneral") },
+    { id: "appearance", label: t("settingsAppearance") },
+    { id: "shortcuts", label: t("shortcuts") },
+  ];
   const LINE_WIDTHS = [640, 720, 800, 960];
   const THEMES: Option[] = [
     { value: "system", label: t("themeSystem") },
@@ -60,13 +79,97 @@
   ];
   /** The select's value for a family typed by hand. No family is named so: a stored name has no quotes. */
   const CUSTOM_FONT = '"custom"';
-  /** The monospaced families installed here, probed as the modal opens (SET-07). */
-  const monoFonts = installedMonoFonts();
-  const FONTS: Option[] = [
-    { value: "", label: t("fontDefault") },
-    ...monoFonts.map((name) => ({ value: name, label: name })),
-    { value: CUSTOM_FONT, label: t("fontCustom") },
-  ];
+
+  type FontKey = "textFont" | "headingFont" | "codeFont";
+
+  /**
+   * One font setting: its select, and the name field of a family typed by hand. A listed
+   * choice applies at once; "Custom" opens the field on the current name, which applies once
+   * committed unless `refuse` names what is wrong with it.
+   */
+  class FontField {
+    key: FontKey;
+    options: Option[];
+    /** The family is typed by hand: chosen so in the select, or stored and not listed there. */
+    custom = $state(false);
+    draft = $state("");
+    invalid = $state(false);
+    /** The error toast for a typed name the setting cannot take, or null. */
+    #refuse: (name: string) => string | null;
+
+    constructor(key: FontKey, choices: Option[], families: string[], refuse: (name: string) => string | null) {
+      this.key = key;
+      this.#refuse = refuse;
+      this.options = [
+        ...choices,
+        ...families.map((name) => ({ value: name, label: name })),
+        { value: CUSTOM_FONT, label: t("fontCustom") },
+      ];
+      const stored = settings.values[key];
+      this.custom = !this.options.some((o) => o.value === stored);
+      this.draft = stored;
+    }
+
+    get selected(): string {
+      return this.custom ? CUSTOM_FONT : settings.values[this.key];
+    }
+
+    /** A name was typed and not committed. */
+    get pending(): boolean {
+      return this.custom && sanitizeFontFamily(this.draft) !== settings.values[this.key];
+    }
+
+    choose = (value: string): void => {
+      this.invalid = false;
+      if (value === CUSTOM_FONT) {
+        this.custom = true;
+        this.draft = settings.values[this.key];
+        return;
+      }
+      this.custom = false;
+      this.#store(value);
+    };
+
+    /** Commits the typed name; an empty one is the default. A refused one toasts, and reverts when `revert` is set. */
+    commit = (revert: boolean): void => {
+      const stored = settings.values[this.key];
+      const name = sanitizeFontFamily(this.draft);
+      const error = name !== "" && name !== stored ? this.#refuse(name) : null;
+      if (error !== null) {
+        ui.notify(error);
+        this.invalid = !revert;
+        if (revert) this.draft = stored;
+        return;
+      }
+      this.invalid = false;
+      this.draft = name;
+      if (name !== stored) this.#store(name);
+    };
+
+    #store(name: string): void {
+      const patch: Partial<Settings> = {};
+      patch[this.key] = name;
+      settings.update(patch);
+    }
+  }
+
+  const DEFAULT_FONT: Option = { value: "", label: t("fontDefault") };
+  const SERIF_FONT: Option = { value: SERIF, label: t("fontSerif") };
+  /** The families installed here, probed as the modal opens (SET-07, SET-09). */
+  const textFamilies = installedTextFonts();
+  /** A typed family must be installed (SET-09), and a code font monospaced as well (SET-07). */
+  const notInstalled = (name: string): string | null =>
+    fontProbe()?.(name) === false ? t("errFontNotInstalled", { name }) : null;
+  const notMono = (name: string): string | null => (monoFontProbe()?.(name) === false ? t("errFontNotMono", { name }) : null);
+  const textFont = new FontField("textFont", [DEFAULT_FONT, SERIF_FONT], textFamilies, notInstalled);
+  const headingFont = new FontField(
+    "headingFont",
+    [DEFAULT_FONT, SERIF_FONT, { value: SANS_SERIF, label: t("fontSansSerif") }],
+    textFamilies,
+    notInstalled,
+  );
+  const codeFont = new FontField("codeFont", [DEFAULT_FONT], installedMonoFonts(), notMono);
+  const FONT_FIELDS = [textFont, headingFont, codeFont];
 
   const uid = $props.id();
   const v = $derived(settings.values);
@@ -79,15 +182,9 @@
       .map((w) => ({ value: w, label: w === 0 ? t("fullWidth") : String(w) })),
   );
 
-  let page = $state<"general" | "shortcuts">("general");
-  let shortcutsRow: HTMLButtonElement | undefined = $state();
-  let backButton: HTMLButtonElement | undefined = $state();
+  let tab = $state<Tab>(lastTab);
   let folderDraft = $state(settings.values.attachmentFolder);
   let folderInvalid = $state(false);
-  /** The code font is typed by hand: chosen so in the select, or stored and not among the listed families. */
-  let customFont = $state(settings.values.codeFont !== "" && !monoFonts.includes(settings.values.codeFont));
-  let fontDraft = $state(settings.values.codeFont);
-  let fontInvalid = $state(false);
   /** Whether the `mininote` terminal command is installed; null where the app cannot install it (PLAT-14). */
   let command = $state<CliStatus>(knownCommand);
   let commandBusy = false;
@@ -119,6 +216,10 @@
     }
   }
 
+  function show(next: Tab): void {
+    tab = lastTab = next;
+  }
+
   function stepFontSize(delta: number): void {
     const size = v.fontSize + delta;
     if (size >= FONT_SIZE_MIN && size <= FONT_SIZE_MAX) settings.update({ fontSize: size });
@@ -137,6 +238,23 @@
     e.preventDefault();
     const next = (at + delta + options.length) % options.length;
     set(String(options[next].value));
+    (e.currentTarget.parentElement?.children[next] as HTMLElement | undefined)?.focus();
+  }
+
+  /** Tab keys, on the tab at `at`: Left and Right open the next tab around the ends, Home and End the first and last. */
+  function onTabKeydown(e: KeyboardEvent & { currentTarget: HTMLElement }, at: number): void {
+    if (isComposing(e)) return;
+    const last = TABS.length - 1;
+    const targets: Partial<Record<string, number>> = {
+      ArrowRight: at === last ? 0 : at + 1,
+      ArrowLeft: at === 0 ? last : at - 1,
+      Home: 0,
+      End: last,
+    };
+    const next = targets[e.key];
+    if (next === undefined) return;
+    e.preventDefault();
+    show(TABS[next].id);
     (e.currentTarget.parentElement?.children[next] as HTMLElement | undefined)?.focus();
   }
 
@@ -169,64 +287,20 @@
     if (folder !== stored) settings.update({ attachmentFolder: folder });
   }
 
-  function onFolderKeydown(e: KeyboardEvent): void {
+  /** Enter commits a name field. */
+  function onNameKeydown(e: KeyboardEvent, commit: (revert: boolean) => void): void {
     if (isComposing(e)) return;
     if (e.key === "Enter") {
       e.preventDefault();
-      commitFolder(false);
+      commit(false);
     }
-  }
-
-  /** The code font select: a listed family applies at once; "Custom" opens the name field on the current one. */
-  function chooseFont(value: string): void {
-    fontInvalid = false;
-    if (value === CUSTOM_FONT) {
-      customFont = true;
-      fontDraft = settings.values.codeFont;
-      return;
-    }
-    customFont = false;
-    settings.update({ codeFont: value });
-  }
-
-  /**
-   * Commits the typed family, which must be installed and monospaced (SET-07); an empty
-   * name is the default. A refused one toasts, and reverts when `revert` is set.
-   */
-  function commitFont(revert: boolean): void {
-    const stored = settings.values.codeFont;
-    const name = sanitizeFontFamily(fontDraft);
-    if (name !== "" && name !== stored && monoFontProbe()?.(name) === false) {
-      ui.notify(t("errFontNotMono", { name }));
-      fontInvalid = !revert;
-      if (revert) fontDraft = stored;
-      return;
-    }
-    fontInvalid = false;
-    fontDraft = name;
-    if (name !== stored) settings.update({ codeFont: name });
-  }
-
-  function onFontKeydown(e: KeyboardEvent): void {
-    if (isComposing(e)) return;
-    if (e.key === "Enter") {
-      e.preventDefault();
-      commitFont(false);
-    }
-  }
-
-  /** Switches pages; focus lands where the user can go back the same way. */
-  async function show(next: typeof page): Promise<void> {
-    page = next;
-    await tick();
-    (next === "shortcuts" ? backButton : shortcutsRow)?.focus();
   }
 
   // Escape or a click outside closes the modal without blurring the field first:
   // keep a valid folder or font name that was typed but not yet committed.
   $effect(() => () => {
     if (settings.values.attachmentLocation === "folder" && folderDraft !== settings.values.attachmentFolder) commitFolder(false);
-    if (customFont && sanitizeFontFamily(fontDraft) !== settings.values.codeFont) commitFont(false);
+    for (const field of FONT_FIELDS) if (field.pending) field.commit(false);
   });
 </script>
 
@@ -280,123 +354,191 @@
   </label>
 {/snippet}
 
-<Modal width={520} label={t("settings")} onclose={ui.closeModal}>
-  {#if page === "shortcuts"}
-    <div class="header">
-      <button type="button" class="icon-btn" bind:this={backButton} aria-label={t("ariaBack")} onclick={() => show("general")}>
-        <Icon name="chevron-left" />
-      </button>
-      <span class="title">{t("shortcuts")}</span>
-    </div>
-    <ShortcutSettings />
-  {:else}
-    <div class="settings">
-      {@render segmented("theme", t("theme"), v.theme, THEMES, (theme) => settings.update({ theme: theme as ThemeMode }))}
-      {@render segmented(
-        "icons",
-        t("iconTheme"),
-        v.iconTheme,
-        ICON_THEMES,
-        (icons) => settings.update({ iconTheme: icons as IconTheme }),
-        true,
-      )}
+<!--
+  An indented row with a name field: the attachment folder, a font typed by hand. Enter commits
+  the name; leaving the field commits it too, or puts the stored one back if it is refused.
+-->
+{#snippet nameField(
+  label: string,
+  invalid: boolean,
+  commit: (revert: boolean) => void,
+  get: () => string,
+  set: (value: string) => void,
+)}
+  <label class="row sub">
+    <span class="label">{label}</span>
+    <input
+      class="field name"
+      class:invalid
+      type="text"
+      aria-invalid={invalid}
+      bind:value={get, set}
+      onkeydown={(e) => onNameKeydown(e, commit)}
+      onblur={() => commit(true)}
+      spellcheck="false"
+      autocomplete="off"
+      autocorrect="off"
+      autocapitalize="off"
+      writingsuggestions="false"
+    />
+  </label>
+{/snippet}
 
-      <div class="row">
-        <span class="label" id="{uid}-font">{t("fontSize")}</span>
-        <div class="stepper" role="group" aria-labelledby="{uid}-font">
-          <button
-            type="button"
-            aria-label={t("ariaDecrease")}
-            aria-disabled={v.fontSize <= FONT_SIZE_MIN}
-            onclick={() => stepFontSize(-1)}><span aria-hidden="true">−</span></button
-          >
-          <span class="value" aria-live="polite">{v.fontSize}</span>
-          <button
-            type="button"
-            aria-label={t("ariaIncrease")}
-            aria-disabled={v.fontSize >= FONT_SIZE_MAX}
-            onclick={() => stepFontSize(1)}><span aria-hidden="true">+</span></button
-          >
-        </div>
-      </div>
-
-      {@render choice(t("codeFont"), customFont ? CUSTOM_FONT : v.codeFont, FONTS, chooseFont)}
-
-      {#if customFont}
-        <label class="row sub">
-          <span class="label">{t("fontName")}</span>
-          <input
-            class="field name"
-            class:invalid={fontInvalid}
-            type="text"
-            aria-invalid={fontInvalid}
-            bind:value={fontDraft}
-            oninput={() => (fontInvalid = false)}
-            onkeydown={onFontKeydown}
-            onblur={() => commitFont(true)}
-            spellcheck="false"
-            autocomplete="off"
-            autocorrect="off"
-            autocapitalize="off"
-            writingsuggestions="false"
-          />
-        </label>
-      {/if}
-
-      {@render choice(t("lineWidth"), v.lineWidth, widthOptions, (w) => settings.update({ lineWidth: Number(w) }))}
-      {@render toggle("live", t("livePreview"), v.editorMode === "live", (on) => settings.update({ editorMode: on ? "live" : "source" }))}
-      {@render toggle("spellcheck", t("spellcheck"), v.spellcheck, (on) => settings.update({ spellcheck: on }))}
-      {@render toggle("title", t("inlineTitle"), v.inlineTitle, (on) => settings.update({ inlineTitle: on }))}
-      {@render choice(t("newNoteLocation"), v.newNoteLocation, NEW_NOTE_LOCATIONS, (loc) =>
-        settings.update({ newNoteLocation: loc as Settings["newNoteLocation"] }),
-      )}
-      {@render choice(t("attachmentLocation"), v.attachmentLocation, ATTACHMENT_LOCATIONS, (loc) =>
-        settings.update({ attachmentLocation: loc as Settings["attachmentLocation"] }),
-      )}
-
-      {#if v.attachmentLocation === "folder"}
-        <label class="row sub">
-          <span class="label">{t("attachmentFolder")}</span>
-          <input
-            class="field name"
-            class:invalid={folderInvalid}
-            type="text"
-            aria-invalid={folderInvalid}
-            bind:value={folderDraft}
-            oninput={() => (folderInvalid = false)}
-            onkeydown={onFolderKeydown}
-            onblur={() => commitFolder(true)}
-            spellcheck="false"
-            autocomplete="off"
-            autocorrect="off"
-            autocapitalize="off"
-            writingsuggestions="false"
-          />
-        </label>
-      {/if}
-
-      {@render toggle("confirm", t("confirmDeleteSetting"), v.confirmDelete, (on) => settings.update({ confirmDelete: on }))}
-
-      {#if command !== null}
-        {@render toggle("command", t("terminalCommand"), command, (on) => void toggleCommand(on))}
-      {/if}
-
-      <button type="button" class="row page" bind:this={shortcutsRow} onclick={() => show("shortcuts")}>
-        <span class="label">{t("shortcuts")}</span>
-        <span class="chevron"><Icon name="chevron-right" /></span>
-      </button>
-
-      {#if updater.current !== ""}
-        <div class="row version">
-          <span class="label">{t("version")}</span>
-          <span class="version-value">{updater.current}</span>
-        </div>
-      {/if}
-    </div>
+{#snippet font(label: string, field: FontField)}
+  {@render choice(label, field.selected, field.options, field.choose)}
+  {#if field.custom}
+    {@render nameField(
+      t("fontName"),
+      field.invalid,
+      field.commit,
+      () => field.draft,
+      (name) => {
+        field.draft = name;
+        field.invalid = false;
+      },
+    )}
   {/if}
+{/snippet}
+
+<Modal width={520} label={t("settings")} onclose={ui.closeModal}>
+  <div class="tabs" role="tablist">
+    {#each TABS as item, i (item.id)}
+      <button
+        type="button"
+        role="tab"
+        id="{uid}-tab-{item.id}"
+        aria-selected={item.id === tab}
+        aria-controls="{uid}-panel"
+        tabindex={item.id === tab ? 0 : -1}
+        onclick={() => show(item.id)}
+        onkeydown={(e) => onTabKeydown(e, i)}
+      >
+        {item.label}
+      </button>
+    {/each}
+  </div>
+
+  <div class="body" role="tabpanel" id="{uid}-panel" aria-labelledby="{uid}-tab-{tab}">
+    {#if tab === "general"}
+      <div class="settings">
+        {@render toggle("live", t("livePreview"), v.editorMode === "live", (on) => settings.update({ editorMode: on ? "live" : "source" }))}
+        {@render toggle("spellcheck", t("spellcheck"), v.spellcheck, (on) => settings.update({ spellcheck: on }))}
+        {@render choice(t("newNoteLocation"), v.newNoteLocation, NEW_NOTE_LOCATIONS, (loc) =>
+          settings.update({ newNoteLocation: loc as Settings["newNoteLocation"] }),
+        )}
+        {@render choice(t("attachmentLocation"), v.attachmentLocation, ATTACHMENT_LOCATIONS, (loc) =>
+          settings.update({ attachmentLocation: loc as Settings["attachmentLocation"] }),
+        )}
+
+        {#if v.attachmentLocation === "folder"}
+          {@render nameField(
+            t("attachmentFolder"),
+            folderInvalid,
+            commitFolder,
+            () => folderDraft,
+            (folder) => {
+              folderDraft = folder;
+              folderInvalid = false;
+            },
+          )}
+        {/if}
+
+        {@render toggle("confirm", t("confirmDeleteSetting"), v.confirmDelete, (on) => settings.update({ confirmDelete: on }))}
+
+        {#if command !== null}
+          {@render toggle("command", t("terminalCommand"), command, (on) => void toggleCommand(on))}
+        {/if}
+
+        {#if updater.current !== ""}
+          <div class="row version">
+            <span class="label">{t("version")}</span>
+            <span class="version-value">{updater.current}</span>
+          </div>
+        {/if}
+      </div>
+    {:else if tab === "appearance"}
+      <div class="settings">
+        {@render segmented("theme", t("theme"), v.theme, THEMES, (theme) => settings.update({ theme: theme as ThemeMode }))}
+        {@render segmented(
+          "icons",
+          t("iconTheme"),
+          v.iconTheme,
+          ICON_THEMES,
+          (icons) => settings.update({ iconTheme: icons as IconTheme }),
+          true,
+        )}
+
+        <div class="row">
+          <span class="label" id="{uid}-font">{t("fontSize")}</span>
+          <div class="stepper" role="group" aria-labelledby="{uid}-font">
+            <button
+              type="button"
+              aria-label={t("ariaDecrease")}
+              aria-disabled={v.fontSize <= FONT_SIZE_MIN}
+              onclick={() => stepFontSize(-1)}><span aria-hidden="true">−</span></button
+            >
+            <span class="value" aria-live="polite">{v.fontSize}</span>
+            <button
+              type="button"
+              aria-label={t("ariaIncrease")}
+              aria-disabled={v.fontSize >= FONT_SIZE_MAX}
+              onclick={() => stepFontSize(1)}><span aria-hidden="true">+</span></button
+            >
+          </div>
+        </div>
+
+        {@render font(t("textFont"), textFont)}
+        {@render font(t("headingFont"), headingFont)}
+        {@render font(t("codeFont"), codeFont)}
+        {@render choice(t("lineWidth"), v.lineWidth, widthOptions, (w) => settings.update({ lineWidth: Number(w) }))}
+        {@render toggle("title", t("inlineTitle"), v.inlineTitle, (on) => settings.update({ inlineTitle: on }))}
+      </div>
+    {:else}
+      <ShortcutSettings />
+    {/if}
+  </div>
 </Modal>
 
 <style>
+  /* The tabs: names, as on the rows below them, the first one's on the labels' line. */
+  .tabs {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 2px;
+    height: 44px;
+    padding: 0 10px;
+    border-bottom: 1px solid var(--c-border);
+  }
+
+  .tabs button {
+    height: var(--row-h);
+    padding: 0 10px;
+    border-radius: var(--radius-s);
+    color: var(--c-text-muted);
+    font-size: var(--fs-ui);
+    white-space: nowrap;
+    transition:
+      background-color var(--dur-fast),
+      color var(--dur-fast);
+  }
+
+  .tabs button:hover {
+    color: var(--c-text);
+  }
+
+  .tabs button[aria-selected="true"] {
+    background: var(--c-bg-active);
+    color: var(--c-text-strong);
+  }
+
+  /* The open tab's page: it scrolls under the tabs when the window is short. */
+  .body {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
   .settings {
     min-height: 0;
     overflow-y: auto;
@@ -426,23 +568,6 @@
     color: var(--c-text-muted);
   }
 
-  /* A row that opens a page (shortcuts): the chevron darkens like an icon button. */
-  .page {
-    width: 100%;
-    text-align: left;
-  }
-
-  .chevron {
-    flex: none;
-    color: var(--c-text-faint);
-    transition: color var(--dur-fast);
-  }
-
-  .page:hover .chevron,
-  .page:focus-visible .chevron {
-    color: var(--c-text);
-  }
-
   /* The version row: information, not a control, so it stays quiet. */
   .version .label,
   .version-value {
@@ -453,23 +578,6 @@
   .version-value {
     flex: none;
     font-variant-numeric: tabular-nums;
-  }
-
-  /* Shortcuts page header: back, then the page name. */
-  .header {
-    display: flex;
-    flex: none;
-    align-items: center;
-    gap: 4px;
-    height: 44px;
-    padding: 0 12px;
-    border-bottom: 1px solid var(--c-border);
-  }
-
-  .title {
-    color: var(--c-text-strong);
-    font-size: var(--fs-ui);
-    font-weight: var(--fw-strong);
   }
 
   /* Segmented control (theme, icon set). */
@@ -624,7 +732,7 @@
     outline-offset: 2px;
   }
 
-  /* Name fields: the attachment folder, a custom code font. */
+  /* Name fields: the attachment folder, a font typed by hand. */
   .name {
     flex: none;
     width: 150px;
@@ -637,11 +745,11 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
+    .tabs button,
     .segmented button,
     .stepper button,
     .switch,
-    .switch::after,
-    .chevron {
+    .switch::after {
       transition: none;
     }
   }

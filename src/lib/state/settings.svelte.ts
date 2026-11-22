@@ -8,12 +8,21 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { settingsLoad, settingsUpdate } from "../ipc/commands";
 import { onSettingsChanged } from "../ipc/events";
 import type { Settings, SettingsChangedPayload, SettingsPatch, VaultSession } from "../types";
-import { monoFontValue, sanitizeFontFamily } from "../utils/fonts";
+import {
+  headingFontValue,
+  monoFontValue,
+  sanitizeFontFamily,
+  sanitizeHeadingFont,
+  sanitizeTextFont,
+  textFontValue,
+} from "../utils/fonts";
 import { sanitizeShortcuts } from "../utils/keys";
 import { SyncLedger } from "./settingsSync";
 
 export const DEFAULT_SETTINGS: Settings = {
   fontSize: 15,
+  textFont: "",
+  headingFont: "",
   codeFont: "",
   lineWidth: 720,
   theme: "system",
@@ -59,6 +68,8 @@ function sanitize(raw: Partial<Settings> | undefined): Settings {
   const bool = (v: unknown, fallback: boolean): boolean => (typeof v === "boolean" ? v : fallback);
   return {
     fontSize: clamp(Number(s.fontSize) || d.fontSize, FONT_SIZE_MIN, FONT_SIZE_MAX),
+    textFont: sanitizeTextFont(s.textFont),
+    headingFont: sanitizeHeadingFont(s.headingFont),
     codeFont: sanitizeFontFamily(s.codeFont),
     lineWidth: Math.max(0, Number(s.lineWidth) || 0),
     theme: pick(s.theme, ["system", "light", "dark"] as const, "system"),
@@ -170,10 +181,15 @@ class SettingsStore {
     const v = this.values;
     const root = document.documentElement;
     root.style.setProperty("--fs-content", `${v.fontSize}px`);
-    // The chosen family comes first; the default stack stays behind it as the fallback.
-    const mono = monoFontValue(v.codeFont);
-    if (mono === null) root.style.removeProperty("--font-mono");
-    else root.style.setProperty("--font-mono", mono);
+    // A chosen family comes first, with a stack of system fonts behind it as the fallback;
+    // the default leaves the variable to tokens.css.
+    const font = (name: string, value: string | null): void => {
+      if (value === null) root.style.removeProperty(name);
+      else root.style.setProperty(name, value);
+    };
+    font("--font-content", textFontValue(v.textFont));
+    font("--font-heading", headingFontValue(v.headingFont));
+    font("--font-mono", monoFontValue(v.codeFont));
     root.style.setProperty("--content-max", v.lineWidth > 0 ? `${v.lineWidth}px` : "none");
     root.style.setProperty("--sidebar-width", `${v.sidebarWidth}px`);
     // The room left for the document is CSS only: base.css takes a shown sidebar's width from it.

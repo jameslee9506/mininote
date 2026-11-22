@@ -158,10 +158,11 @@
 </div>
 
 <style>
+  /* The Shortcuts tab's page: its rows start where the other tabs' do. */
   .shortcuts {
     min-height: 0;
     overflow-y: auto;
-    padding: 4px 20px 8px;
+    padding: 8px 20px;
   }
 
   .group + .group {

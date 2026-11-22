@@ -93,7 +93,7 @@ export const editorTheme = EditorView.theme({
   },
   "&.cm-focused": { outline: "none" },
   ".cm-scroller": {
-    fontFamily: "var(--font-text)",
+    fontFamily: "var(--font-content)",
     fontSize: "var(--fs-content)",
     lineHeight: "var(--lh-content)",
     // Auto-height editor: the ancestor .doc-scroll scrolls, and nothing here may clip the caret.

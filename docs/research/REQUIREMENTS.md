@@ -597,7 +597,7 @@ Live-preview rendering is specified separately, in §4 (LIVE).
 
 #### EDIT-15 · Inline title · P0
 - **Behavior.**
-  - The note's file name, without `.md`, is shown above the text in heading style. It is not part of the file.
+  - The note's file name, without `.md`, is shown above the text in heading style, in the heading font (SET-09). It is not part of the file.
   - Clicking it, or pressing F2, edits it.
   - Enter, Tab or ↓ commits the rename and moves to the body. ↑ on the body's first line moves to the title. Esc reverts, except that it cancels an untouched new note (TREE-04).
   - A new note's field is empty over its generated name, which shows as a placeholder until something is typed in the note; committing the empty field keeps that name (TREE-04).
@@ -1187,7 +1187,7 @@ Replace across files is out of scope.
 - **Behavior.**
   - Base size 15 px (`--fs-content`), line height 1.7.
   - Heading sizes from the DESIGN.md scale, all relative to the base.
-  - System fonts with Korean fallbacks (Apple SD Gothic Neo, Malgun Gothic, Noto Sans KR), with the Latin face listed first. Monospace for code.
+  - System fonts with Korean fallbacks (Apple SD Gothic Neo, Malgun Gothic, Noto Sans KR), with the Latin face listed first. Monospace for code. The text, heading and code fonts are settings (SET-07, SET-09).
   - A readable width of 720 px, centered.
   - `<html lang>` follows the UI language.
   - Korean prose uses `word-break: keep-all` with `overflow-wrap: anywhere`.
@@ -1273,20 +1273,26 @@ Math and diagrams are out of scope.
 - **Sources.** MS §8, §10; ZT §5.2, §11; OB §11.
 
 #### SET-02 · Settings window · P1
-- **Behavior.** Mod+, opens a modal with one row per setting (label on the left, control on the right) and no descriptions. Changes apply immediately.
-  - Theme: System, Light or Dark.
-  - Icons: the tree's icon set, Outline, Filled or Color (SET-08).
-  - Font size: 12–24 px, default 15.
-  - Code font: the default, an installed monospaced family, or a typed one (SET-07).
-  - Readable width: on or off (720 px).
-  - New-note location: current folder or vault root.
-  - Attachment location: the `attachments` folder, next to the note, or the vault root.
-  - Inline title.
-  - Spellcheck.
-  - Source mode.
-  - Confirm before deleting.
-  - Terminal command (macOS): a switch that installs and removes the `mininote` command (PLAT-14). It is off until someone turns it on, and it shows what is installed, not a stored setting.
-  - Shortcuts: the last row opens the shortcut list (SET-06).
+- **Behavior.** Mod+, opens a modal in three tabs. General and Appearance show one row per setting (label on the left, control on the right) and no descriptions. Changes apply immediately.
+  - **General**: how notes are edited, kept and deleted, and the app itself.
+    - Live preview; off is source mode (EDIT-16).
+    - Spellcheck.
+    - New-note location: current folder or vault root.
+    - Attachment location: the `attachments` folder, next to the note, or the vault root.
+    - Confirm before deleting.
+    - Terminal command (macOS): a switch that installs and removes the `mininote` command (PLAT-14). It is off until someone turns it on, and it shows what is installed, not a stored setting.
+    - The app's version, in a quiet last row.
+  - **Appearance**: how the app and the document look.
+    - Theme: System, Light or Dark.
+    - Icons: the tree's icon set, Outline, Filled or Color (SET-08).
+    - Font size: 12–24 px, default 15.
+    - Text font and heading font (SET-09).
+    - Code font: the default, an installed monospaced family, or a typed one (SET-07).
+    - Line width: 640, 720 (the default), 800 or 960 px, or full.
+    - Inline title.
+  - **Shortcuts**: the shortcut list (SET-06).
+  - The modal opens on the tab shown last, until the window closes; on General the first time. ← and → move between the tabs, Home and End go to the first and the last.
+- **Decision.** One long list mixed what the app does with how it looks, and kept the shortcuts a page away behind a row. Tabs group them by what a change is about, and the shortcut list becomes one of them.
 - **Sources.** OB §11, MT §10, OT §4.9, DESIGN.md §4.
 
 #### SET-03 · Light and dark themes · P0
@@ -1338,6 +1344,20 @@ Math and diagrams are out of scope.
   - An unknown stored value falls back to the default (SET-01).
 - **Decision.** In outline, a folder and a note are two rounded shapes of the same gray and weight, and take a second look to tell apart. A solid folder differs in form at a glance, before its tone or color does. The earlier look stays as a set, and color is offered, never imposed: the default stays gray (DESIGN.md §1).
 - **Sources.** DESIGN.md §1, §4.
+
+#### SET-09 · Text and heading fonts · P1
+- **Behavior.**
+  - Two settings name the families of the document, in the editor and the reading view alike:
+    - **Text font**, for its text: "Default" (the system's font), "Serif", an installed family, or a typed one.
+    - **Heading font**, for the large headings, h1 and h2, and for the inline title above them, which is drawn as an h1 (EDIT-15): "Default" (the text font), "Serif", "Sans-serif" (the system's font, whatever the text font is), an installed family, or a typed one.
+  - "Serif" is the system's classic serif: Iowan Old Style on macOS, Georgia on Windows, Noto Serif on Linux, with Hangul in a Myeongjo face (AppleMyungjo, Batang, Noto Serif KR).
+  - Both selects list the well-known families that are installed, serif and sans-serif together in alphabetical order, found by measuring text as for the code font (SET-07). "Custom" opens a field for any other family name; a family that is not installed is refused with an error toast, and the font in use stays.
+  - h3 to h6 stay in the text font. The chrome (sidebar, menus, dialogs, the date under the title) keeps the system's font, and code the code font (SET-07).
+- **Edge cases.**
+  - A chosen family is followed by the system's fonts of its kind: a listed serif by "Serif", a listed sans-serif by the system's font. Any other family is followed by the system's font as the text font, and by the text font as the heading font. A character the family lacks, Hangul in a Latin face above all, shows in that fallback, and so does all the text once the family is removed.
+  - A stored name is cleaned on load as in SET-07. "serif" and "sans-serif" name the generic choices in any case, and a text font of "sans-serif" is the default.
+- **Decision.** A serif reads as classic at display sizes, which only h1, h2 and the title have. From h3 down a heading is near the body's size, where a second face looks like a mistake rather than a style, so the heading font stops at h2.
+- **Sources.** DESIGN.md §2, §4, §5.
 
 ---
 
@@ -1648,7 +1668,7 @@ The current plan already matches most of this spec. Where it differs, this spec 
 - SRCH-01, SRCH-02.
 - LINK-04 (headings), LINK-07, LINK-08.
 - READ-08.
-- SET-02, SET-06, SET-07, SET-08.
+- SET-02, SET-06, SET-07, SET-08, SET-09.
 - PLAT-01 (Linux), PLAT-11, PLAT-12, PLAT-14, PLAT-15. ([critic] PLAT-05 single instance moved to P0.)
 - PERF-04–07.
 

@@ -161,6 +161,16 @@ export interface Settings {
   /** Content (editor + reading view) font size in px. Default 15. */
   fontSize: number;
   /**
+   * The family of the document's text (SET-09): "" is the system's font, "serif" the
+   * system's serif, anything else an installed family.
+   */
+  textFont: string;
+  /**
+   * The family of the large headings, h1 and h2, and of the inline title (SET-09): "" is
+   * the text font, "serif" and "sans-serif" the system's, anything else an installed family.
+   */
+  headingFont: string;
+  /**
    * The monospaced family of everything shown as code: code files, code blocks, inline
    * code. "" uses the default stack (SET-07).
    */
