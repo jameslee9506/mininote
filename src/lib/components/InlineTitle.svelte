@@ -339,10 +339,10 @@
     display: none;
   }
 
-  /* Heading style, aligned with the text column, in the heading font of an h1 (SET-09). */
+  /* Heading style, aligned with the text column, in the font of an h1 (SET-09). */
   .title {
     display: grid;
-    font-family: var(--font-heading);
+    font-family: var(--font-h1);
     font-size: var(--fs-h1);
     font-weight: var(--fw-heading);
     line-height: var(--lh-heading);

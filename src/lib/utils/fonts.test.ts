@@ -4,6 +4,7 @@ import {
   monoFontValue,
   sanitizeFontFamily,
   sanitizeHeadingFont,
+  sanitizeHeadingFontLevels,
   sanitizeTextFont,
   SANS_FONT_CANDIDATES,
   SERIF_FONT_CANDIDATES,
@@ -51,6 +52,14 @@ describe("text and heading fonts", () => {
     expect(headingFontValue("Baskerville")).toBe('"Baskerville", var(--font-serif)');
     expect(headingFontValue("Avenir Next")).toBe('"Avenir Next", var(--font-text)');
     expect(headingFontValue("Unlisted Display")).toBe('"Unlisted Display", var(--font-content)');
+  });
+
+  it("keeps the heading levels that can take the heading font, once each and in order", () => {
+    expect(sanitizeHeadingFontLevels([4, 1, 4])).toEqual([1, 4]);
+    expect(sanitizeHeadingFontLevels([0, 5, 6, "2", 2.5, null, 3])).toEqual([3]);
+    expect(sanitizeHeadingFontLevels([])).toEqual([]);
+    expect(sanitizeHeadingFontLevels(undefined)).toEqual([1, 2]);
+    expect(sanitizeHeadingFontLevels("1,2,3")).toEqual([1, 2]);
   });
 
   it("lists every family once, as one kind, under a name that needs no cleaning", () => {

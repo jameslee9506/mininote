@@ -6,8 +6,9 @@
  * The --c-pdf-* grays are drawn on a PDF's pages and have one value: a page is
  * paper in either theme (DESIGN §7).
  * Components must use these variables only.
- * --fs-content, --content-max, --sidebar-width, --font-content, --font-heading and
- * --font-mono are overridden at runtime from user settings (set on :root by the app shell).
+ * --fs-content, --content-max, --sidebar-width, --font-content, --font-heading,
+ * --font-h1 to --font-h4 and --font-mono are overridden at runtime from user settings
+ * (set on :root by the app shell).
  */
 
 :root {
@@ -77,7 +78,13 @@
   --font-mono-default: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "D2Coding",
     "Noto Sans Mono", "Liberation Mono", monospace;
   --font-content: var(--font-text);      /* the document's text: settings.textFont, when set */
-  --font-heading: var(--font-content);   /* h1, h2, the inline title: settings.headingFont, when set */
+  --font-heading: var(--font-content);   /* the heading font: settings.headingFont, when set */
+  /* h1 to h4, each in the heading font or the text font, as settings.headingFontLevels says;
+   * the inline title takes h1's. h5 and h6 keep the text font. */
+  --font-h1: var(--font-heading);
+  --font-h2: var(--font-heading);
+  --font-h3: var(--font-content);
+  --font-h4: var(--font-content);
   --font-mono: var(--font-mono-default); /* settings.codeFont, when set, comes first */
 
   --fs-content: 15px;           /* settings.fontSize */

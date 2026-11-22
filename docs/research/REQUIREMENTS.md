@@ -595,7 +595,7 @@ Live-preview rendering is specified separately, in §4 (LIVE).
 
 #### EDIT-15 · Inline title · P0
 - **Behavior.**
-  - The note's file name, without `.md`, is shown above the text in heading style, in the heading font (SET-09). It is not part of the file.
+  - The note's file name, without `.md`, is shown above the text in heading style, in the font of an h1 (SET-09). It is not part of the file.
   - Clicking it, or pressing F2, edits it.
   - Enter, Tab or ↓ commits the rename and moves to the body. ↑ on the body's first line moves to the title. Esc reverts, except that it cancels an untouched new note (TREE-04).
   - A new note's field is empty over its generated name, which shows as a placeholder until something is typed in the note; committing the empty field keeps that name (TREE-04).
@@ -1284,7 +1284,7 @@ Math and diagrams are out of scope.
     - Theme: System, Light or Dark.
     - Icons: the tree's icon set, Outline, Filled or Color (SET-08).
     - Font size: 12–24 px, default 15.
-    - Text font and heading font (SET-09).
+    - Text font, and heading font with the heading levels that take it (SET-09).
     - Code font: the default, an installed monospaced family, or a typed one (SET-07).
     - Line width: 640, 720 (the default), 800 or 960 px, or full.
     - Inline title.
@@ -1347,14 +1347,17 @@ Math and diagrams are out of scope.
 - **Behavior.**
   - Two settings name the families of the document, in the editor and the reading view alike:
     - **Text font**, for its text: "Default" (the system's font), "Serif", an installed family, or a typed one.
-    - **Heading font**, for the large headings, h1 and h2, and for the inline title above them, which is drawn as an h1 (EDIT-15): "Default" (the text font), "Serif", "Sans-serif" (the system's font, whatever the text font is), an installed family, or a typed one.
+    - **Heading font**, for the heading levels checked under it: "Default" (the text font), "Serif", "Sans-serif" (the system's font, whatever the text font is), an installed family, or a typed one.
+  - While the heading font is not "Default", four checkboxes under it, H1 to H4, say which levels take it; the others keep the text font. H1 and H2 are checked until the user changes them. The inline title above the text is drawn as an h1 (EDIT-15) and follows H1. A change applies at once.
   - "Serif" is the system's classic serif: Iowan Old Style on macOS, Georgia on Windows, Noto Serif on Linux, with Hangul in a Myeongjo face (AppleMyungjo, Batang, Noto Serif KR).
   - Both selects list the well-known families that are installed, serif and sans-serif together in alphabetical order, found by measuring text as for the code font (SET-07). "Custom" opens a field for any other family name; a family that is not installed is refused with an error toast, and the font in use stays.
-  - h3 to h6 stay in the text font. The chrome (sidebar, menus, dialogs, the date under the title) keeps the system's font, and code the code font (SET-07).
+  - h5 and h6 always keep the text font. The chrome (sidebar, menus, dialogs, the date under the title) keeps the system's font, and code the code font (SET-07).
 - **Edge cases.**
   - A chosen family is followed by the system's fonts of its kind: a listed serif by "Serif", a listed sans-serif by the system's font. Any other family is followed by the system's font as the text font, and by the text font as the heading font. A character the family lacks, Hangul in a Latin face above all, shows in that fallback, and so does all the text once the family is removed.
   - A stored name is cleaned on load as in SET-07. "serif" and "sans-serif" name the generic choices in any case, and a text font of "sans-serif" is the default.
-- **Decision.** A serif reads as classic at display sizes, which only h1, h2 and the title have. From h3 down a heading is near the body's size, where a second face looks like a mistake rather than a style, so the heading font stops at h2.
+  - The checked levels are stored as a list and cleaned on load: only 1 to 4 count, once each. Anything but a list is the default, H1 and H2. An empty list stays empty: no heading takes the heading font.
+  - With "Default" the checkboxes are hidden, since every heading is in the text font then. They keep their state for the next heading font chosen.
+- **Decision.** A serif reads as classic at display sizes, which h1, h2 and the title have, so those take the heading font by default. From h3 down a heading nears the body's size, where a second face can look like a mistake rather than a style, so h3 and h4 take it only when checked. h5 and h6 are no larger than the text and never do.
 - **Sources.** DESIGN.md §2, §4, §5.
 
 ---

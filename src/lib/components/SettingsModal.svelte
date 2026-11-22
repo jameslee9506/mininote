@@ -1,4 +1,5 @@
 <script lang="ts" module>
+  import type { Snippet } from "svelte";
   import type { CliStatus } from "../types";
 
   /** Declared here, where the snippets below see it too: in the instance script alone, they read `Option` as the DOM's. */
@@ -25,9 +26,11 @@
   // control right, no descriptions; every change applies at once through settings.update.
   // An icon set is chosen by its own folder and note, drawn instead of named (SET-08). A
   // font is a family installed here, listed or typed by hand: any family for the text and
-  // the headings (SET-09), a monospaced one for code (SET-07). The terminal command's
-  // switch is no setting: it shows whether the command is installed, and installs or
-  // removes it (PLAT-14). A quiet last row in General shows the app version.
+  // the headings (SET-09), a monospaced one for code (SET-07). What belongs to a row hangs
+  // under it in sub-rows, joined to it by a line: a folder or family typed by hand, and the
+  // heading levels the heading font is given, a checkbox each (SET-09). The terminal
+  // command's switch is no setting: it shows whether the command is installed, and
+  // installs or removes it (PLAT-14). A quiet last row in General shows the app version.
   import { onMount } from "svelte";
   import Icon from "./Icon.svelte";
   import Modal from "./Modal.svelte";
@@ -37,9 +40,10 @@
   import { ui } from "../state/ui.svelte";
   import { updater } from "../state/updater.svelte";
   import { t } from "../i18n";
-  import type { IconTheme, Settings, ThemeMode } from "../types";
+  import type { HeadingFontLevel, IconTheme, Settings, ThemeMode } from "../types";
   import {
     fontProbe,
+    HEADING_FONT_LEVELS,
     installedMonoFonts,
     installedTextFonts,
     monoFontProbe,
@@ -225,6 +229,12 @@
     if (size >= FONT_SIZE_MIN && size <= FONT_SIZE_MAX) settings.update({ fontSize: size });
   }
 
+  /** Gives a heading level the heading font, or the text font back (SET-09). */
+  function setHeadingLevel(level: HeadingFontLevel, on: boolean): void {
+    const others = v.headingFontLevels.filter((l) => l !== level);
+    settings.update({ headingFontLevels: on ? [...others, level] : others });
+  }
+
   /** Radio-group keys, on the segment at `at`: arrows move the choice and the focus together. */
   function onSegmentKeydown(
     e: KeyboardEvent & { currentTarget: HTMLElement },
@@ -355,8 +365,8 @@
 {/snippet}
 
 <!--
-  An indented row with a name field: the attachment folder, a font typed by hand. Enter commits
-  the name; leaving the field commits it too, or puts the stored one back if it is refused.
+  A sub-row with a name field: the attachment folder, a font typed by hand. Enter commits the
+  name; leaving the field commits it too, or puts the stored one back if it is refused.
 -->
 {#snippet nameField(
   label: string,
@@ -365,7 +375,7 @@
   get: () => string,
   set: (value: string) => void,
 )}
-  <label class="row sub">
+  <label class="row">
     <span class="label">{label}</span>
     <input
       class="field name"
@@ -384,20 +394,49 @@
   </label>
 {/snippet}
 
-{#snippet font(label: string, field: FontField)}
+<!-- A font's select, and the sub-rows under it: the name field of a family typed by hand, then `more`. -->
+{#snippet font(label: string, field: FontField, more?: Snippet)}
   {@render choice(label, field.selected, field.options, field.choose)}
-  {#if field.custom}
-    {@render nameField(
-      t("fontName"),
-      field.invalid,
-      field.commit,
-      () => field.draft,
-      (name) => {
-        field.draft = name;
-        field.invalid = false;
-      },
-    )}
+  {#if field.custom || more}
+    <div class="subs" role="group" aria-label={label}>
+      {#if field.custom}
+        {@render nameField(
+          t("fontName"),
+          field.invalid,
+          field.commit,
+          () => field.draft,
+          (name) => {
+            field.draft = name;
+            field.invalid = false;
+          },
+        )}
+      {/if}
+      {@render more?.()}
+    </div>
   {/if}
+{/snippet}
+
+<!--
+  The heading levels the heading font is given (SET-09): a sub-row each, its checkbox before
+  its name. The whole row toggles it.
+-->
+{#snippet headingLevels()}
+  {#each HEADING_FONT_LEVELS as level (level)}
+    {@const on = v.headingFontLevels.includes(level)}
+    <label class="row check">
+      <button
+        type="button"
+        class="checkbox"
+        role="checkbox"
+        aria-checked={on}
+        aria-labelledby="{uid}-h{level}"
+        onclick={() => setHeadingLevel(level, !on)}
+      >
+        {#if on}<Icon name="check" size={12} />{/if}
+      </button>
+      <span class="label" id="{uid}-h{level}">{t("headingLevel", { level })}</span>
+    </label>
+  {/each}
 {/snippet}
 
 <Modal width={520} label={t("settings")} onclose={ui.closeModal}>
@@ -431,16 +470,18 @@
         )}
 
         {#if v.attachmentLocation === "folder"}
-          {@render nameField(
-            t("attachmentFolder"),
-            folderInvalid,
-            commitFolder,
-            () => folderDraft,
-            (folder) => {
-              folderDraft = folder;
-              folderInvalid = false;
-            },
-          )}
+          <div class="subs" role="group" aria-label={t("attachmentLocation")}>
+            {@render nameField(
+              t("attachmentFolder"),
+              folderInvalid,
+              commitFolder,
+              () => folderDraft,
+              (folder) => {
+                folderDraft = folder;
+                folderInvalid = false;
+              },
+            )}
+          </div>
         {/if}
 
         {@render toggle("confirm", t("confirmDeleteSetting"), v.confirmDelete, (on) => settings.update({ confirmDelete: on }))}
@@ -488,7 +529,8 @@
         </div>
 
         {@render font(t("textFont"), textFont)}
-        {@render font(t("headingFont"), headingFont)}
+        <!-- The levels show while a heading font is chosen: with "Default", every heading is in the text font. -->
+        {@render font(t("headingFont"), headingFont, headingFont.selected === "" ? undefined : headingLevels)}
         {@render font(t("codeFont"), codeFont)}
         {@render choice(t("lineWidth"), v.lineWidth, widthOptions, (w) => settings.update({ lineWidth: Number(w) }))}
         {@render toggle("title", t("inlineTitle"), v.inlineTitle, (on) => settings.update({ inlineTitle: on }))}
@@ -563,9 +605,53 @@
     font-size: var(--fs-ui);
   }
 
-  .sub .label {
-    padding-left: 12px;
+  /*
+   * Sub-rows: what belongs to the row above them, hung from it like a folder's children in the
+   * tree (DESIGN §4). A straight 1px line drops from under that row's label, and each sub-row
+   * gets an arm at its middle, ├ or └ for the last, that stops 4px before what the row holds.
+   */
+  .subs > .row {
+    position: relative;
+    padding-left: 22px;
+  }
+
+  .subs > .row::before,
+  .subs > .row:not(:last-child)::after {
+    content: "";
+    position: absolute;
+    left: 5px;
+    border-left: 1px solid var(--c-border-strong);
+  }
+
+  /* └: down to the middle of the row, then across. */
+  .subs > .row::before {
+    top: 0;
+    bottom: calc(50% - 0.5px);
+    width: 13px;
+    border-bottom: 1px solid var(--c-border-strong);
+  }
+
+  /* The first one's line starts right under the label of the row above: at the foot of its
+   * line (--fs-ui × --lh-ui, centered in the 40px row), 11px above that row's bottom. */
+  .subs > .row:first-child::before {
+    top: -11px;
+  }
+
+  /* ├: the line goes on to the next sub-row. */
+  .subs > .row:not(:last-child)::after {
+    top: 50%;
+    bottom: 0;
+  }
+
+  .subs .label {
     color: var(--c-text-muted);
+  }
+
+  /* A heading level's sub-row: its checkbox, then its name, packed at the left. */
+  .check {
+    justify-content: flex-start;
+    gap: 8px;
+    min-height: 32px;
   }
 
   /* The version row: information, not a control, so it stays quiet. */
@@ -732,6 +818,35 @@
     outline-offset: 2px;
   }
 
+  /* Checkbox (the heading levels): a task's square (markdown.css), filled when checked as a switch is when on. */
+  .checkbox {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    border: 1px solid var(--c-border-strong);
+    border-radius: calc(var(--radius-s) - 1px);
+    color: var(--c-bg);
+    transition:
+      background-color var(--dur-fast),
+      border-color var(--dur-fast);
+  }
+
+  .check:hover .checkbox:not([aria-checked="true"]) {
+    border-color: var(--c-text-muted);
+  }
+
+  .checkbox[aria-checked="true"] {
+    border-color: var(--c-text-strong);
+    background: var(--c-text-strong);
+  }
+
+  .checkbox:focus-visible {
+    outline-offset: 2px;
+  }
+
   /* Name fields: the attachment folder, a font typed by hand. */
   .name {
     flex: none;
@@ -749,7 +864,8 @@
     .segmented button,
     .stepper button,
     .switch,
-    .switch::after {
+    .switch::after,
+    .checkbox {
       transition: none;
     }
   }

@@ -156,6 +156,8 @@ export type IconTheme = "outline" | "filled" | "color";
 export type EditorMode = "live" | "source";
 /** Per-session toggle (Mod-E): edit with CodeMirror or read rendered HTML. */
 export type ViewMode = "edit" | "read";
+/** A heading level that can take the heading font (SET-09): h5 and h6 always keep the text font. */
+export type HeadingFontLevel = 1 | 2 | 3 | 4;
 
 export interface Settings {
   /** Content (editor + reading view) font size in px. Default 15. */
@@ -166,10 +168,15 @@ export interface Settings {
    */
   textFont: string;
   /**
-   * The family of the large headings, h1 and h2, and of the inline title (SET-09): "" is
-   * the text font, "serif" and "sans-serif" the system's, anything else an installed family.
+   * The family of the headings of headingFontLevels (SET-09): "" is the text font, "serif"
+   * and "sans-serif" the system's, anything else an installed family.
    */
   headingFont: string;
+  /**
+   * The heading levels in the heading font, in order; the others keep the text font, and the
+   * inline title follows h1 (SET-09). Default [1, 2].
+   */
+  headingFontLevels: HeadingFontLevel[];
   /**
    * The monospaced family of everything shown as code: code files, code blocks, inline
    * code. "" uses the default stack (SET-07).

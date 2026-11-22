@@ -9,10 +9,13 @@ import { settingsLoad, settingsUpdate } from "../ipc/commands";
 import { onSettingsChanged } from "../ipc/events";
 import type { Settings, SettingsChangedPayload, SettingsPatch, VaultSession } from "../types";
 import {
+  DEFAULT_HEADING_FONT_LEVELS,
+  HEADING_FONT_LEVELS,
   headingFontValue,
   monoFontValue,
   sanitizeFontFamily,
   sanitizeHeadingFont,
+  sanitizeHeadingFontLevels,
   sanitizeTextFont,
   textFontValue,
 } from "../utils/fonts";
@@ -23,6 +26,7 @@ export const DEFAULT_SETTINGS: Settings = {
   fontSize: 15,
   textFont: "",
   headingFont: "",
+  headingFontLevels: [...DEFAULT_HEADING_FONT_LEVELS],
   codeFont: "",
   lineWidth: 720,
   theme: "system",
@@ -70,6 +74,7 @@ function sanitize(raw: Partial<Settings> | undefined): Settings {
     fontSize: clamp(Number(s.fontSize) || d.fontSize, FONT_SIZE_MIN, FONT_SIZE_MAX),
     textFont: sanitizeTextFont(s.textFont),
     headingFont: sanitizeHeadingFont(s.headingFont),
+    headingFontLevels: sanitizeHeadingFontLevels(s.headingFontLevels),
     codeFont: sanitizeFontFamily(s.codeFont),
     lineWidth: Math.max(0, Number(s.lineWidth) || 0),
     theme: pick(s.theme, ["system", "light", "dark"] as const, "system"),
@@ -190,6 +195,10 @@ class SettingsStore {
     font("--font-content", textFontValue(v.textFont));
     font("--font-heading", headingFontValue(v.headingFont));
     font("--font-mono", monoFontValue(v.codeFont));
+    // Each of h1 to h4 takes the heading font or keeps the text font (SET-09).
+    for (const level of HEADING_FONT_LEVELS) {
+      font(`--font-h${level}`, v.headingFontLevels.includes(level) ? "var(--font-heading)" : "var(--font-content)");
+    }
     root.style.setProperty("--content-max", v.lineWidth > 0 ? `${v.lineWidth}px` : "none");
     root.style.setProperty("--sidebar-width", `${v.sidebarWidth}px`);
     // The room left for the document is CSS only: base.css takes a shown sidebar's width from it.

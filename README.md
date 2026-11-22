@@ -32,7 +32,7 @@ npm test               # Unit tests (Vitest)
 | Saving | Atomic saves 0.4 seconds after typing stops, or at least every 2 seconds while typing continues. External changes reload automatically; if there are unsaved edits, the disk version is kept as a conflict copy. Failed saves leave a recovery copy. |
 | Reading view | Toggle with `Mod+E`. Markdown is rendered with markdown-it and sanitized with DOMPurify. |
 | Code files | Source, configuration and plain-text files open in a read-only viewer with syntax colors for the common languages, line numbers and find. The code font is a setting. |
-| Appearance | System, light or dark theme, three icon sets for the tree, the font size and the line width. The text, the large headings and code each take a font of your choice, such as a classic serif for the headings. |
+| Appearance | System, light or dark theme, three icon sets for the tree, the font size and the line width. The text, the headings and code each take a font of your choice, such as a classic serif for the headings, and checkboxes choose which of H1 to H4 the heading font sets. |
 | PDFs | PDFs open in a viewer that works like Chrome's: continuous pages, a toolbar with the page number, zoom, fit and rotate, a side panel with thumbnails and the document outline, text selection, links and find (`Mod+F`). A link to a PDF in a note opens it. |
 | Search | Quick switcher (`Mod+O`) with fuzzy matching, including Hangul initial consonants; full-text search in Rust (`Mod+Shift+F`); and a command palette (`Mod+P`). |
 | Updates | Signed releases on GitHub. The app checks once at launch; when a newer version exists, an update icon appears that downloads it, installs it and restarts. Settings show the running version. |

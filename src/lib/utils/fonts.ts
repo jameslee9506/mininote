@@ -1,9 +1,10 @@
 /**
  * The font settings: the code font (SET-07), one monospaced family for everything shown
- * as code, and the text and heading fonts (SET-09) of the document. The pure rules (a
- * typed name cleaned, the CSS values) and the canvas probe that tells which families are
- * installed.
+ * as code, and the text and heading fonts (SET-09) of the document, with the heading
+ * levels in the latter. The pure rules (a typed name cleaned, the CSS values) and the
+ * canvas probe that tells which families are installed.
  */
+import type { HeadingFontLevel } from "../types";
 
 /**
  * Well-known monospaced families, in the order the settings offer them. Only the
@@ -214,6 +215,22 @@ function fallbackOf(family: string, unknown: string): string {
   if (SERIF_KEYS.has(key)) return "var(--font-serif)";
   if (SANS_KEYS.has(key)) return "var(--font-text)";
   return unknown;
+}
+
+/** The heading levels the settings can give the heading font, in order (SET-09). */
+export const HEADING_FONT_LEVELS: readonly HeadingFontLevel[] = [1, 2, 3, 4];
+
+/** The levels in the heading font until the settings choose others: the large headings. */
+export const DEFAULT_HEADING_FONT_LEVELS: readonly HeadingFontLevel[] = [1, 2];
+
+/**
+ * Stored heading-font levels, cleaned: those of HEADING_FONT_LEVELS listed, once each and
+ * in order. Anything but a list is the default; an empty list stays empty, and every
+ * heading keeps the text font.
+ */
+export function sanitizeHeadingFontLevels(value: unknown): HeadingFontLevel[] {
+  if (!Array.isArray(value)) return [...DEFAULT_HEADING_FONT_LEVELS];
+  return HEADING_FONT_LEVELS.filter((level) => value.includes(level));
 }
 
 /** Large enough that two fonts' metrics never round to the same width. */

@@ -51,6 +51,7 @@ const en = {
   fontSize: "Font size",
   textFont: "Text font",
   headingFont: "Heading font",
+  headingLevel: "H{level}",
   codeFont: "Code font",
   fontDefault: "Default",
   fontSerif: "Serif",

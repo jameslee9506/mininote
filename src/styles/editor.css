@@ -79,24 +79,27 @@
   color: var(--c-text-strong);
 }
 
-/* The large headings take the heading font (SET-09), as in the reading view. */
+/* h1 to h4 take the heading font where the settings give it to them (SET-09), as in the
+ * reading view. */
 .cm-editor .cm-content .cm-line.cm-h1 {
-  font-family: var(--font-heading);
+  font-family: var(--font-h1);
   font-size: var(--fs-h1);
   letter-spacing: -0.01em;
 }
 
 .cm-editor .cm-content .cm-line.cm-h2 {
-  font-family: var(--font-heading);
+  font-family: var(--font-h2);
   font-size: var(--fs-h2);
   letter-spacing: -0.01em;
 }
 
 .cm-editor .cm-content .cm-line.cm-h3 {
+  font-family: var(--font-h3);
   font-size: var(--fs-h3);
 }
 
 .cm-editor .cm-content .cm-line.cm-h4 {
+  font-family: var(--font-h4);
   font-size: var(--fs-h4);
 }
 
