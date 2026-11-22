@@ -575,6 +575,7 @@ Live-preview rendering is specified separately, in §4 (LIVE).
   - [critic] Blur commits a valid, changed name, as in TREE-06. An invalid one reverts on blur, with the error toast.
   - [critic] Pasted line breaks become spaces; the title is always one line.
   - [critic] For a virtual note (LINK-05), committing a name only changes its target path. Nothing is written until the first edit of the body.
+  - Under the title, small and muted with no label, the day the file was created: for notes and code files, on macOS and Windows, where a save keeps a file's creation time (SAVE-04). Linux cannot set that time, so every save would reset it, and no date is shown there. A virtual note shows today, the day its first edit creates the file, so the text does not move down while that edit is typed.
   - A setting can hide it (P1).
 - **Sources.** OB §4.2, DESIGN.md §4.
 

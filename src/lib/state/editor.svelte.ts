@@ -188,6 +188,8 @@ interface Note {
   /** Serializes recovery writes and clears for this note. */
   recoveryOp: Promise<void>;
   readOnly: boolean;
+  /** When the file was created: what the last read said (`FileContent.created`), or the write that made it. */
+  created: number | null;
   /** No file yet (LINK-05): the first save creates it. */
   virtual: boolean;
   /** Over 2 MB: source mode and slow autosave (SAVE-11). */
@@ -245,6 +247,12 @@ class EditorStore {
    * the title of any file is locked. A code file is view-only whatever this says.
    */
   readOnly = $state(false);
+  /**
+   * When the open note or code file was created, in ms since the Unix epoch, for the inline
+   * title (EDIT-15). null for a virtual note, for the files that are not read (images, other
+   * files), and where the volume records no such date.
+   */
+  created = $state<number | null>(null);
   /** Unsaved changes older than 2 s (stuck/failing save): titles render a lighter gray (SAVE-09). */
   saveStuck = $state(false);
   /** The open note is virtual: its file is created by the first edit (LINK-05). */
@@ -711,6 +719,7 @@ class EditorStore {
       this.viewMode = "edit";
       this.loading = false;
       this.readOnly = false;
+      this.created = null;
       this.virtual = false;
       this.tooLarge = false;
       this.lineRequest = null;
@@ -908,6 +917,7 @@ class EditorStore {
     this.path = path;
     this.kind = kind;
     this.readOnly = n?.readOnly ?? false;
+    this.created = n?.created ?? null;
     this.virtual = n?.virtual ?? false;
     this.tooLarge = n?.large ?? false;
     this.revision++;
@@ -918,6 +928,7 @@ class EditorStore {
     this.path = null;
     this.kind = null;
     this.readOnly = false;
+    this.created = null;
     this.virtual = false;
     this.tooLarge = false;
     this.#bind(null);
@@ -1023,6 +1034,7 @@ class EditorStore {
       recovery: false,
       recoveryOp: Promise.resolve(),
       readOnly,
+      created: disk?.created ?? null,
       virtual: disk === null,
       large,
       scrollTop: 0,
@@ -1417,9 +1429,13 @@ class EditorStore {
     if (created) {
       const wasVirtual = n.virtual;
       n.virtual = false;
+      // This write made the file, so it was created now, and a virtual note keeps the date it
+      // showed (EDIT-15). The next read gives the date the volume recorded.
+      n.created = result.mtime;
       this.#history.markReal(n.path);
       if (n === this.#current) {
         this.virtual = false;
+        this.created = n.created;
         this.#remember(n.path, true);
         if (wasVirtual) vault.revealInTree(n.path);
       }
@@ -1774,11 +1790,16 @@ class EditorStore {
     return alike.filter((c) => key(basename(c)) === name || dirname(c) === dir).slice(0, CODE_MOVE_CANDIDATES);
   }
 
-  /** Adopts the file's metadata and style (EDIT-02: line-ending/BOM-only changes stick). */
+  /**
+   * Adopts the file's metadata and style (EDIT-02: line-ending/BOM-only changes stick), its
+   * creation date included: another app's save may have replaced the file.
+   */
   #adopt(n: Note, disk: FileContent, eol: LineEnding): void {
     n.baseline = baselineOf(disk);
     n.eol = eol;
     n.bom = disk.bom;
+    n.created = disk.created;
+    if (n === this.#current) this.created = disk.created;
     if (n.virtual) {
       n.virtual = false;
       this.#history.markReal(n.path);

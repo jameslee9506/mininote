@@ -139,6 +139,8 @@ pub struct FileContent {
     pub content: String,
     pub bom: bool,
     pub read_only: bool,
+    /// When the file was created ([`created_ms`]), for the inline title.
+    pub created: Option<f64>,
     pub mtime: f64,
     pub size: u64,
     pub hash: String,
@@ -175,6 +177,14 @@ pub fn now_ms() -> f64 {
 
 pub fn mtime_ms(meta: &Metadata) -> f64 {
     meta.modified().map(system_time_ms).unwrap_or(0.0)
+}
+
+/// When the file was created, in ms since the Unix epoch; `None` where the volume
+/// records no such date (or zero, or one before the epoch). Linux may report one,
+/// but no save keeps it there ([`copy_creation_time`]), so the inline title shows
+/// the date on macOS and Windows only (EDIT-15).
+fn created_ms(meta: &Metadata) -> Option<f64> {
+    meta.created().ok().map(system_time_ms).filter(|&ms| ms > 0.0)
 }
 
 fn same_mtime(a: f64, b: f64) -> bool {
@@ -889,6 +899,7 @@ fn decode_note(
         content,
         bom,
         read_only,
+        created: created_ms(baseline),
         mtime: mtime_ms(baseline),
         size: baseline.len(),
         hash,

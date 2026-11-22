@@ -1,7 +1,7 @@
 <script lang="ts">
-  // The open file's name above the text, edited in place (EDIT-15). Always one line of
-  // text that wraps visually: a textarea sized by a hidden replica (CSS grid), never by
-  // measuring layout.
+  // The open file's name above the text, edited in place (EDIT-15), and under it the day
+  // the file was created. The name is always one line of text that wraps visually: a
+  // textarea sized by a hidden replica (CSS grid), never by measuring layout.
   import { tick, untrack } from "svelte";
   import { discardNewNote } from "../appCommands";
   import { t, type MessageKey } from "../i18n";
@@ -11,11 +11,13 @@
   import type { VaultPath } from "../types";
   import { fileKindOf, titleOf, validateName, withKeptExtension } from "../utils/names";
   import { basename, dirname, join, key, nfc } from "../utils/path";
-  import { isComposing } from "../utils/platform";
+  import { isComposing, isLinux } from "../utils/platform";
 
   /** Line breaks (and tabs) typed, pasted or dropped become spaces: the title is one line. */
   const LINE_BREAKS = /\r\n|[\r\n\t\u2028\u2029]/g;
   const NOTE_EXT = /\.(md|markdown)$/i;
+  /** The creation date as the system writes a long date ("November 22, 2026"). */
+  const DATE = new Intl.DateTimeFormat(undefined, { dateStyle: "long" });
 
   /** What committing a typed title means: nothing, a refusal, or a rename to `target` (stored as `stored`). */
   type Plan = { kind: "same" } | { kind: "invalid"; message: MessageKey } | { kind: "ok"; target: string; stored: string };
@@ -40,6 +42,21 @@
    * blur first; the text is then committed against that file (UI-4).
    */
   let draft: { from: VaultPath; text: string } | null = null;
+
+  /**
+   * The day the shown note or code file was created (EDIT-15), on macOS and Windows only:
+   * a save keeps that date there, while Linux cannot set it, so every save would reset it.
+   * A virtual note shows today, the day its first edit creates the file, so the text does
+   * not move down while that edit is typed.
+   */
+  const created = $derived.by(() => {
+    if (isLinux) return null;
+    const ms = editor.virtual ? Date.now() : editor.created;
+    if (ms === null) return null;
+    // A date past what a Date holds would make formatting throw.
+    const date = new Date(ms);
+    return Number.isNaN(date.getTime()) ? null : date;
+  });
 
   /** The title shown for `p`. */
   function titleFor(p: VaultPath): string {
@@ -241,28 +258,41 @@
   }
 </script>
 
-<div class="title" class:hidden={path === null} class:stuck={editor.saveStuck} data-value={value}>
-  <textarea
-    bind:this={el}
-    rows={1}
-    {value}
-    readonly={editor.readOnly || locked}
-    spellcheck="false"
-    autocomplete="off"
-    autocapitalize="off"
-    writingsuggestions="false"
-    aria-label={t("ariaTitle")}
-    oninput={onInput}
-    onkeydown={onKeydown}
-    onblur={onBlur}
-  ></textarea>
+<div class="head" class:hidden={path === null}>
+  <div class="title" class:stuck={editor.saveStuck} data-value={value}>
+    <textarea
+      bind:this={el}
+      rows={1}
+      {value}
+      readonly={editor.readOnly || locked}
+      spellcheck="false"
+      autocomplete="off"
+      autocapitalize="off"
+      writingsuggestions="false"
+      aria-label={t("ariaTitle")}
+      oninput={onInput}
+      onkeydown={onKeydown}
+      onblur={onBlur}
+    ></textarea>
+  </div>
+  {#if created !== null}
+    <time class="created" datetime={created.toISOString()}>{DATE.format(created)}</time>
+  {/if}
 </div>
 
 <style>
-  /* Heading style, aligned with the text column, with a fixed gap to the body (DESIGN §4). */
+  /* The title and the date under it, with a fixed gap to the body (DESIGN §4). */
+  .head {
+    padding-bottom: var(--inline-title-gap);
+  }
+
+  .head.hidden {
+    display: none;
+  }
+
+  /* Heading style, aligned with the text column. */
   .title {
     display: grid;
-    padding-bottom: var(--inline-title-gap);
     font-size: var(--fs-h1);
     font-weight: var(--fw-heading);
     line-height: var(--lh-heading);
@@ -275,8 +305,12 @@
     color: var(--c-text-muted);
   }
 
-  .title.hidden {
-    display: none;
+  /* The day the file was created: small and muted, with no label (EDIT-15). */
+  .created {
+    display: block;
+    font-size: var(--fs-ui);
+    line-height: var(--lh-ui);
+    color: var(--c-text-muted);
   }
 
   /* The replica: same text, same wrapping, invisible; it gives the grid cell its height. */

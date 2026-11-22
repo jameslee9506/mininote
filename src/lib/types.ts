@@ -93,6 +93,12 @@ export interface FileContent extends Baseline {
   bom: boolean;
   /** The file is not writable (open the note read-only). */
   readOnly: boolean;
+  /**
+   * When the file was created, in ms since the Unix epoch; null where the volume records
+   * no such date. The inline title shows it on macOS and Windows, where a save keeps it
+   * (SAVE-04, EDIT-15).
+   */
+  created: number | null;
 }
 
 export type WriteResult = Baseline;
