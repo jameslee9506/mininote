@@ -1,5 +1,5 @@
 /*
- * Design tokens — the single source of visual truth (see docs/DESIGN.md).
+ * Shared design tokens for the desktop interface.
  * Monotone: every color is a gray, except the syntax colors of the code view
  * (--c-syn-*), the folders of the "color" icon set (--c-icon-folder-tint) and the
  * reason a name was refused, under the inline title (--c-error).

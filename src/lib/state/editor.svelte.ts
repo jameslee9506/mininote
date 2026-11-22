@@ -1,7 +1,6 @@
 /**
  * The open document: loading, autosave, external-change reconciliation,
  * history (back/forward), view mode, and the EditorHost implementation.
- * See docs/ARCHITECTURE.md §8 for the exact protocol.
  *
  * Every note with live state has a controller (`Note`) keyed by its exact
  * VaultPath. A save always reads that controller's own EditorState (the view's

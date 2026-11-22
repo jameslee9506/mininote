@@ -97,14 +97,6 @@ The command is not installed with the app:
 - **Linux**: the `.deb` and `.rpm` packages put `mininote` in the PATH. For the AppImage, link the file into a folder of your PATH under that name.
 - **Windows**: add the install folder to the PATH; the installer does not do it yet. The app has no console of its own, so a command's output is read through a pipe or a file (`mininote vaults | more`).
 
-## Documentation
-
-- [Architecture](docs/ARCHITECTURE.md): structure, IPC contracts, autosave and sync protocols, and editor and live-preview design.
-- [Design system](docs/DESIGN.md): monochrome design tokens and spacing between blocks.
-- [Releasing](docs/releasing.md): versioning, the updater signing key, and the GitHub Releases pipeline behind in-app updates.
-- [Research](docs/research/): analyses of Obsidian, Zettlr, SilverBullet, MarkText, mdSilo, Otterly, and related projects; [functional requirements](docs/research/REQUIREMENTS.md); and [implementation techniques](docs/research/TECHNIQUES.md).
-- [Development conventions](CLAUDE.md): project rules and coding conventions.
-
 ## License
 
 Mininote Desktop is licensed under the GNU General Public License, version 3 only (`GPL-3.0-only`). See [LICENSE](LICENSE).

@@ -1,7 +1,7 @@
 /**
  * Typed wrappers around the Rust commands. CONTRACT with src-tauri/src/*.rs:
  * command names, argument names (camelCase here = snake_case in Rust), header
- * names and result shapes must match exactly (see docs/ARCHITECTURE.md §5).
+ * names and result shapes must match exactly.
  * All paths are vault-relative ("/"-separated). Every vault-scoped command
  * carries the current vault epoch automatically, or the epoch an operation captured
  * with currentEpoch() when it started (optional last argument), so a continuation

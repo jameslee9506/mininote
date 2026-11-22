@@ -1,6 +1,6 @@
 /**
  * Active vault: listing, derived tree/index, tree UI state, file operations and
- * watcher integration. See docs/ARCHITECTURE.md §7–8.
+ * watcher integration.
  *
  * Paths from the listing are identities (byte-identical, never normalized);
  * user- or watcher-supplied spellings are matched to them with key().
