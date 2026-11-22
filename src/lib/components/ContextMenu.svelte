@@ -1,11 +1,12 @@
 <script lang="ts">
   // Context menu (TREE-09, VAULT-05): items and separators at ui.menu's point,
   // kept inside the window. An item with a submenu opens a second panel beside it
-  // while the pointer rests on it, or with → (one level deep). Focus never moves
-  // into the menu, so an action such as Rename can focus its own input; keys are
-  // read at the window instead.
+  // while the pointer rests on it, or with → (one level deep). An item may carry a
+  // side button at its far edge, which acts on what the item names and leaves the
+  // menu open. Focus never moves into the menu, so an action such as Rename can
+  // focus its own input; keys are read at the window instead.
   import Icon from "./Icon.svelte";
-  import { ui, type MenuAction, type MenuEntry } from "../state/ui.svelte";
+  import { ui, type MenuAction, type MenuEntry, type MenuSideAction } from "../state/ui.svelte";
   import { t } from "../i18n";
   import { isComposing } from "../utils/platform";
 
@@ -171,6 +172,21 @@
     })();
   }
 
+  /**
+   * A click on an item's side button. The menu is not hidden first: the action shows it again
+   * as it now is (the positioning effect then drops the highlight), or hides it.
+   */
+  function runSide(side: MenuSideAction): void {
+    void (async () => {
+      try {
+        await side.run();
+      } catch (err) {
+        console.error(err);
+        ui.notify(t("errGeneric"));
+      }
+    })();
+  }
+
   /** A click or Enter on an item of the main panel: its submenu opens, or it runs. */
   function choose(i: number, keys: boolean): void {
     const item = entries[i];
@@ -290,27 +306,46 @@
       {#if "separator" in entry}
         <div class="separator" role="separator"></div>
       {:else}
-        <button
-          type="button"
-          class="item"
+        <!-- The row carries the highlight and the pointer, so both hold under its side button; no press in it moves the focus. -->
+        <div
+          class="row"
           class:active={i === active}
-          role="menuitem"
-          tabindex="-1"
-          data-index={i}
-          aria-disabled={"run" in entry && entry.disabled ? "true" : undefined}
-          aria-haspopup={"submenu" in entry ? "menu" : undefined}
-          aria-expanded={"submenu" in entry ? i === sub : undefined}
+          role="none"
           onmousedown={(e) => e.preventDefault()}
           onmousemove={() => onItemMove(i)}
           onmouseleave={() => onItemLeave(i)}
-          onclick={() => choose(i, false)}
         >
-          <span class="item-label">
-            {#if "icon" in entry && entry.icon}<Icon name={entry.icon} />{/if}
-            {entry.label}
-          </span>
-          {#if "submenu" in entry}<span class="chevron"><Icon name="chevron-right" /></span>{/if}
-        </button>
+          <button
+            type="button"
+            class="item"
+            role="menuitem"
+            tabindex="-1"
+            data-index={i}
+            aria-disabled={"run" in entry && entry.disabled ? "true" : undefined}
+            aria-haspopup={"submenu" in entry ? "menu" : undefined}
+            aria-expanded={"submenu" in entry ? i === sub : undefined}
+            onclick={() => choose(i, false)}
+          >
+            <span class="item-label">
+              {#if "icon" in entry && entry.icon}<Icon name={entry.icon} />{/if}
+              {entry.label}
+            </span>
+            {#if "submenu" in entry}<span class="chevron"><Icon name="chevron-right" /></span>{/if}
+          </button>
+          {#if "side" in entry && entry.side}
+            {@const side = entry.side}
+            <button
+              type="button"
+              class="side"
+              role="menuitem"
+              tabindex="-1"
+              aria-label={side.label}
+              onclick={() => runSide(side)}
+            >
+              <Icon name={side.icon} size={12} />
+            </button>
+          {/if}
+        </div>
       {/if}
     {/each}
   </div>
@@ -357,6 +392,14 @@
     padding: 4px;
   }
 
+  /* An item of the main panel, with its side button if it has one. */
+  .row {
+    display: flex;
+    flex: none;
+    align-items: center;
+    border-radius: var(--radius-s);
+  }
+
   .item {
     display: flex;
     flex: none;
@@ -371,7 +414,45 @@
     white-space: nowrap;
   }
 
+  .row > .item {
+    flex: 1;
+  }
+
+  .row.active,
   .item.active {
+    background: var(--c-bg-active);
+  }
+
+  /*
+   * As far from the row's edges as from its top and bottom. It keeps its room and shows only
+   * in the highlighted row; hidden, it takes no click, and none falls through to the item.
+   */
+  .side {
+    display: flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    margin-right: 4px;
+    border-radius: var(--radius-s);
+    color: var(--c-text-faint);
+    visibility: hidden;
+    transition:
+      background-color var(--dur-fast),
+      color var(--dur-fast);
+  }
+
+  .row.active > .side {
+    visibility: visible;
+  }
+
+  .side:hover {
+    background: var(--c-bg-hover);
+    color: var(--c-text);
+  }
+
+  .side:active {
     background: var(--c-bg-active);
   }
 

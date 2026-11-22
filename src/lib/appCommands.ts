@@ -8,7 +8,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { tick } from "svelte";
 import { SvelteSet } from "svelte/reactivity";
 import { t } from "./i18n";
-import { appExitReady, appQuit, windowNew } from "./ipc/commands";
+import { appExitReady, appQuit, vaultForget, windowNew } from "./ipc/commands";
 import { commands, type Command } from "./state/commands.svelte";
 import { editor } from "./state/editor.svelte";
 import { canDiscardNewNote, type NewNoteSnapshot } from "./state/newNote";
@@ -52,6 +52,40 @@ export async function openVault(root: string, opts?: { startup?: boolean; file?:
 export async function openRequest(root: string, file: string | null): Promise<void> {
   if (file !== null || vault.info?.root !== root) clearOverlays();
   await openVault(root, { file });
+}
+
+/**
+ * Takes `root` off the recent vaults, with its session (VAULT-05); no file is touched. The list
+ * has changed by the time the call returns, so a menu drawn right after it shows no such vault.
+ * A window that has the folder open then closes it and shows Welcome: the backend tells it
+ * (`vault:forgotten`, `closeForgottenVault`).
+ */
+export async function forgetVault(root: string): Promise<void> {
+  settings.forgetVault(root);
+  unavailableVaults.delete(root);
+  try {
+    await vaultForget(root);
+  } catch (e) {
+    console.error("forget vault failed", e);
+    ui.notify(t("errGeneric"));
+  }
+}
+
+/**
+ * This window's vault left the recent vaults (`vault:forgotten`, VAULT-05): it closes as it does
+ * for another vault, its saves flushed or kept in recovery copies, and the window shows Welcome.
+ * An overlay over the vault closes with it. A window that shows another vault by now keeps it.
+ *
+ * The vault is forgotten here twice. Before it closes, so that Welcome never lists it: the other
+ * window's change of the list may not have arrived yet. And after, because closing writes the
+ * vault's session once more (VAULT-03), which must not outlive its place on the list (VAULT-04).
+ */
+export async function closeForgottenVault(root: string): Promise<void> {
+  if (vault.info?.root === root) {
+    clearOverlays();
+    settings.forgetVault(root);
+  }
+  if (await vault.close(root)) settings.forgetVault(root);
 }
 
 /** Opens another window, on the Welcome screen, to show another folder (VAULT-07). */

@@ -97,6 +97,7 @@ pub fn run() {
             vault::vault_open,
             vault::vault_close,
             vault::vault_focus,
+            vault::vault_forget,
             fs_ops::vault_list,
             fs_ops::note_read,
             fs_ops::note_write,

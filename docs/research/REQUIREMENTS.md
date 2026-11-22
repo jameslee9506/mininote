@@ -103,6 +103,8 @@ Anything not listed is out of scope (§13).
   - A second click on the vault name closes the menu instead of opening it again; so does Space while the name has the keyboard.
   - In the sidebar menu, each recent vault name has a leading bound notebook icon, and so does the vault name in the footer.
   - Actions: open; remove from the list (never deletes files); open another folder.
+  - Removing. In the vault menu, the highlighted vault shows a × at the far edge of its row. A click on it removes that vault and leaves the menu open without it, so several can be removed one after another. On the empty state, a vault's context menu has "Remove from list". The vault menu does not list the window's own vault.
+  - A removed vault that a window has open closes there: its saves are flushed as for a switch, and that window shows the empty state. The next launch does not reopen it (VAULT-08).
   - A folder of the tree opens as the vault from its context menu (TREE-09).
   - Switching flushes saves, then replaces the window's vault.
   - [critic] If that flush fails, recovery copies are written first (SAVE-10), then every save retry of the old vault is cancelled. File commands carry the vault epoch (PLAT-08), so nothing started for the old vault can write into the new one.

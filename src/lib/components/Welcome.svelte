@@ -4,7 +4,7 @@
   // The update button, when there is one, sits in the top-right corner (§6.7).
   import Icon from "./Icon.svelte";
   import UpdateButton from "./UpdateButton.svelte";
-  import { openFolderDialog, openVault, unavailableVaults } from "../appCommands";
+  import { forgetVault, openFolderDialog, openVault, unavailableVaults } from "../appCommands";
   import { t } from "../i18n";
   import { settings } from "../state/settings.svelte";
   import { ui } from "../state/ui.svelte";
@@ -42,7 +42,7 @@
 
   function showVaultMenu(e: MouseEvent, root: string): void {
     e.preventDefault();
-    ui.showMenu(e.clientX, e.clientY, [{ label: t("removeFromRecent"), run: () => settings.forgetVault(root) }]);
+    ui.showMenu(e.clientX, e.clientY, [{ label: t("removeFromRecent"), run: () => forgetVault(root) }]);
   }
 </script>
 

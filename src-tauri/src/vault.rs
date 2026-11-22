@@ -1,6 +1,6 @@
-//! Each window's vault: state, epoch, the path guard, and `vault_open`, `vault_close`
-//! and `vault_focus` (ARCHITECTURE §6.1, PLAT-08, VAULT-07). A folder is the vault of
-//! one window at most.
+//! Each window's vault: state, epoch, the path guard, and `vault_open`, `vault_close`,
+//! `vault_focus` and `vault_forget` (ARCHITECTURE §6.1, PLAT-08, VAULT-07). A folder is
+//! the vault of one window at most.
 
 use std::collections::HashMap;
 use std::ffi::OsStr;
@@ -10,11 +10,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager, WebviewWindow};
+use tauri::{AppHandle, Emitter, EventTarget, Manager, WebviewWindow};
 
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::fs_ops::{LinkTargets, SelfWrites};
 use crate::{store, watcher, windows};
+
+/// Event name; mirrors `EVENT_VAULT_FORGOTTEN` in src/lib/ipc/events.ts.
+const EVENT_VAULT_FORGOTTEN: &str = "vault:forgotten";
 
 /// Result of `vault_open` (`VaultInfo` in src/lib/types.ts).
 #[derive(Debug, Clone, Serialize)]
@@ -536,6 +539,23 @@ pub async fn vault_focus(window: WebviewWindow, path: String) -> AppResult<bool>
         Ok(owner.is_some())
     })
     .await
+}
+
+/// `vault_forget`: the folder `path` left the recent vaults (VAULT-05). The window
+/// that has it open as its vault, the calling one included, is told so
+/// (`vault:forgotten`): it flushes, closes the vault and shows Welcome. `path` is
+/// compared as the recent list holds it, the root `vault_open` returned, and is not
+/// resolved: a folder that is gone may still be a window's vault (VAULT-06).
+#[tauri::command]
+pub async fn vault_forget(app: AppHandle, path: String) -> AppResult<()> {
+    let owner = app.state::<Vaults>().owner(Path::new(&path), "");
+    if let Some(owner) = owner {
+        let target = EventTarget::webview_window(owner.as_str());
+        if let Err(e) = app.emit_to(target, EVENT_VAULT_FORGOTTEN, &path) {
+            log::warn!("emit {EVENT_VAULT_FORGOTTEN}: {e}");
+        }
+    }
+    Ok(())
 }
 
 fn open(app: &AppHandle, label: &str, state: &VaultState, path: &str) -> AppResult<VaultInfo> {

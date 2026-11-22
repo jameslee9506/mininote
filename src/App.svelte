@@ -14,10 +14,18 @@
   import ContextMenu from "./lib/components/ContextMenu.svelte";
   import ConfirmDialog from "./lib/components/ConfirmDialog.svelte";
   import Toasts from "./lib/components/Toasts.svelte";
-  import { discardNewNote, flushBeforeExit, openRequest, openVault, quitApp, registerAppCommands } from "./lib/appCommands";
+  import {
+    closeForgottenVault,
+    discardNewNote,
+    flushBeforeExit,
+    openRequest,
+    openVault,
+    quitApp,
+    registerAppCommands,
+  } from "./lib/appCommands";
   import { t, uiLanguage } from "./lib/i18n";
   import { windowShow, windowStartup } from "./lib/ipc/commands";
-  import { onFlushRequest, onWindowOpen } from "./lib/ipc/events";
+  import { onFlushRequest, onVaultForgotten, onWindowOpen } from "./lib/ipc/events";
   import { commands } from "./lib/state/commands.svelte";
   import { editor } from "./lib/state/editor.svelte";
   import { pdf } from "./lib/state/pdf.svelte";
@@ -165,6 +173,10 @@
         }
       }),
       onFlushRequest(() => void quitApp()),
+      // VAULT-05: the vault shown here was removed from the recent vaults, in this window or another.
+      onVaultForgotten((root) => {
+        closeForgottenVault(root).catch((e) => console.error("closing the removed vault failed", e));
+      }),
       requests,
     ];
     // Commands carry no settings dependency; registering first keeps reload keys blocked from the start.

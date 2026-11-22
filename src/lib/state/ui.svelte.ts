@@ -12,9 +12,21 @@ export interface MenuAction {
   disabled?: boolean;
 }
 
+/**
+ * A second action on what an item names: a small icon button at the item's far edge, there while
+ * the item is highlighted (the × of a recent vault, VAULT-05). The menu stays open under it:
+ * `run` shows the menu again as it now is, or hides it.
+ */
+export interface MenuSideAction {
+  icon: IconName;
+  /** The button's `aria-label`: it shows no text. */
+  label: string;
+  run: () => void | Promise<void>;
+}
+
 /** An action, an item that opens a second panel of actions beside it (one level deep), or a separator. */
 export type MenuEntry =
-  | (MenuAction & { icon?: IconName })
+  | (MenuAction & { icon?: IconName; side?: MenuSideAction })
   | { label: string; submenu: MenuAction[] }
   | { separator: true };
 

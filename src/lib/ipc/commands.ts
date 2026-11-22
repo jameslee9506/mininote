@@ -109,6 +109,12 @@ export const vaultClose = () => call<void>("vault_close");
 export const vaultFocus = (path: string) => call<boolean>("vault_focus", { path });
 
 /**
+ * The folder `path`, a root as the recent vaults hold it, left that list (VAULT-05): the window
+ * that has it open as its vault, this one included, hears `vault:forgotten` and closes it.
+ */
+export const vaultForget = (path: string) => call<void>("vault_forget", { path });
+
+/**
  * Breadth-first listing of the visible folders and files, one column per field. A link
  * (symlink) that leads to a regular file is listed as that file (TREE-18).
  */

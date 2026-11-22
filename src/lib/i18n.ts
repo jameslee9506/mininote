@@ -185,6 +185,7 @@ const en = {
   ariaUpdateInstalling: "Installing {version}",
   ariaUpdateRestarting: "Restarting",
   ariaUpdateRestart: "Restart to finish updating to {version}",
+  ariaRemoveVault: "Remove {name} from list",
   removeFromRecent: "Remove from list",
   collapseAll: "Collapse all",
 } as const;

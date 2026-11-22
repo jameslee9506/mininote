@@ -139,14 +139,20 @@ class VaultStore {
   open = (root: string, opts?: { startup?: boolean; file?: string | null }): Promise<boolean> =>
     untrack(() => this.#serial(() => this.#open(root, opts?.startup ?? false, opts?.file ?? null)));
 
-  /** Back to the Welcome screen (flush editor first); another window may open the folder then. */
-  close = (): Promise<void> =>
+  /**
+   * Back to the Welcome screen (flush editor first); another window may open the folder then.
+   * With `root`, only when that folder is the vault once the opens under way are over. Returns
+   * whether a vault was closed.
+   */
+  close = (root?: string): Promise<boolean> =>
     untrack(() =>
       this.#serial(async () => {
-        if (!this.info) return;
+        const closing = this.info?.root;
+        if (closing === undefined || (root !== undefined && closing !== root)) return false;
         await this.#teardown();
         await this.#release();
-        settings.update({ lastVault: null });
+        if (settings.values.lastVault === closing) settings.update({ lastVault: null });
+        return true;
       }),
     );
 

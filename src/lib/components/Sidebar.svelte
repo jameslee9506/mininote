@@ -47,7 +47,15 @@
   import Icon from "./Icon.svelte";
   import FileTree from "./FileTree.svelte";
   import SearchPanel from "./SearchPanel.svelte";
-  import { leaveNewNote, newFolder, newNote, newWindow, openFolderDialog, openVault } from "../appCommands";
+  import {
+    forgetVault,
+    leaveNewNote,
+    newFolder,
+    newNote,
+    newWindow,
+    openFolderDialog,
+    openVault,
+  } from "../appCommands";
   import { fresh } from "../state/newNote.svelte";
   import { vault } from "../state/vault.svelte";
   import { ui, type MenuEntry } from "../state/ui.svelte";
@@ -75,27 +83,42 @@
    * Recent vaults (the open one skipped; same-named ones by full path), then "Open
    * another folder" and "New window". Opening goes through appCommands, like the
    * Welcome screen; a vault open in another window comes forward there (VAULT-07).
-   * A click while this menu is open closes it.
+   * A vault's × takes it off the list (VAULT-05), and the menu is drawn again without
+   * it, so several can go one after another.
    */
-  function toggleVaultMenu(e: MouseEvent & { currentTarget: HTMLButtonElement }): void {
-    if (ui.menu?.anchor === e.currentTarget) {
-      ui.hideMenu();
-      return;
-    }
+  function showVaultMenu(anchor: HTMLElement): void {
     const roots = settings.values.recentVaults.filter((r) => r !== vault.info?.root);
     const names = roots.map(baseName);
-    const items: MenuEntry[] = roots.map((root, i) => ({
-      label: names.filter((n) => key(n) === key(names[i])).length > 1 ? nfc(root) : names[i],
-      icon: "notebook",
-      run: () => safely(openVault(root)),
-    }));
+    const items: MenuEntry[] = roots.map((root, i) => {
+      const label = names.filter((n) => key(n) === key(names[i])).length > 1 ? nfc(root) : names[i];
+      return {
+        label,
+        icon: "notebook",
+        run: () => safely(openVault(root)),
+        side: {
+          icon: "close",
+          label: t("ariaRemoveVault", { name: label }),
+          run: () => {
+            // The list has changed once this call returns, before its request is answered.
+            safely(forgetVault(root));
+            showVaultMenu(anchor);
+          },
+        },
+      };
+    });
     if (items.length > 0) items.push({ separator: true });
     items.push({ label: t("openAnotherFolder"), run: () => safely(openFolderDialog()) });
     items.push({ label: t("newWindow"), run: () => safely(newWindow()) });
 
     // Anchored at the button's top edge: near the window bottom, the menu opens upward.
-    const rect = e.currentTarget.getBoundingClientRect();
-    ui.showMenu(rect.left, rect.top, items, e.currentTarget);
+    const rect = anchor.getBoundingClientRect();
+    ui.showMenu(rect.left, rect.top, items, anchor);
+  }
+
+  /** The vault name opens the menu; a click while the menu is open closes it. */
+  function toggleVaultMenu(e: MouseEvent & { currentTarget: HTMLButtonElement }): void {
+    if (ui.menu?.anchor === e.currentTarget) ui.hideMenu();
+    else showVaultMenu(e.currentTarget);
   }
 
   /**
