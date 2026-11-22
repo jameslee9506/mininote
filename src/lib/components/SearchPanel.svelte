@@ -150,14 +150,19 @@
     return best && m.text.slice(best[0], best[1]);
   }
 
-  function openTarget(i: number): void {
+  /**
+   * Opens result `i`, at its line when it is one. With `enter`, the keyboard goes into the
+   * note; a click passes false, and it stays in the sidebar.
+   */
+  function openTarget(i: number, enter: boolean): void {
     const target = index.targets[i];
     if (!target) return;
     active = i;
+    const focus = enter ? "editor" : "none";
     const opening =
       target.line === null
-        ? editor.open(target.path)
-        : editor.open(target.path, { line: target.line, select: target.hit });
+        ? editor.open(target.path, { focus })
+        : editor.open(target.path, { line: target.line, select: target.hit, focus });
     opening.catch((err) => {
       console.error(err);
       ui.notify(t("errGeneric"));
@@ -196,7 +201,7 @@
           await run(query);
           if (!answered || ui.searchQuery.trim() !== query) return;
         }
-        openTarget(active);
+        openTarget(active, true);
         return;
       }
       case "ArrowDown":
@@ -229,14 +234,20 @@
     return el ? Number(el.dataset.target) : -1;
   }
 
-  /** Clicking a result keeps the focus in the input until the note opens. */
+  /** A press on a result does not move the focus: the field keeps it, or takes it at the click. */
   function onmousedown(e: MouseEvent): void {
     if (targetAt(e) >= 0) e.preventDefault();
   }
 
+  /**
+   * A click opens the result and leaves the keyboard in the field, never in the note (SRCH-01):
+   * the arrows and Enter go on from the clicked result.
+   */
   function onclick(e: MouseEvent): void {
     const i = targetAt(e);
-    if (i >= 0) openTarget(i);
+    if (i < 0) return;
+    input?.focus({ preventScroll: true });
+    openTarget(i, false);
   }
 
   function titleFor(path: VaultPath): string {

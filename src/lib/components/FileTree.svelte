@@ -1,6 +1,5 @@
 <script module lang="ts">
   import type { VaultPath } from "../types";
-  import { chordOf, matchShortcut } from "../utils/keys";
   import { isComposing } from "../utils/platform";
 
   // Ticks already acted on, and the scroll position: module-level because the tree
@@ -14,14 +13,8 @@
     el: HTMLElement;
     renameSelected: () => void;
     copySelected: () => string | null;
-    pasteCopied: (text: string) => boolean;
+    pasteCopied: (text: string) => void;
   } | null = null;
-
-  /**
-   * A row was clicked, and no key or press has followed. The click may have opened a note,
-   * which takes the keyboard, but a copy or a paste is still about the row (TREE-11).
-   */
-  let picked = false;
 
   /**
    * The row the system's copy took last, in the vault `root`, and the text that copy put on the
@@ -49,14 +42,14 @@
     );
 
     // The system's copy (Mod+C, the Edit menu) puts the selected row's absolute path on the
-    // clipboard while the tree has the keyboard, or right after a click on a row (TREE-11).
+    // clipboard while the tree has the keyboard, as it has after a click on a row (TREE-11).
     // The event goes to wherever the text selection is, not to the tree, and CodeMirror would
     // answer it with the line of its caret: so it is taken at the window, before anyone else.
     window.addEventListener(
       "copy",
       (e) => {
         if (mounted === null || e.clipboardData === null) return;
-        if (document.activeElement !== mounted.el && !picked) return;
+        if (document.activeElement !== mounted.el) return;
         const path = mounted.copySelected();
         if (path === null) return;
         e.clipboardData.setData("text/plain", path);
@@ -66,38 +59,18 @@
       true,
     );
 
-    // The system's paste (Mod+V, the Edit menu) is the tree's under the same condition, while
-    // the clipboard still holds the row copied last: a copied file is copied into the folder in
-    // focus, and a copied folder is not pasted (TREE-19). Such a paste is taken whole, here at
-    // the window: with the keyboard in a note, the path must not be typed into it. Any other
-    // paste is text for that note, and ends `picked` as its key did before it was a paste.
+    // The system's paste (Mod+V, the Edit menu) is the tree's under the same condition, and
+    // taken whole, here at the window: the event too goes to the text selection, which may still
+    // be in the note, and nothing is typed into a note that does not have the keyboard. While
+    // the clipboard still holds the row copied last, a copied file is copied into the folder in
+    // focus, and a copied folder is not pasted (TREE-19). Any other paste goes nowhere.
     window.addEventListener(
       "paste",
       (e) => {
-        if (mounted === null || e.clipboardData === null) return;
-        if (document.activeElement !== mounted.el && !picked) return;
-        if (!mounted.pasteCopied(e.clipboardData.getData("text/plain"))) {
-          picked = false;
-          return;
-        }
+        if (mounted === null || document.activeElement !== mounted.el) return;
         e.preventDefault();
         e.stopPropagation();
-      },
-      true,
-    );
-
-    // `picked` ends with the next press or key. The clipboard keys themselves keep it: a modifier
-    // held on its own, and Mod+C and Mod+V, which reach the page before they become a copy or a
-    // paste. A key of an IME composition counts like any other: it is text typed into the note.
-    const unpick = (): void => {
-      picked = false;
-    };
-    window.addEventListener("mousedown", unpick, true);
-    window.addEventListener("blur", unpick);
-    window.addEventListener(
-      "keydown",
-      (e) => {
-        if (chordOf(e)?.key !== "" && !matchShortcut(e, "Mod-c") && !matchShortcut(e, "Mod-v")) picked = false;
+        if (e.clipboardData !== null) mounted.pasteCopied(e.clipboardData.getData("text/plain"));
       },
       true,
     );
@@ -243,7 +216,6 @@
     mounted = self;
     return () => {
       if (mounted === self) mounted = null;
-      picked = false;
       stopAutoScroll();
       clearHoverExpand();
     };
@@ -388,18 +360,23 @@
 
   // ── Actions ──────────────────────────────────────────────────
 
-  function openFile(path: VaultPath): void {
+  /**
+   * Shows a file. With `enter`, the keyboard goes into its text, also when it is the open file
+   * already (TREE-11). A click passes false: the keyboard stays in the tree, and the row of
+   * the open file opens nothing.
+   */
+  function openFile(path: VaultPath, enter: boolean): void {
     if (editor.path === path) {
-      if (editor.kind === "note" || editor.kind === "code") editor.focusEditor();
+      if (enter && (editor.kind === "note" || editor.kind === "code")) editor.focusEditor();
       return;
     }
-    safely(editor.open(path));
+    safely(editor.open(path, { focus: enter ? "editor" : "none" }));
   }
 
-  /** Enter / click: toggle a folder, open a file. */
-  function activate(node: TreeNode): void {
+  /** Enter (`enter`) / click: toggle a folder, open a file. */
+  function activate(node: TreeNode, enter: boolean): void {
     if (node.kind === "dir") vault.toggle(node.path);
-    else openFile(node.path);
+    else openFile(node.path, enter);
   }
 
   function startRename(path: VaultPath): void {
@@ -453,16 +430,15 @@
   }
 
   /**
-   * The system's paste, with `text` on the clipboard. False when that is not the row copied last
-   * in this vault: the paste is not the tree's. Otherwise a copied file is copied into the folder
-   * in focus (the selected folder, or the one the selected file is in), and a copied folder, or a
-   * file that is gone, pastes nothing.
+   * The system's paste, with `text` on the clipboard. When that is the row copied last in this
+   * vault, a copied file is copied into the folder in focus (the selected folder, or the one the
+   * selected file is in). Anything else pastes nothing: other text, a copied folder, a file that
+   * is gone.
    */
-  function pasteCopied(text: string): boolean {
-    if (copied === null || copied.root !== vault.info?.root || text !== copied.text) return false;
+  function pasteCopied(text: string): void {
+    if (copied === null || copied.root !== vault.info?.root || text !== copied.text) return;
     const node = vault.node(copied.path);
     if (node?.kind === "file") safely(vault.copyInto(node.path, vault.activeDir()));
-    return true;
   }
 
   /**
@@ -492,12 +468,17 @@
 
   // ── Mouse and context menus (TREE-09) ────────────────────────
 
+  /**
+   * A click leaves the keyboard in the tree, never in the file it opens (TREE-11): the arrows,
+   * and a copy or a paste, go on from the clicked row. The press moved it here already, the
+   * tree being the focusable element under a row; the click makes sure of it.
+   */
   function onclick(e: MouseEvent): void {
+    if (document.activeElement !== scroller) scroller?.focus({ preventScroll: true });
     const node = nodeAt(e.target);
     if (!node) return;
     vault.selected = node.path;
-    picked = true;
-    activate(node);
+    activate(node, false);
   }
 
   function fileMenu(node: TreeNode): MenuEntry[] {
@@ -575,7 +556,7 @@
       case "ArrowDown":
         if (cmdOnly) {
           // Finder's ⌘↓ opens.
-          if (row && !e.repeat) activate(row.node);
+          if (row && !e.repeat) activate(row.node, true);
           break;
         }
         if (!plain || n === 0) return;
@@ -612,7 +593,7 @@
         break;
       case "Enter":
         if (!plain) return;
-        if (row && !e.repeat) activate(row.node);
+        if (row && !e.repeat) activate(row.node, true);
         break;
       case "Delete":
         if (!plain) return;

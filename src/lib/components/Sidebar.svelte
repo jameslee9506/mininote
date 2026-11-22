@@ -95,9 +95,22 @@
     const rect = e.currentTarget.getBoundingClientRect();
     ui.showMenu(rect.left, rect.top, items, e.currentTarget);
   }
+
+  /**
+   * A press anywhere in the sidebar takes the keyboard out of the main area (NAV-04): no caret
+   * stays in the note while the sidebar is used. The press may not move the focus by itself:
+   * a search result and the drag region cancel it, and WebKit gives a button none. What is
+   * pressed takes the keyboard when it can (the tree, a field); focus already in the sidebar,
+   * such as a rename input's, is left alone.
+   */
+  function releaseKeyboard(e: MouseEvent & { currentTarget: HTMLElement }): void {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active !== document.body && !e.currentTarget.contains(active)) active.blur();
+  }
 </script>
 
-<aside class="sidebar">
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+<aside class="sidebar" onmousedown={releaseKeyboard}>
   <!-- Buttons are direct children: Tauri drags only on the region element itself. -->
   <header class="header" class:mac={isMac} data-tauri-drag-region={isMac ? "" : undefined}>
     <button type="button" class="icon-btn first" aria-label={t("ariaNewNote")} onclick={() => safely(newNote())}>

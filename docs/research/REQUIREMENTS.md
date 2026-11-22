@@ -286,13 +286,13 @@ Anything not listed is out of scope (§13).
 - **Sources.** MT §2, ZT §3.3, OT §4.1, SB §3, OB §3.
 
 #### TREE-11 · Keyboard navigation · P1
-- **Behavior.** With the tree focused:
+- **Behavior.** A click in the tree gives it the keyboard and leaves it there (NAV-04): the file a click opens does not take it, and a click on the row of the open file changes nothing. With the tree focused:
   - Up and Down move over the visible rows, in exactly the order they are rendered.
   - Right expands a folder, or steps into it if it is already open. Left collapses it or steps to the parent.
   - Home and End jump to the first and last row.
   - Enter opens a note and focuses the editor, or toggles a folder.
   - F2 renames. Delete or Cmd+Backspace deletes.
-  - The system's copy (Mod+C, or Copy in the macOS Edit menu) copies the selected row's absolute path, as the context menu's Copy does (TREE-09). It also does right after a click on a row, although the note the click opened has the keyboard by then: until a key is pressed or something else is clicked, a copy or a paste is about the row.
+  - The system's copy (Mod+C, or Copy in the macOS Edit menu) copies the selected row's absolute path, as the context menu's Copy does (TREE-09).
   - The system's paste (Mod+V, or Paste in the macOS Edit menu) pastes the row copied that way: a copied file is copied into the folder in focus (TREE-19).
   - Esc returns focus to the editor.
   - Arrow keys with modifiers are not captured.
@@ -383,14 +383,14 @@ Sources: OB §3, ZT §3.3–3.4, MT §2.
 
 #### TREE-19 · Copy and paste a file · P1
 - **Behavior.**
-  - A row copied with the system's copy (TREE-11) is pasted with the system's paste (Mod+V, or Paste in the macOS Edit menu), while the tree has the keyboard or right after a click on a row.
+  - A row copied with the system's copy (TREE-11) is pasted with the system's paste (Mod+V, or Paste in the macOS Edit menu), while the tree has the keyboard, as it has after a click on a row.
   - A copied file is copied into the folder in focus: the selected folder, or the folder the selected file is in. Pasted right after it was copied, it is duplicated beside itself. With no row selected, the folder is the open note's, else the root, as for a new note (TREE-04).
   - The copy keeps the file's name where that is free. Where it is taken, the copy is numbered as new notes are (TREE-04): `Note 1.md`, `Note 2.md`. Nothing is ever replaced.
-  - The copy is selected and revealed in the tree (TREE-03). It is not opened: the open note stays, and keeps the keyboard if it had it.
+  - The copy is selected and revealed in the tree (TREE-03). It is not opened: the open note stays, and the tree keeps the keyboard.
   - A copied folder is not pasted: nothing happens.
 - **Edge cases.**
-  - Such a paste never types the copied path into the open note. The path is pasted as text where the keyboard is once a paste is no longer about the row (TREE-11): after a click in the note, or a key.
-  - A paste is the tree's only while the clipboard still holds what the tree copied last. Anything copied since, here or in another app, is pasted as usual: into the note that has the keyboard, or nowhere. The menu's Copy items (TREE-09) copy text only.
+  - Such a paste never types the copied path into the open note. The path is pasted as text once the note has the keyboard, after a click in it.
+  - A row is pasted only while the clipboard still holds what the tree copied last. Anything copied since, here or in another app, is pasted as usual: into the note that has the keyboard, and nowhere while the tree has it. The menu's Copy items (TREE-09) copy text only.
   - An open note is flushed first (SAVE-02), so its copy holds the latest text.
   - A file of any kind and size is copied byte for byte. The copy has a new file's permissions and its source's execute bits: a copied script still runs, and the copy of a read-only note can be edited. A link is copied as the file it leads to (TREE-18).
   - The copied row is remembered by its path, for one window and one vault. A file renamed, moved or deleted since is not pasted.
@@ -965,6 +965,7 @@ Math and diagrams are out of scope.
   - The sidebar header holds faint icons: new note, new folder, collapse all. The search field sits below it, above the file tree, always visible (SRCH-01).
   - The main area's top strip holds faint icons: show sidebar (when hidden), back and forward, reading view, and before it a copy icon for the open file's text (NAV-09).
   - On macOS both strips are window drag regions.
+  - A press anywhere in the sidebar takes the keyboard out of the main area: no caret stays in the note or in its title. What is pressed takes the keyboard where it can (the tree, the search field, a name being typed), and a click that opens a file, on a tree row (TREE-11) or a search result (SRCH-01), leaves it in the sidebar. From there the keyboard moves into the note with Enter or Esc in the tree, Enter in the search field, or a click in the text. The commands that are about typing are the exception: a new note opens ready for it (TREE-04). *Changed:* a click on a row or a result used to hand the keyboard to the note it opened, and a click on the open file's row gave it back to that note.
   - [critic] On macOS, with the sidebar hidden, the main strip reserves the traffic lights' area; otherwise they sit on top of the show-sidebar icon. In full screen, where the traffic lights are hidden, the reserved space collapses, leaving no dead click zone [OB §10].
 - **Sources.** DESIGN.md §4, MT §9, OB §10.
 
@@ -1016,7 +1017,7 @@ Split panes are out of scope; separate windows are VAULT-08.
   - Terms separated by whitespace must all appear (AND), and `"quoted phrases"` match as written.
   - Matching ignores case.
   - Results are grouped by note. Notes whose name matches come first, then the others by number of matches.
-  - Each note shows up to 20 line snippets, with the matches in bold. Clicking a snippet opens the note at that line with the match selected (NAV-05).
+  - Each note shows up to 20 line snippets, with the matches in bold. Clicking a snippet opens the note at that line with the match selected (NAV-05). The keyboard stays in the search field (NAV-04); Enter there opens the highlighted result and moves the keyboard into the note.
   - Limits: 200 notes per response; files over 5 MB are skipped.
 - **Edge cases.**
   - One unreadable file never aborts the search.
