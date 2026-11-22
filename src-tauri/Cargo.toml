@@ -1,6 +1,7 @@
 [package]
 name = "mininote"
 version = "0.1.0"
+license = "GPL-3.0-only"
 description = "Lightweight local markdown notes"
 authors = []
 edition = "2021"

@@ -1,3 +1,7 @@
+/*! PDF.js viewer styles adapted from web/pdf_viewer.css.
+ * Copyright 2014 Mozilla Foundation. Licensed under Apache-2.0.
+ */
+
 /*
  * PDF pages (DESIGN §7), drawn by PDF.js's viewer inside `.pdfViewer` (PdfView.svelte).
  *

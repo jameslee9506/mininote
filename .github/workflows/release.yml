@@ -121,7 +121,10 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: Mininote v__VERSION__
-          releaseBody: 'Download the installer for your platform. Installed apps update from inside the app.'
+          releaseBody: |
+            Download the installer for your platform. Installed apps update from inside the app.
+
+            Mininote Desktop is licensed under GPL-3.0-only. [Download this version's source code](${{ github.server_url }}/${{ github.repository }}/archive/refs/tags/${{ github.ref_name }}.zip).
           releaseDraft: true
           prerelease: false
           uploadUpdaterJson: true

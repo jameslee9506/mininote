@@ -37,6 +37,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": {
+      "../LICENSE": "LICENSE"
+    },
     "windows": {
       "wix": {
         "upgradeCode": "0576af3f-18b6-52c3-9d72-9fe50f221784"

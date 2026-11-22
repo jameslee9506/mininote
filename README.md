@@ -104,3 +104,9 @@ The command is not installed with the app:
 - [Releasing](docs/releasing.md): versioning, the updater signing key, and the GitHub Releases pipeline behind in-app updates.
 - [Research](docs/research/): analyses of Obsidian, Zettlr, SilverBullet, MarkText, mdSilo, Otterly, and related projects; [functional requirements](docs/research/REQUIREMENTS.md); and [implementation techniques](docs/research/TECHNIQUES.md).
 - [Development conventions](CLAUDE.md): project rules and coding conventions.
+
+## License
+
+Mininote Desktop is licensed under the GNU General Public License, version 3 only (`GPL-3.0-only`). See [LICENSE](LICENSE).
+
+Third-party code and assets retain their respective licenses. The PDF viewer styles adapted from Mozilla's PDF.js are covered by the [Apache License, Version 2.0](licenses/Apache-2.0.txt).
