@@ -123,7 +123,7 @@ update(u) {
 
 - **Parser progress.** Background parse results arrive as transactions that carry only `Language.setState`, with no doc, viewport or selection change. Compare `syntaxTree(u.startState) !== syntaxTree(u.state)` (included above). Without it, everything after the first ~3,000 characters of a large note stays undecorated until the next keystroke [CM §9, §15 #11].
 - **On open** (LIVE-16), right after `view.setState(state)` and in the same task, call `forceParsing(view, Math.min(doc.length, viewportEnd + 2500), 100)`. WebKit has no `requestIdleCallback`, and CodeMirror's idle fallback waits about 500 ms, which flashes raw Markdown in WKWebView and WebKitGTK [SB §8].
-- **Restoring scroll.** Set `scrollTop` after CodeMirror's first measure (one `requestAnimationFrame` after `setState`), and keep the scroller at `visibility: hidden` for that frame [SB §8].
+- **Restoring scroll.** Set `scrollTop` after CodeMirror's first measure (one `requestAnimationFrame` after `setState`), and keep the scroller at `opacity: 0` for that frame [SB §8]. Not `visibility: hidden`: a hidden element takes no focus, and the focus an open asks for (the body, a new note's title) is given within that frame, so `focus()` would do nothing.
 - **Lists continued by Enter** need the tree parsed up to the caret. Our Enter runs lang-markdown's command, which uses the current tree. On a freshly opened large note, call `ensureSyntaxTree(state, pos, 100)` first [SB §4.3].
 
 ### 1.5 Construct recipes

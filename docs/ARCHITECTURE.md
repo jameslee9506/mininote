@@ -539,7 +539,7 @@ App.svelte
 └─ Icon.svelte               inline SVG icon set; a folder is solid where its parent sets --icon-fill (tree rows, by icon set)
 ```
 
-**Document scrolling.** `.doc-scroll` is the scroll container. Inside it, `.doc-column` (max-width `--content-max`, centered, horizontal padding `--content-pad-x`, which shrinks with the pane, bottom padding `--content-pad-bottom`) holds `InlineTitle` and then `Editor` or `Reader`. The title scrolls with the text. CodeMirror is auto-height and relies on that ancestor scroll. The editor store saves and restores `.doc-scroll.scrollTop` per note. A PDF scrolls in a container of its own (§10.5); `.doc-scroll` is hidden meanwhile and stays mounted, with the single `EditorView` in it.
+**Document scrolling.** `.doc-scroll` is the scroll container. Inside it, `.doc-column` (max-width `--content-max`, centered, horizontal padding `--content-pad-x`, which shrinks with the pane, bottom padding `--content-pad-bottom`) holds `InlineTitle` and then `Editor` or `Reader`. The title scrolls with the text. CodeMirror is auto-height and relies on that ancestor scroll. The editor store saves and restores `.doc-scroll.scrollTop` per note. A restore waits one frame for CodeMirror's first measure, and `.doc-scroll` is transparent for that frame, never `visibility: hidden`: a hidden element takes no focus, and the focus an open asks for (the body, a new note's title, §8.3) is given within it. A PDF scrolls in a container of its own (§10.5); `.doc-scroll` is hidden meanwhile and stays mounted, with the single `EditorView` in it.
 
 ### 9.1 Keyboard shortcuts (`Mod` = ⌘ on macOS, Ctrl elsewhere)
 

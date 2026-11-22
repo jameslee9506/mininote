@@ -2002,18 +2002,22 @@ class EditorStore {
 
   // ── Scrolling and positions ──────────────────────────────────────────────
 
-  /** Restores `.doc-scroll` after CodeMirror's first measure, hidden for that frame. */
+  /**
+   * Restores `.doc-scroll` after CodeMirror's first measure, not shown for that frame. It is
+   * transparent, never `visibility: hidden`: a hidden element takes no focus, and the focus an
+   * open asks for (the body, a new note's title) is given within that frame.
+   */
   #restoreScroll(top: number): void {
     const sc = this.#scroller;
     if (!sc) return;
     const token = ++this.#scrollToken;
-    sc.style.visibility = "hidden";
+    sc.style.opacity = "0";
     let done = false;
     const finish = () => {
       if (done) return;
       done = true;
       if (token === this.#scrollToken && this.#scroller === sc) sc.scrollTop = top;
-      sc.style.visibility = "";
+      sc.style.opacity = "";
     };
     requestAnimationFrame(finish);
     setTimeout(finish, 500); // rAF does not run while the window is hidden
