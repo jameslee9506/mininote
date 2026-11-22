@@ -137,7 +137,10 @@
   </div>
 
   <footer class="footer">
-    <button type="button" class="vault" aria-haspopup="menu" onclick={toggleVaultMenu}>{vaultName}</button>
+    <button type="button" class="vault" aria-haspopup="menu" onclick={toggleVaultMenu}>
+      <Icon name="notebook" />
+      <span class="vault-name">{vaultName}</span>
+    </button>
     <button type="button" class="icon-btn" aria-label={t("ariaSettings")} onclick={() => ui.openModal("settings")}>
       <Icon name="settings" />
     </button>
@@ -198,18 +201,19 @@
     padding: 0 8px;
   }
 
+  /* The bound notebook of the vault menu's recent vaults, then the name. */
   .vault {
+    display: flex;
     flex: 1;
+    align-items: center;
+    gap: var(--tree-icon-gap);
     min-width: 0;
     height: 28px;
     padding: 0 6px;
-    overflow: hidden;
     border-radius: var(--radius-s);
     color: var(--c-text-muted);
     font-size: var(--fs-ui-small);
     text-align: left;
-    text-overflow: ellipsis;
-    white-space: nowrap;
     transition:
       background-color var(--dur-fast),
       color var(--dur-fast);
@@ -223,6 +227,13 @@
 
   .vault:active {
     background: var(--c-bg-active);
+  }
+
+  .vault-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   /* PLAT-12: over the content instead of beside it; never wider than the window allows. */

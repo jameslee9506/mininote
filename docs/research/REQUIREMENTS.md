@@ -103,7 +103,7 @@ Anything not listed is out of scope (§13).
 - **Behavior.**
   - Up to 10 recent vaults, most recent first. They appear on the empty state and in the vault menu, which opens from the vault name in the sidebar footer.
   - A second click on the vault name closes the menu instead of opening it again; so does Space while the name has the keyboard.
-  - In the sidebar menu, each recent vault name has a leading bound notebook icon.
+  - In the sidebar menu, each recent vault name has a leading bound notebook icon, and so does the vault name in the footer.
   - Actions: open; remove from the list (never deletes files); open another folder.
   - A folder of the tree opens as the vault from its context menu (TREE-09).
   - Switching flushes saves, then replaces the window's vault.
