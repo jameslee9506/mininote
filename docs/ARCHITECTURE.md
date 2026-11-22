@@ -1,6 +1,4 @@
-# mininote — Architecture
-
-mininote is a lightweight, local-first Markdown notes app in the spirit of Obsidian. A *vault* is any folder of `.md` files with sub-folders. The UI is monotone and nearly text-free (`docs/DESIGN.md`). Documents save themselves while you type.
+Mininote is a lightweight, local-first Markdown notes app in the spirit of Obsidian. A *vault* is any folder of `.md` files with sub-folders. The UI is monotone and nearly text-free (`docs/DESIGN.md`). Documents save themselves while you type.
 
 ## 0. How to read this document
 
@@ -292,7 +290,7 @@ Every command marked "scoped" also takes `epoch: u64`, either as an argument or 
   - At the same time, start (once per quit, even when the request repeats) a 4000 ms fallback thread that sets `ready` and calls `app.exit(code)`. Every window answers every request, with or without an open vault.
   - `app_exit_ready` records the calling window as flushed; the app exits once every open window has (a window closed meanwhile no longer counts). Called without a pending request (a window that quit on its own), it requests the flush of the others first.
 - **macOS menu.** Tao never raises a preventable exit for the predefined Quit (Tauri #9198), so build the menu explicitly:
-  - **App menu:** About, separator, Hide, Hide Others, Show All, separator, and a **custom "Quit mininote" item with `CmdOrCtrl+Q`**. The custom item emits `app:flush-request` and starts the same fallback.
+  - **App menu:** About, separator, Hide, Hide Others, Show All, separator, and a **custom "Quit Mininote" item with `CmdOrCtrl+Q`**. The custom item emits `app:flush-request` and starts the same fallback.
   - **Edit menu:** the predefined Undo, Redo, Cut, Copy, Paste and Select All. They are required for clipboard keys in WKWebView.
   - **Window menu:** Minimize, Zoom, Fullscreen, a separator, and the predefined Close Window (⌘W). That item is the window's close button (`performClose:`): the close request lets the window flush first (§8.4), and it closes an About panel too. macOS lists the open windows below them, by title (PLAT-02).
 - Windows and Linux have no menu bar. Ctrl+Q there is a frontend command that calls `app_quit`, the same protocol as the macOS Quit item, and Ctrl+W one that closes the window (§8.4).

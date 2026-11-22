@@ -1,6 +1,4 @@
-# mininote — Functional Requirements
-
-This spec synthesizes the seven open-source analyses in this folder (2026-11-08). It says **what** mininote must do, under stable IDs. [TECHNIQUES.md](TECHNIQUES.md) says **how** to build the hard parts in our stack. `docs/ARCHITECTURE.md` and `docs/DESIGN.md` are the implementation plan; §14 lists where this spec asks them to change.
+This spec synthesizes the seven open-source analyses in this folder (2026-11-08). It says **what** Mininote must do, under stable IDs. [TECHNIQUES.md](TECHNIQUES.md) says **how** to build the hard parts in our stack. `docs/ARCHITECTURE.md` and `docs/DESIGN.md` are the implementation plan; §14 lists where this spec asks them to change.
 
 **Sources.** Each tag points to a research note in this folder, and `§` numbers refer to that note's sections.
 
@@ -29,7 +27,7 @@ Anything not listed is out of scope (§13).
 
 ## 0. Product principles
 
-1. **Plain files, never rewritten.** A vault is any local folder, and notes are UTF-8 `.md` files in nested folders. mininote changes only what the user typed. Opening and saving an untouched note leaves it byte-identical: line endings, BOM, trailing newline, escapes and list markers all stay. There are no smart quotes, no autocorrect, no reformatting and no forced final newline.
+1. **Plain files, never rewritten.** A vault is any local folder, and notes are UTF-8 `.md` files in nested folders. Mininote changes only what the user typed. Opening and saving an untouched note leaves it byte-identical: line endings, BOM, trailing newline, escapes and list markers all stay. There are no smart quotes, no autocorrect, no reformatting and no forced final newline.
 2. **The vault stays clean.** The app writes into the vault only what the user creates: notes, folders, pasted attachments, and (rarely) conflict copies. Settings, sessions and caches live in the OS app-data folder.
 3. **Obsidian-like, but light.** One vault per window (VAULT-07), with a folder tree, an editor with live preview, a reading view, a quick switcher and links. Plugins, graph view, canvas, sync, publishing, math, diagrams, tabs and split panes are out (§13).
 4. **Minimal monotone UI.**
@@ -94,7 +92,7 @@ Anything not listed is out of scope (§13).
 - **Sources.** OB §2, §6.3; MT §1; ZT §2, §5.1; WR (tauri-notes-discovery §3).
 
 #### VAULT-04 · App state lives outside the vault · P0
-- **Behavior.** Settings and per-vault sessions are stored in the OS app-config folder, keyed by the vault's canonical path, and use vault-relative paths inside. mininote never creates a dot-folder or settings file inside the vault.
+- **Behavior.** Settings and per-vault sessions are stored in the OS app-config folder, keyed by the vault's canonical path, and use vault-relative paths inside. Mininote never creates a dot-folder or settings file inside the vault.
 - **Edge cases.** [critic] Sessions are kept only for vaults on the recent list (VAULT-05). Removing a vault from the list deletes its session, so app data never grows without bound.
 - **Decision.** Use app data (OB's own advice, MT, WR) instead of in-vault folders such as `.obsidian`, `.otterly` or Zettlr's `.ztr-directory`. This avoids git churn and sync conflicts, and puts no files in the vault that the user did not create.
 - **Sources.** OB §2, ZT §2 (avoid), MT §1, OT §3, MS §1.
@@ -158,7 +156,7 @@ Anything not listed is out of scope (§13).
   - A `node_modules` folder is listed like any other. The entry cap (VAULT-01) protects performance.
   - [critic] An unreadable sub-folder (permission denied, a macOS privacy-protected folder) is listed without children. It never aborts the listing [ZT §10].
   - [critic] Cloud placeholders (iCloud files under "Optimize Mac Storage", OneDrive Files On-Demand) list normally, because the listing reads metadata only. Reading one downloads it and can block for seconds [WR in OT §2.1], so opening is asynchronous (SAVE-03) and search skips them (SRCH-01).
-- **Decision.** Show images (OB) instead of hiding them (ZT, WR). Users paste screenshots and must be able to see, move and delete them. *Changed:* every other file is listed too, so a folder opened in mininote reads as it is on disk, and the app doubles as a fast viewer for any folder (VAULT-01).
+- **Decision.** Show images (OB) instead of hiding them (ZT, WR). Users paste screenshots and must be able to see, move and delete them. *Changed:* every other file is listed too, so a folder opened in Mininote reads as it is on disk, and the app doubles as a fast viewer for any folder (VAULT-01).
 - **Sources.** OB §3, ZT §3.1, MT §2, OT §4.1, MS §2, SB §3.
 
 #### TREE-02 · Sort order · P0
@@ -309,7 +307,7 @@ Anything not listed is out of scope (§13).
 
 #### TREE-12 · Follow external changes · P0
 - **Behavior.**
-  - Files and folders created, deleted or renamed outside mininote appear in the tree within about half a second.
+  - Files and folders created, deleted or renamed outside Mininote appear in the tree within about half a second.
   - Bursts of changes (git checkout, sync clients) produce a single refresh.
   - The expanded set and the selection survive refreshes.
   - [critic] Watchers miss changes on network volumes (SMB, NFS and AFP report only changes made by this machine), after the inotify fallback, and when Windows drops a burst. So when the window regains focus, the open note is checked against its baseline with one stat, and a change goes through SAVE-06. On a network volume, or after a watcher fallback, the tree also re-lists on focus.
@@ -876,7 +874,7 @@ Math and diagrams are out of scope.
 - **Sources.** MT §4.3 (fsync; zero-filled files), OT §2.3 (Windows retry), MS §4, SB §5, OB §5.
 
 #### SAVE-05 · Our own writes are not "external" · P0
-- **Behavior.** A write by mininote never comes back as an external change:
+- **Behavior.** A write by Mininote never comes back as an external change:
   - The backend remembers the size and modification time of each write it made, and drops watcher events that still match them.
   - The frontend also ignores any change whose content equals the last text it saved or loaded.
   - [critic] Coarse timestamps. On FAT32 and exFAT (2 s) and some network shares, a same-size external edit within one tick matches the recorded metadata, and ticking a task in another app is a same-size edit. The registry and the save-time baseline therefore also keep a content hash, computed in Rust on read and write. When the mtime has no sub-second part, the hash decides [ZT §12, MT §4.3].
@@ -899,7 +897,7 @@ Math and diagrams are out of scope.
 - **[critic] Composition.** A reload or merge never dispatches into the editor while an IME composition is active. It runs right after `compositionend` (EDIT-11).
 - **[critic] Partial files.** If the file's size or mtime changes between the stats before and after the read, another program is still writing in place. Read again after 100 ms rather than act on a partial file [MT §4.5]. A clean reload that would empty a non-empty note waits until the file has stayed empty for 1 s, because cloud clients briefly leave empty files while syncing, and a reload is not undoable.
 - **[critic] Line endings only.** A change of only the line endings or the BOM (the same text after normalization) updates the remembered style (EDIT-02).
-- **[critic] Sync clients' own conflict files** (`(conflicted copy …)` from Dropbox, a `-<PC name>` suffix from OneDrive, `.sync-conflict-…` from Syncthing, ` 2` from iCloud) are ordinary notes. mininote neither merges nor hides them.
+- **[critic] Sync clients' own conflict files** (`(conflicted copy …)` from Dropbox, a `-<PC name>` suffix from OneDrive, `.sync-conflict-…` from Syncthing, ` 2` from iCloud) are ordinary notes. Mininote neither merges nor hides them.
 - **Decision.** Write a conflict copy, following OB Sync's precedent. The alternatives each lose data or add UI: "local wins" (ARCHITECTURE §8.2) drops the external edit, a reload prompt (ZT, MT, OT) adds a dialog, and "disk wins" (WR) drops typing. Sync clients and `git pull` really do race with typing, and a copy loses nothing without asking anything.
 - **Sources.** OB §0, §5; SB §5; MT §4.5; ZT §5.3; OT §4.3; MS §4 (avoid last-writer-wins).
 
@@ -1081,11 +1079,11 @@ Replace across files is out of scope.
 #### LINK-01 · Markdown links · P0
 - **Behavior.** For `[text](target)`:
   - `http(s):` and `mailto:` targets [critic] (and `tel:`, which READ-04 already allows) open in the OS default app, and the webview never navigates.
-  - A relative `.md` target opens in mininote. It is percent-decoded (the `<…>` form is allowed) and resolved against the note's folder first, then the vault root.
+  - A relative `.md` target opens in Mininote. It is percent-decoded (the `<…>` form is allowed) and resolved against the note's folder first, then the vault root.
   - `#anchor` scrolls to the heading with that Unicode-aware slug; Hangul is kept.
   - [critic] *Changed:* images open in the viewer (TREE-15), and so do PDFs (TREE-20). Other local files inside the vault (P1) open in the OS default app only when their extension is on an allowlist of document and media types: plain text, CSV, office and Hangul (`hwp`, `hwpx`) documents, images other than SVG, audio and video. Any other file is revealed in the file manager instead, never opened. The earlier rule ("other local files open in the OS default app") would run a linked `.command`, `.exe` or `.lnk` from a shared vault with one click, while LINK-09 deferred the safeguard to P2.
   - A missing `.md` target behaves like an unresolved wikilink (LINK-05).
-  - [critic] One shared, unit-tested `classifyHref()` makes these decisions for the editor and the reading view alike. `http(s):`, `mailto:` and `tel:` open externally; vault paths open in mininote; everything else does nothing. That includes `file:`, `javascript:`, `data:`, drive paths, UNC paths (`\\host\share`, which can leak Windows credentials over SMB) and custom schemes (`obsidian:`, `ms-…:`).
+  - [critic] One shared, unit-tested `classifyHref()` makes these decisions for the editor and the reading view alike. `http(s):`, `mailto:` and `tel:` open externally; vault paths open in Mininote; everything else does nothing. That includes `file:`, `javascript:`, `data:`, drive paths, UNC paths (`\\host\share`, which can leak Windows credentials over SMB) and custom schemes (`obsidian:`, `ms-…:`).
 - **Edge cases.**
   - Malformed percent sequences are used as written.
   - When a file literally named `C#.md` exists, it wins over reading `#` as an anchor.

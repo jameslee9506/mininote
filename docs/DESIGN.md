@@ -1,6 +1,4 @@
-# mininote — Design System
-
-The UI should feel like a sheet of paper with a quiet gray margin. Every rule below exists to keep it that way.
+Mininote's UI should feel like a sheet of paper with a quiet gray margin. Every rule below exists to keep it that way.
 
 ## 1. Principles
 

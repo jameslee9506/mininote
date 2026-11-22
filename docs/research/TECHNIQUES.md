@@ -1,6 +1,4 @@
-# mininote — Implementation Techniques
-
-This document describes how to build the hard parts of mininote in our stack: Tauri 2, Svelte 5, CodeMirror 6 and markdown-it. Each section gives the recommended approach and then the pitfalls the research found. Requirement IDs (for example `SAVE-06`) refer to [REQUIREMENTS.md](REQUIREMENTS.md).
+This document describes how to build the hard parts of Mininote in our stack: Tauri 2, Svelte 5, CodeMirror 6 and markdown-it. Each section gives the recommended approach and then the pitfalls the research found. Requirement IDs (for example `SAVE-06`) refer to [REQUIREMENTS.md](REQUIREMENTS.md).
 
 **Citations.**
 - `[SB §4.2]` means `silverbullet.md` §4.2.
@@ -9,7 +7,7 @@ This document describes how to build the hard parts of mininote in our stack: Ta
 - **Verified** means the claim was checked against the package installed in `node_modules`. [critic] For Rust it means the crate source in the local cargo registry (`trash` 5.2, `notify` 8.2, `tauri-plugin-store` 2.5, `wry` 0.57, `tauri` 2.12).
 - **[critic]** marks text that the adversarial completeness review (2026-11-08) added or changed. *Changed:* introduces a correction to earlier text.
 
-The code sketches are written for mininote. Nothing is copied from the analyzed projects, some of which are GPL or AGPL.
+The code sketches are written for Mininote. Nothing is copied from the analyzed projects, some of which are GPL or AGPL.
 
 ---
 
@@ -665,7 +663,7 @@ Then set `lastSaved = disk.text` and `baseline = disk.meta`, and save; the merge
   - every `<a>`: `preventDefault()`, then route it (LINK-01 … LINK-05);
   - a task box: `editor.toggleTaskAtLine(line)`.
 - **Navigation lock, as defense in depth.** A Rust `on_navigation` hook (a tiny internal plugin) allows only the app's own origin, so a click handler we missed still cannot navigate the webview [ZT §10, MT §9].
-- [critic] **One link classifier.** The click delegation here and the editor's link handler (§1.9) both call the same pure `classifyHref(href, notePath)` (LINK-01): `http(s)`, `mailto` and `tel` go to the opener; vault paths, normalized against the note's folder and kept inside the root, open in mininote; everything else does nothing. That covers `file:`, `javascript:`, `data:`, drive paths, UNC paths and custom schemes.
+- [critic] **One link classifier.** The click delegation here and the editor's link handler (§1.9) both call the same pure `classifyHref(href, notePath)` (LINK-01): `http(s)`, `mailto` and `tel` go to the opener; vault paths, normalized against the note's folder and kept inside the root, open in Mininote; everything else does nothing. That covers `file:`, `javascript:`, `data:`, drive paths, UNC paths and custom schemes.
 - [critic] **Task toggles** re-check that the source line at `data-line` is a task item before editing it; raw HTML in the note can forge the attribute.
 - [critic] **Heading anchors.** DOMPurify's `SANITIZE_DOM` (on by default) strips `id` and `name` values that clash with DOM properties, so a heading named `title` or `body` loses its id. Jump to anchors through our own slug-to-line map built from the tokens, not through `getElementById`.
 - [critic] **CSP additions:** `object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'`. `base-uri` and `form-action` do not fall back to `default-src`.

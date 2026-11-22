@@ -1,6 +1,6 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "mininote",
+  "productName": "Mininote",
   "version": "0.1.0",
   "identifier": "com.mininote.desktop",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "mininote",
+        "title": "Mininote",
         "width": 1100,
         "height": 740,
         "minWidth": 520,
@@ -37,6 +37,11 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "windows": {
+      "wix": {
+        "upgradeCode": "0576af3f-18b6-52c3-9d72-9fe50f221784"
+      }
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

@@ -1,6 +1,4 @@
-# Releasing mininote
-
-The app checks for a newer version once at launch. When one exists, an update icon appears in the
+Mininote checks for a newer version once at launch. When one exists, an update icon appears in the
 main top strip (or in the top-right corner of the Welcome screen); clicking it downloads the signed
 archive, writes every unsaved note, installs the new version and restarts. GitHub Releases hosts both
 the version manifest (`latest.json`) and the archives, so the app needs no update server and no
@@ -89,7 +87,7 @@ git push origin main v0.1.0
    archive), Windows (`.msi` and NSIS `-setup.exe`; NSIS is the preferred updater target) and
    Linux on Ubuntu 22.04 (`.deb`, `.rpm` and the `.AppImage`, which is the only Linux package the
    updater can replace). Every updater archive gets a `.sig`, and all of it lands in a **draft**
-   release named `mininote vX.Y.Z`.
+   release named `Mininote vX.Y.Z`.
 3. **Verify**: downloads the draft's `latest.json` and fails unless it carries the released version
    and a signed artifact for `darwin-aarch64`, `darwin-x86_64`, `windows-x86_64` and `linux-x86_64`.
 
@@ -102,7 +100,8 @@ The first updater-enabled release must be installed by hand from its installer; 
 the overlay know neither the endpoint nor the key. On macOS, install into a writable Applications
 folder, since the update replaces the `.app` in place. From then on, a higher published version shows
 the update icon at the next launch. Keep the application identifier (`com.mininote.desktop`) and the
-signing key stable across releases so settings and update trust survive.
+signing key stable across releases so settings and update trust survive. The Windows MSI keeps the
+original WiX upgrade code in `tauri.conf.json` so it can recognize earlier installations.
 
 ## Prepare or build locally
 
@@ -134,25 +133,25 @@ sign it ad hoc, and put it in place of the installed one.
 ```sh
 npm run tauri -- build --bundles app
 mininote_stage="$(mktemp -d /Applications/.mininote-install.XXXXXX)"
-ditto src-tauri/target/release/bundle/macos/mininote.app "$mininote_stage/mininote.app"
-codesign --force --sign - "$mininote_stage/mininote.app"
-codesign --verify --strict "$mininote_stage/mininote.app"
-# Quit mininote, then:
-rm -rf /Applications/mininote.app
-mv "$mininote_stage/mininote.app" /Applications/mininote.app
+ditto src-tauri/target/release/bundle/macos/Mininote.app "$mininote_stage/Mininote.app"
+codesign --force --sign - "$mininote_stage/Mininote.app"
+codesign --verify --strict "$mininote_stage/Mininote.app"
+# Quit Mininote, then:
+rm -rf /Applications/Mininote.app
+mv "$mininote_stage/Mininote.app" /Applications/Mininote.app
 rmdir "$mininote_stage"
-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f /Applications/mininote.app
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f /Applications/Mininote.app
 ```
 
-Keep the bundle named `mininote.app` even while staging it: use a temporary parent directory,
-not a `mininote-new.app` bundle name that macOS may retain in its app listings. The owner can
+Keep the bundle named `Mininote.app` even while staging it: use a temporary parent directory,
+not a `Mininote-new.app` bundle name that macOS may retain in its app listings. The owner can
 open the installed app when ready; do not launch it just to verify an installation.
 
 The bundler signs nothing in an ordinary local build: the binary carries only the linker's ad-hoc
 signature. `codesign --sign -` seals the bundle and binds it to the app identifier
 (`com.mininote.desktop`). Quit with Cmd+Q, which writes every note in every window first
 (ARCHITECTURE §6.6), and the open windows come back at the next launch. When the quit is scripted,
-do it only while no mininote window is focused: losing focus has already saved everything
+do it only while no Mininote window is focused: losing focus has already saved everything
 (ARCHITECTURE §8.1). The version and the tags stay as they are.
 
 ## Apple signing and notarization

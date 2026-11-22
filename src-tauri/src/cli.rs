@@ -218,7 +218,7 @@ mod shell {
     /// would take the place in front and then quit, and the running app brings the
     /// window it opens forward itself. `pgrep -x` matches the app's process, never
     /// this script, whose own process is `sh`.
-    const BODY: &str = r#"# Written by mininote. Its setting for this command removes the file again.
+    const BODY: &str = r#"# Written by Mininote. Its setting for this command removes the file again.
 app=@APP@
 bin=$app/Contents/MacOS/@EXE@
 
@@ -443,18 +443,18 @@ exit "$status"
         #[test]
         fn the_script_names_its_app() {
             let bundle = Bundle {
-                app: "/Applications/It's mine/mininote.app".into(),
+                app: "/Applications/It's mine/Mininote.app".into(),
                 program: "mininote".into(),
             };
             let text = script(&bundle);
-            assert!(text.contains("\napp='/Applications/It'\\''s mine/mininote.app'\n"));
+            assert!(text.contains("\napp='/Applications/It'\\''s mine/Mininote.app'\n"));
             assert!(text.contains("\nbin=$app/Contents/MacOS/'mininote'\n"));
             assert!(text.contains("\"$bin\" --is-subcommand \"$1\""));
             assert!(
                 !text.contains("@APP@") && !text.contains("@EXE@") && !text.contains("@PROBE@")
             );
             assert!(is_ours(&text) && starts(&text, &bundle.app));
-            assert!(!starts(&text, "/Applications/mininote.app"));
+            assert!(!starts(&text, "/Applications/Mininote.app"));
             // Another version's script counts when it asks about subcommands; one
             // from before them is still ours, to replace or remove. Another program
             // never is.

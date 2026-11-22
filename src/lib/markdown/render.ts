@@ -245,7 +245,7 @@ export function renderMarkdown(text: string, ctx: RenderContext): string {
       return p.sanitize(renderUnsafe(text, ctx));
     }
   } catch (err) {
-    console.error("mininote: rendering failed", err);
+    console.error("Mininote: rendering failed", err);
   } finally {
     sanitizing = null;
   }

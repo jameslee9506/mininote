@@ -15,7 +15,7 @@
   import ConfirmDialog from "./lib/components/ConfirmDialog.svelte";
   import Toasts from "./lib/components/Toasts.svelte";
   import { discardNewNote, flushBeforeExit, openRequest, openVault, quitApp, registerAppCommands } from "./lib/appCommands";
-  import { uiLanguage } from "./lib/i18n";
+  import { t, uiLanguage } from "./lib/i18n";
   import { windowShow, windowStartup } from "./lib/ipc/commands";
   import { onFlushRequest, onWindowOpen } from "./lib/ipc/events";
   import { commands } from "./lib/state/commands.svelte";
@@ -57,7 +57,7 @@
   const windowTitle = $derived.by(() => {
     const p = editor.path;
     if (p !== null) return titleOf(nfc(basename(p)), fileKindOf(p));
-    return vault.info ? nfc(vault.info.name) : "mininote";
+    return vault.info ? nfc(vault.info.name) : t("appName");
   });
 
   $effect(() => {

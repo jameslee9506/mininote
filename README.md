@@ -1,6 +1,4 @@
-# mininote
-
-A lightweight, local Markdown notes app inspired by Obsidian. Open any folder as a vault, browse its `.md` files in a tree, and write with autosave.
+Mininote is a lightweight, local Markdown notes app inspired by Obsidian. Open any folder as a vault, browse its `.md` files in a tree, and write with autosave.
 
 - **A quiet, monochrome interface**: shades of gray, with icons wherever a text label is unnecessary. All interface text is in English.
 - **15px text by default**: rendered Markdown defines vertical spacing *between adjacent blocks* using sibling-pair rules.
@@ -70,10 +68,10 @@ mininote notes/todo.md     # Open the folder notes and show todo.md in it
 mininote ~/work ~/journal  # One window for each folder
 ```
 
-When the first word is a command, mininote works on the notes of a vault right in the terminal and opens no window. A script or an AI agent can use it this way, whether the app is running or not:
+When the first word is a command, Mininote works on the notes of a vault right in the terminal and opens no window. A script or an AI agent can use it this way, whether the app is running or not:
 
 ```bash
-mininote vaults                                # The vaults mininote knows: name and path
+mininote vaults                                # The vaults Mininote knows: name and path
 mininote ls -R --vault notes                   # Every file of the vault "notes"
 mininote read journal/today.md                 # Print a note
 mininote create ideas/cli.md --text "# CLI"    # A new note; fails if the path is taken

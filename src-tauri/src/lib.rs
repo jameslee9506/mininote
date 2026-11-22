@@ -1,4 +1,4 @@
-//! mininote's Tauri backend: plugins, commands, the macOS menu, the windows and the
+//! Mininote's Tauri backend: plugins, commands, the macOS menu, the windows and the
 //! exit-flush protocol (ARCHITECTURE §6.6).
 
 mod cli;
@@ -136,7 +136,7 @@ pub fn run() {
     let app = match builder.build(tauri::generate_context!()) {
         Ok(app) => app,
         Err(e) => {
-            eprintln!("mininote failed to start: {e}");
+            eprintln!("Mininote failed to start: {e}");
             std::process::exit(1);
         }
     };
@@ -289,10 +289,10 @@ fn macos_menu(app: &AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wry>> {
         version: Some(info.version.to_string()),
         ..Default::default()
     };
-    let quit = MenuItemBuilder::with_id(MENU_QUIT, "Quit mininote")
+    let quit = MenuItemBuilder::with_id(MENU_QUIT, format!("Quit {}", info.name))
         .accelerator("CmdOrCtrl+Q")
         .build(app)?;
-    let app_menu = SubmenuBuilder::new(app, "mininote")
+    let app_menu = SubmenuBuilder::new(app, &info.name)
         .about(Some(about))
         .separator()
         .hide()

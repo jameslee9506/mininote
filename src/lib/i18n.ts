@@ -2,7 +2,10 @@
  * English UI strings. The UI shows almost no text, so this stays a flat dictionary.
  */
 
+import { productName } from "../../src-tauri/tauri.conf.json";
+
 const en = {
+  appName: productName,
   untitled: "Untitled",
   newFolderName: "New folder",
   openFolder: "Open folder",
@@ -76,8 +79,8 @@ const en = {
   attachmentFolder: "Folder",
   confirmDeleteSetting: "Confirm before deleting",
   terminalCommand: "“mininote” terminal command",
-  terminalCommandInstall: "mininote wants to install the “mininote” terminal command.",
-  terminalCommandRemove: "mininote wants to remove the “mininote” terminal command.",
+  terminalCommandInstall: `${productName} wants to install the “mininote” terminal command.`,
+  terminalCommandRemove: `${productName} wants to remove the “mininote” terminal command.`,
   shortcuts: "Shortcuts",
   version: "Version",
 
@@ -130,7 +133,7 @@ const en = {
   errShortcutReserved: "{key} is reserved.",
   errShortcutTaken: "{key} is already used by “{name}”.",
   errUpdate: "Couldn’t update to {version}. {message}",
-  errRestart: "Couldn’t restart. Quit and reopen mininote to finish updating.",
+  errRestart: `Couldn’t restart. Quit and reopen ${productName} to finish updating.`,
   errCommandInstall: "Couldn’t install the “mininote” terminal command.",
   errCommandRemove: "Couldn’t remove the “mininote” terminal command.",
   errCommandTaken: "Another program is already installed as “mininote”.",

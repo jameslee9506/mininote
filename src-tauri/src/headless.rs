@@ -120,8 +120,8 @@ static SUBS: &[Sub] = &[
         name: "vaults",
         args: "",
         takes: (0, 0),
-        about: "List the vaults mininote knows",
-        more: "Lists the folders mininote has opened as vaults, the one opened last first:\n\
+        about: "List the vaults Mininote knows",
+        more: "Lists the folders Mininote has opened as vaults, the one opened last first:\n\
                the name and the path of each, with a tab between them.",
         options: &[],
         in_vault: false,
@@ -334,7 +334,7 @@ fn general_help() -> String {
         "usage: mininote [<path> ...]\n\
          \x20      mininote <command> [<option> ...] [<argument> ...]\n\
          \n\
-         Without a command, mininote opens each folder, and each file in its folder.\n\
+         Without a command, Mininote opens each folder, and each file in its folder.\n\
          A command works on the files of a vault from here, and opens no window:\n\
          \n",
     );
@@ -352,7 +352,7 @@ fn general_help() -> String {
         "\n\
          A command works in the vault that --vault names: by a name that\n\
          `mininote vaults` lists, or by the path of any folder. Without --vault, that is\n\
-         the vault the folder it runs in belongs to, else the vault mininote opened last.\n\
+         the vault the folder it runs in belongs to, else the vault Mininote opened last.\n\
          A path is relative to the vault's folder, and spelled as `mininote ls` prints it.\n\
          \n\
          A folder or a file named like a command opens as a path: mininote ./ls\n",
