@@ -105,6 +105,7 @@ pub fn run() {
             fs_ops::path_exists,
             fs_ops::path_reveal,
             fs_ops::binary_write,
+            fs_ops::binary_read,
             search::search_text,
             store::recovery_write,
             store::recovery_get,

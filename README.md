@@ -34,6 +34,7 @@ npm test               # Unit tests (Vitest)
 | Saving | Atomic saves 0.4 seconds after typing stops, or at least every 2 seconds while typing continues. External changes reload automatically; if there are unsaved edits, the disk version is kept as a conflict copy. Failed saves leave a recovery copy. |
 | Reading view | Toggle with `Mod+E`. Markdown is rendered with markdown-it and sanitized with DOMPurify. |
 | Code files | Source, configuration and plain-text files open in a read-only viewer with syntax colors for the common languages, line numbers and find. The code font is a setting. |
+| PDFs | PDFs open in a viewer that works like Chrome's: continuous pages, a toolbar with the page number, zoom, fit and rotate, a side panel with thumbnails and the document outline, text selection, links and find (`Mod+F`). A link to a PDF in a note opens it. |
 | Search | Quick switcher (`Mod+O`) with fuzzy matching, including Hangul initial consonants; full-text search in Rust (`Mod+Shift+F`); and a command palette (`Mod+P`). |
 | Updates | Signed releases on GitHub. The app checks once at launch; when a newer version exists, an update icon appears that downloads it, installs it and restarts. Settings show the running version. |
 | Command line | `mininote .` opens a folder from a terminal, and `mininote notes/todo.md` opens a file in its folder: in the window that shows that folder already, else in an empty or a new window. See [below](#command-line). |
@@ -57,7 +58,8 @@ npm test               # Unit tests (Vitest)
 | `Mod+L` | Toggle checkbox |
 | `Mod+1…6` / `Mod+0` | Set heading level / plain paragraph |
 | `Mod+Enter` | Open the link under the cursor |
-| `Mod+F` | Find and replace in the current note |
+| `Mod+F` | Find and replace in the current note; find in the current PDF |
+| `Mod+=` / `Mod+-` / `Mod+0` | Zoom a PDF in / out / back to the default |
 
 ## Command line
 

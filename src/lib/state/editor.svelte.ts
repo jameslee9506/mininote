@@ -740,8 +740,8 @@ class EditorStore {
     if (!vault.info) return "failed";
     const node = vault.node(path);
     const kind = this.#kindOf(path);
-    // Nothing is read for another kind of file, so only a listed one opens: never a folder.
-    if (node?.kind === "dir" || (kind === "other" && node === undefined)) return "failed";
+    // Nothing is read here for a PDF or another kind of file, so only a listed one opens: never a folder.
+    if (node?.kind === "dir" || ((kind === "other" || kind === "pdf") && node === undefined)) return "failed";
     const seq = ++this.#openSeq;
     if (path === this.path && kind === this.kind && (!isTextKind(kind) || this.#current?.path === path)) {
       if (opts.history !== false) this.#history.push({ path, virtual: this.virtual });

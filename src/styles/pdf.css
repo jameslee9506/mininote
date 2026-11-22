@@ -1,0 +1,445 @@
+/*
+ * PDF pages (DESIGN §7), drawn by PDF.js's viewer inside `.pdfViewer` (PdfView.svelte).
+ *
+ * The layer rules below are the part of pdfjs-dist's `web/pdf_viewer.css` (6.5, Apache-2.0)
+ * that the pages need: the page box, its canvas, the text layer and the annotation layer.
+ * That stylesheet is not imported whole: it also styles PDF.js's own dialogs, toolbars and
+ * `.sidebar`, with selectors that would reach this app's elements. It is written with CSS
+ * nesting; the rules here are the same ones written out. After an upgrade of pdfjs-dist,
+ * compare them with its `.pdfViewer`, `.textLayer` and `.annotationLayer` rules.
+ *
+ * A page is paper in either theme, so what is drawn on it takes the --c-pdf-* tokens,
+ * which have one value. Everything around the pages follows the theme.
+ */
+
+/* PDF.js sizes its boxes by their content: the page's own border must not count. */
+.pdfViewer,
+.pdfViewer *,
+.pdfViewer *::before,
+.pdfViewer *::after {
+  box-sizing: content-box;
+}
+
+/* ── Pages ──────────────────────────────────────────────────── */
+
+.pdfViewer {
+  --scale-factor: 1;
+  --page-bg-color: var(--c-pdf-page);
+  --page-margin: 1px auto -8px;
+  --page-border: 9px solid transparent;
+
+  padding-bottom: 0;
+}
+
+.pdfViewer.copyAll {
+  cursor: wait;
+}
+
+.pdfViewer.noUserSelect {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.pdfViewer .page {
+  --user-unit: 1;
+  --total-scale-factor: calc(var(--scale-factor) * var(--user-unit));
+  --scale-round-x: 1px;
+  --scale-round-y: 1px;
+
+  direction: ltr;
+  width: 816px;
+  height: 1056px;
+  margin: var(--page-margin);
+  position: relative;
+  overflow: visible;
+  border: var(--page-border);
+  background-clip: content-box;
+  background-color: var(--page-bg-color);
+}
+
+/* The sheet's edge: a hairline around the content box, in the page's transparent border. */
+.pdfViewer .page::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  box-shadow: 0 0 0 1px var(--c-border);
+  pointer-events: none;
+}
+
+.pdfViewer .canvasWrapper {
+  overflow: hidden;
+  width: 100%;
+  height: 100%;
+}
+
+.pdfViewer .canvasWrapper canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  margin: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  contain: content;
+}
+
+.pdfViewer .canvasWrapper canvas .structTree {
+  contain: strict;
+}
+
+.pdfViewer .canvasWrapper canvas.detailView {
+  image-rendering: pixelated;
+}
+
+/* The text and annotation layers of a turned page. */
+.pdfViewer [data-main-rotation="90"] {
+  transform: rotate(90deg) translateY(-100%);
+}
+
+.pdfViewer [data-main-rotation="180"] {
+  transform: rotate(180deg) translate(-100%, -100%);
+}
+
+.pdfViewer [data-main-rotation="270"] {
+  transform: rotate(270deg) translateX(-100%);
+}
+
+/* ── Text layer: invisible text over the canvas, for selection and find ── */
+
+.textLayer {
+  color-scheme: only light;
+
+  position: absolute;
+  text-align: initial;
+  inset: 0;
+  overflow: clip;
+  opacity: 1;
+  line-height: 1;
+  letter-spacing: normal;
+  word-spacing: normal;
+  -webkit-text-size-adjust: none;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  caret-color: CanvasText;
+  z-index: 0;
+
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+}
+
+.textLayer :is(span, br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.textLayer > :not(.markedContent),
+.textLayer .markedContent span:not(.markedContent) {
+  z-index: 1;
+
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+
+.textLayer .markedContent {
+  display: contents;
+}
+
+.textLayer span[role="img"] {
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+/* Find matches: every one marked, the current one darker (as the editor's, in the page's grays). */
+.textLayer .highlight {
+  margin: -1px;
+  padding: 1px;
+  background-color: var(--c-pdf-match);
+  border-radius: 2px;
+}
+
+.textLayer .highlight.appended {
+  position: initial;
+}
+
+.textLayer .highlight.begin {
+  border-radius: 2px 0 0 2px;
+}
+
+.textLayer .highlight.end {
+  border-radius: 0 2px 2px 0;
+}
+
+.textLayer .highlight.middle {
+  border-radius: 0;
+}
+
+.textLayer .highlight.selected {
+  background-color: var(--c-pdf-match-current);
+  /* A match scrolled to stays clear of the find bar. */
+  scroll-margin-top: 64px;
+}
+
+.textLayer ::selection {
+  background: var(--c-pdf-selection);
+  color: transparent;
+}
+
+.textLayer br::selection {
+  background: transparent;
+}
+
+/* Keeps a selection steady while the pointer is between two runs of text. */
+.textLayer .endOfContent {
+  display: block;
+  position: absolute;
+  inset: 100% 0 0;
+  z-index: 0;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.textLayer.selecting .endOfContent {
+  top: 0;
+}
+
+/* ── Annotation layer: links and notes ──────────────────────── */
+
+.annotationLayer {
+  color-scheme: only light;
+
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  transform-origin: 0 0;
+}
+
+.annotationLayer[data-main-rotation="90"] .norotate {
+  transform: rotate(270deg);
+}
+
+.annotationLayer[data-main-rotation="180"] .norotate {
+  transform: rotate(180deg);
+}
+
+.annotationLayer[data-main-rotation="270"] .norotate {
+  transform: rotate(90deg);
+}
+
+.annotationLayer[data-main-rotation="90"] .norotate.popupAnnotation {
+  transform: rotate(270deg) translateX(-100%);
+}
+
+.annotationLayer[data-main-rotation="180"] .norotate.popupAnnotation {
+  transform: rotate(180deg) translate(-100%, -100%);
+}
+
+.annotationLayer[data-main-rotation="270"] .norotate.popupAnnotation {
+  transform: rotate(90deg) translateY(-100%);
+}
+
+.annotationLayer.disabled section,
+.annotationLayer.disabled .popup {
+  pointer-events: none;
+}
+
+.annotationLayer .annotationContent {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.annotationLayer .annotationContent.freetext {
+  background: transparent;
+  border: none;
+  inset: 0;
+  overflow: visible;
+  white-space: nowrap;
+  font: 10px sans-serif;
+  line-height: 1.35;
+}
+
+.annotationLayer section {
+  position: absolute;
+  text-align: initial;
+  pointer-events: auto;
+  box-sizing: border-box;
+  transform-origin: 0 0;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.annotationLayer section:has(div.annotationContent) canvas.annotationContent {
+  display: none;
+}
+
+.annotationLayer section .overlaidText {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  display: inline-block;
+  overflow: hidden;
+}
+
+.annotationLayer .hasOwnCanvas:not(.sandboxModified) :is(input, textarea) {
+  display: none;
+}
+
+/* A selection being dragged goes through the links under it. */
+.textLayer.selecting ~ .annotationLayer section {
+  pointer-events: none;
+}
+
+.annotationLayer :is(.linkAnnotation, .buttonWidgetAnnotation.pushButton) > a {
+  position: absolute;
+  font-size: 1em;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.annotationLayer :is(.linkAnnotation, .buttonWidgetAnnotation.pushButton):not(.hasBorder) > a:hover,
+.annotationLayer .linkAnnotation.hasBorder:hover {
+  background-color: var(--c-pdf-link-hover);
+}
+
+.annotationLayer .hasBorder {
+  background-size: 100% 100%;
+}
+
+.annotationLayer .textAnnotation img {
+  position: absolute;
+  cursor: pointer;
+  width: 100%;
+  height: 100%;
+  top: 0;
+  left: 0;
+}
+
+.annotationLayer .fileAttachmentAnnotation .popupTriggerArea {
+  height: 100%;
+  width: 100%;
+}
+
+/* A note's text, shown while the pointer is on its mark. */
+.annotationLayer .popupAnnotation {
+  position: absolute;
+  font-size: calc(9px * var(--total-scale-factor));
+  pointer-events: none;
+  width: max-content;
+  max-width: 45%;
+  height: auto;
+}
+
+.annotationLayer .popup {
+  background-color: var(--c-pdf-note);
+  color: var(--c-pdf-note-text);
+  box-shadow: 0 calc(2px * var(--total-scale-factor)) calc(5px * var(--total-scale-factor)) var(--c-pdf-selection);
+  border-radius: calc(2px * var(--total-scale-factor));
+  outline: 1px solid var(--c-pdf-note-border);
+  padding: calc(6px * var(--total-scale-factor));
+  cursor: pointer;
+  font: message-box;
+  white-space: normal;
+  word-wrap: break-word;
+  pointer-events: auto;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.annotationLayer .popupAnnotation.focused .popup {
+  outline-width: 2px;
+}
+
+.annotationLayer .popup * {
+  font-size: calc(9px * var(--total-scale-factor));
+}
+
+.annotationLayer .popup > .header {
+  display: inline-block;
+}
+
+.annotationLayer .popup > .header > .title {
+  display: inline;
+  font-weight: bold;
+}
+
+.annotationLayer .popup > .header .popupDate {
+  display: inline-block;
+  margin-left: calc(5px * var(--total-scale-factor));
+  width: fit-content;
+}
+
+.annotationLayer .popupContent {
+  border-top: 1px solid var(--c-pdf-note-border);
+  margin-top: calc(2px * var(--total-scale-factor));
+  padding-top: calc(2px * var(--total-scale-factor));
+}
+
+.annotationLayer .richText > * {
+  white-space: pre-wrap;
+  font-size: calc(9px * var(--total-scale-factor));
+}
+
+.annotationLayer .popupTriggerArea {
+  cursor: pointer;
+}
+
+.annotationLayer section svg {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  top: 0;
+  left: 0;
+}
+
+.annotationLayer .annotationTextContent {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  color: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+  pointer-events: none;
+}
+
+.annotationLayer .annotationTextContent span {
+  width: 100%;
+  display: inline-block;
+}
+
+.annotationLayer svg.quadrilateralsContainer {
+  contain: strict;
+  width: 0;
+  height: 0;
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: -1;
+}
+
+/*
+ * PDF.js hides a layer or a note with the `hidden` attribute. base.css gives every img and
+ * svg a display, which would show the hidden ones again.
+ */
+.pdfViewer [hidden] {
+  display: none !important;
+}

@@ -181,6 +181,17 @@ export const binaryWrite = (path: VaultPath, data: Uint8Array, at?: number) =>
   callRaw<void>("binary_write", data, { "x-path": encodeURIComponent(path) }, at);
 
 /**
+ * The bytes of a file as they are: the PDF viewer reads its document this way (TREE-20).
+ * A link is read as the file it leads to. Rejects with "too_large" over 512 MB.
+ */
+export async function binaryRead(path: VaultPath, at?: number): Promise<Uint8Array> {
+  // A raw body arrives as an ArrayBuffer; where the webview has no IPC protocol of its own
+  // (the postMessage fallback), the same bytes arrive as a JSON array of numbers.
+  const body = await scoped<ArrayBuffer | number[]>("binary_read", { path }, at);
+  return body instanceof ArrayBuffer ? new Uint8Array(body) : Uint8Array.from(body);
+}
+
+/**
  * Full-text search over notes. Whitespace-separated terms (or "quoted phrases")
  * must all occur in a file (content or name); case-insensitive unless
  * `caseSensitive`; NFC on both sides. A newer call cancels older ones.

@@ -12,7 +12,7 @@ Where they disagree, REQUIREMENTS.md wins, unless §0.2 below says otherwise.
 
 The current build covers every P0 requirement, plus these P1 items:
 - VAULT-05, VAULT-08
-- TREE-10, TREE-11, TREE-13, TREE-19
+- TREE-10, TREE-11, TREE-13, TREE-19, TREE-20
 - EDIT-05 (all shortcuts), EDIT-06, EDIT-07 (URL paste), EDIT-08, EDIT-09 (replace), EDIT-12, EDIT-14, EDIT-16, EDIT-18
 - LIVE-02 (highlight), LIVE-11, LIVE-12, LIVE-13
 - SAVE-09, SAVE-11
@@ -37,7 +37,7 @@ The current build covers every P0 requirement, plus these P1 items:
 | Dirty buffer plus external change | Conflict copy `<stem> (conflict YYYYMMDD-HHmmss).<ext>` next to the note. The suffix is not localized. |
 | Delete | Files go to the OS trash without confirmation. `settings.confirmDelete` (default off) adds one. Folders and permanent deletes always confirm. |
 | Attachments | Default `attachments/` at the vault root (`attachmentLocation: "folder"`). |
-| Tree contents | Every visible file is listed, so a folder reads as it is on disk; a link (symlink) to a file is listed as that file (TREE-18, §6.8). Images and unsupported files are muted. Code and plain-text files open in a read-only code view (TREE-17, §10.4); any other file that is not a note or an image opens to a notice that its type is not supported (TREE-16). |
+| Tree contents | Every visible file is listed, so a folder reads as it is on disk; a link (symlink) to a file is listed as that file (TREE-18, §6.8). Images and unsupported files are muted. Code and plain-text files open in a read-only code view (TREE-17, §10.4), and PDFs in a viewer that works like Chrome's (TREE-20, §10.5); any other file that is not a note or an image opens to a notice that its type is not supported (TREE-16). |
 | Reading view | P0 (Mod+E). |
 | Editor spacing | DESIGN.md §3.2: the reading view's pair gaps and gutters; a blank line is a body line, and the one right below a block stands where a paragraph typed on it would. |
 | Markdown dialect | One block dialect in both views (§10.1, §11): no setext headings and no lazy continuation lines. |
@@ -54,6 +54,7 @@ The current build covers every P0 requirement, plus these P1 items:
 | UI | **Svelte 5** (runes) + TypeScript + Vite | Compiles to direct DOM updates with a tiny runtime, so typing and tree updates stay cheap. |
 | Editor | **CodeMirror 6** | Incremental Lezer parser and viewport-only rendering handle multi-MB notes. It is the same engine as Obsidian's live preview. |
 | Code view | The same CodeMirror view + **`@codemirror/legacy-modes`** | Code files are shown read-only with syntax colors (§10.4). The stream modes of CodeMirror 5 cover some fifty languages in one small package without dependencies of its own, each loaded when first needed. |
+| PDF view | **PDF.js** (`pdfjs-dist`) | PDFs open in a viewer (§10.5). The webviews differ too much to show one themselves: WKWebView has Preview's controls, WebView2 has Edge's, and WebKitGTK has none. PDF.js draws the pages the same way in all three and brings the text layer, the links and the find. It is fetched when the first PDF is opened. |
 | Reading view | **markdown-it** + **DOMPurify** | Fast and extensible. Sanitizing is mandatory, because injected script could reach Tauri IPC. |
 | Settings | Own Rust commands (`settings_load` / `settings_update`) | Atomic JSON in the app-config dir, written as patches that every window hears (§7). `tauri-plugin-store` writes non-atomically and silently drops unparsable files. |
 | Plugins | `single-instance`, `process`, `updater`, `dialog`, `opener`, `window-state` | No `fs` plugin. Every file operation is a vault-scoped custom command. `updater` and `process` only replace the app bundle and restart (§6.7). |
@@ -89,7 +90,7 @@ The current build covers every P0 requirement, plus these P1 items:
 src/
   main.ts                    mount(App) + global CSS
   App.svelte                 shell: layout, global shortcuts, startup, close/exit flush
-  styles/                    tokens.css · base.css · markdown.css · editor.css · code.css · index.css
+  styles/                    tokens.css · base.css · markdown.css · editor.css · code.css · pdf.css · index.css
   lib/
     types.ts                 shared data contracts (mirrors Rust DTOs)
     i18n.ts                  t(key) — English UI strings
@@ -97,16 +98,18 @@ src/
     ipc/commands.ts          typed wrappers for every Rust command (epoch injected)
     ipc/events.ts            vault:changed, app:flush-request, settings:changed, window:open
     utils/                   path · names · codeFiles · fonts · fuzzy · platform · keys · timing
-    state/                   settings · vault · editor · ui · commands · updater (*.svelte.ts), tree.ts, settingsSync.ts
+    state/                   settings · vault · editor · pdf · ui · commands · updater (*.svelte.ts), tree.ts, settingsSync.ts
     editor/                  setup · theme · syntax · commands · arrows · complete · paste · search panel
                              · ime.ts · host.ts (bridge interface) · shared.ts · livePreview/*
                              · code/* (the read-only code view: languages, state, highlight, modes/)
     markdown/                render.ts (+ plugins/) · resolve.ts
+    pdf/                     engine.ts (PDF.js, loaded on demand) · zoom.ts (zoom steps, typed page and zoom)
     components/              Svelte components (§9)
 src-tauri/src/
   lib.rs  error.rs  vault.rs  fs_ops.rs  watcher.rs  search.rs  store.rs  windows.rs  cli.rs
 docs/
   ARCHITECTURE.md  DESIGN.md  releasing.md  research/ (OSS analyses, REQUIREMENTS.md, TECHNIQUES.md)
+vite.config.ts               the build; its `pdfAssets` plugin serves and publishes the files PDF.js fetches (§10.5)
 scripts/prepare-release.mjs  validates the versions and writes the updater overlay for release builds (§6.7)
 .github/workflows/release.yml  a version tag → draft GitHub release with installers, updater archives and latest.json
 ```
@@ -151,6 +154,7 @@ Every command marked "scoped" also takes `epoch: u64`, either as an argument or 
 | `path_exists` (scoped) | `path` | `bool` | |
 | `path_reveal` (scoped) | `path` | – | Opener plugin `reveal_item_in_dir`, called from Rust. |
 | `binary_write` (scoped, **raw body**) | body = bytes; headers `x-path`, `x-epoch` | – | New file only (`exists`), creating parents. Used for pasted and dropped images. |
+| `binary_read` (scoped) | `path` | raw bytes | The file's bytes as they are, sent as a raw body (an `ArrayBuffer` in JS): the PDF viewer reads its document this way (TREE-20, §10.5). A link is read as the file it leads to (§6.8). Errors: `not_found`, `invalid_path` (a folder), `too_large` (over 512 MB). |
 | `search_text` (scoped) | `query, caseSensitive, limit` | `SearchResponse` | §6.5. |
 | `recovery_write` (scoped) | `path, content, baseline` | – | Writes `{path, content, baseline, savedAt}` as JSON at `app_data/recovery/<fnv(root)>/<fnv(path)>.json`. Atomic. Newest wins. |
 | `recovery_get` (scoped) | `path` | `RecoveryCopy \| null` | |
@@ -231,7 +235,7 @@ Every command marked "scoped" also takes `epoch: u64`, either as an argument or 
 - **Breadth-first, one level at a time.** A level's folders are read with `std::fs::read_dir` on up to 8 threads (the machine's parallelism, at least 2), each taking the next unread folder. A link is never followed into a folder. A level keeps the order of the folders it came from, and each folder the order its entries were read in, so thread timing never changes a complete listing, and every folder comes before its contents.
 - Skips names starting with `.`, and anything that is neither a folder nor a regular file. A link (symlink) counts as the regular file it leads to, and is skipped when it leads to a folder or nowhere (§6.8).
 - On Windows, also skips entries with the Hidden or System attribute.
-- Lists every folder and regular file. Notes are `md` and `markdown`, images `png jpg jpeg gif webp svg bmp avif`; the frontend classifies the rest as code files (TREE-17) or other files (`utils/names.ts › fileKindOf`).
+- Lists every folder and regular file. Notes are `md` and `markdown`, images `png jpg jpeg gif webp svg bmp avif`; the frontend classifies the rest as PDFs (TREE-20), code files (TREE-17) or other files (`utils/names.ts › fileKindOf`).
 - **Metadata only where it is used.** The folder read already says what an entry is (and on Windows carries its attributes), so only notes and images are statted, for their mtime: the switcher's order and image reloads. A link is statted too, to see what it leads to.
 - An unreadable sub-folder is listed without children, not fatal.
 - Capped at 100 000 entries (`truncated`). The cap cuts the deepest level being read, so a huge root such as a home folder still shows its upper levels whole.
@@ -362,8 +366,9 @@ The stores are singleton classes with `$state` fields:
 | Store | Responsibility |
 |---|---|
 | `settings` | Loads `{ settings, sessions }` through `settings_load` and writes what changed as patches through `settings_update`, debounced and only after loading finishes; other windows' changes come in as described below. Settings are sanitized on load and update, so unknown keys are dropped (SET-01). `shortcuts` holds only the user's changes, command id → keys (§9.1). `VaultSession` holds `expanded`, `lastFile`, `recent`, and `last`: the selection, scroll position and view mode for `lastFile` (VAULT-03), recorded on window blur or hide and before close or quit, and restored when the vault reopens. Applies the CSS variables (the content font size, the code font as `--font-mono`, the widths), `data-theme`, `data-icons`, `data-sidebar` and the window theme. `data-sidebar` is there while the sidebar is shown: `base.css` takes the sidebar's width from `--pane-width` then, and the content padding follows that (PLAT-12). `data-icons` is the icon set (SET-08): `tokens.css` maps it to the tree's folder color and fill, so no component reads that setting. |
-| `vault` | This window's `VaultInfo` (a folder open in another window comes forward there, VAULT-07), the raw `listing` and the derived tree, node map, notes list, `linkables` (notes and images, for `[[` completion) and the link index over them (links never resolve to other files, TREE-16), plus tree UI state: `selected`, `renaming`, and `creating`, the new-folder draft (§8.3). File operations follow §8.3. Owns the `vault:changed` subscription (§8.2). Link resolution wraps `markdown/resolve.ts`. `assetUrl` gives an image that is a link on disk the URL of its file (§6.8). |
+| `vault` | This window's `VaultInfo` (a folder open in another window comes forward there, VAULT-07), the raw `listing` and the derived tree, node map, notes list, `linkables` (notes and images, for `[[` completion) and the link index over notes, images and PDFs (links never resolve to other files, TREE-16), plus tree UI state: `selected`, `renaming`, and `creating`, the new-folder draft (§8.3). File operations follow §8.3. Owns the `vault:changed` subscription (§8.2). Link resolution wraps `markdown/resolve.ts`. `assetUrl` gives an image that is a link on disk the URL of its file (§6.8). |
 | `editor` | The open file, view mode, history, autosave engine, external-change reconciliation, the EditorState cache (20 notes and code files; dirty ones are pinned), virtual notes and recovery. A code file has a controller of kind `"code"`: cached and reloaded like a note, never dirty, never written (§10.4). Each controller keeps the vault epoch it was created in (§5). Publishes `lineRequest` `{ path, line, seq }` for every line reveal, which the reading view follows (§11). `created` is when the open note or code file was created, for the inline title: what its reads report, or the time of the save that created its file. `blur()` takes focus out of the editor before slow commands (§8.3); `busyUnder` and `unsavedAt` let the vault refuse operations that would race a write or displace unsaved text. Owns the single `EditorView` after `Editor.svelte` attaches it. Implements `EditorHost`. |
+| `pdf` | The PDF view (§10.5): its phase (`loading` → `password` → `ready`, or `failed`), page, page count, zoom, fit, turn, outline, side panel and find state, and every action the toolbar and the keys ask for. Holds PDF.js's document, viewer and event bus in a session object, never in `$state`, from `open(path, container)` by `PdfView.svelte` until `close`. Remembers where each PDF was left, by vault epoch and path, while the app runs. |
 | `ui` | Modal, context menu, confirm dialog, toasts, the search query (while it is set, the sidebar shows results instead of the tree), and focus requests. |
 | `commands` | Registry used by the global shortcut handler and the command palette. `keysOf(cmd)` gives the keys in effect (the user's, else the defaults); `paused` is set while the shortcut settings record a key (§9.1). |
 | `updater` | The update phase (`idle` → `checking` → `available` → `downloading` → `installing` → `restart` / `restarting`), the offered and the running version, and the download percentage. `start(beforeExit)` at mount, `install()` from the button (§6.7). The Tauri `Update` resource stays out of reactive state. |
@@ -474,19 +479,21 @@ App.svelte
    │   └─ FileTree.svelte    flattened visible rows, virtualized, keyboard nav, copy and paste, DnD, new-folder draft row
    │       └─ TreeRow.svelte guide lines + kind icon + title; inline rename input, or the draft row's name input
    ├─ Resizer.svelte
-   └─ Main.svelte            top strip (drag region; sidebar toggle, always shown; nav, copy, view and lock icons; UpdateButton while a release waits) + .doc-scroll
+   └─ Main.svelte            top strip (drag region; sidebar toggle, always shown; nav, copy, view and lock icons, or a PDF's controls; UpdateButton while a release waits) + .doc-scroll, or a PDF's view in its place
        ├─ InlineTitle.svelte editable file name → rename on commit; under it the creation date (macOS, Windows)
        ├─ Editor.svelte      the single EditorView (always mounted while a vault is open): notes, and code files read-only (§10.4)
        ├─ Reader.svelte      rendered HTML (reading view)
        ├─ ImageView.svelte   image files (TREE-15)
-       └─ UnsupportedView.svelte any other file: a notice naming its unsupported extension (TREE-16)
+       ├─ UnsupportedView.svelte any other file: a notice naming its unsupported extension (TREE-16)
+       ├─ PdfToolbar.svelte  in the strip, for a PDF: panel button, name, page field, zoom, fit, turn (TREE-20)
+       └─ PdfView.svelte     a PDF's pages, in place of .doc-scroll (§10.5): side panel (PdfThumbnails · PdfOutline), find bar, password field
 ├─ QuickSwitcher · CommandPalette · SettingsModal (on Modal.svelte; its shortcuts page is ShortcutSettings.svelte; on macOS a switch installs the terminal command, §6.9; a last row shows the app version)
 ├─ UpdateButton.svelte       the update control of §6.7: download tray → percentage → restart arrow
 ├─ ContextMenu · ConfirmDialog · Toasts   the menu is one panel, and a second one beside it for an item's submenu (TREE-09)
 └─ Icon.svelte               inline SVG icon set; a folder is solid where its parent sets --icon-fill (tree rows, by icon set)
 ```
 
-**Document scrolling.** `.doc-scroll` is the scroll container. Inside it, `.doc-column` (max-width `--content-max`, centered, horizontal padding `--content-pad-x`, which shrinks with the pane, bottom padding `--content-pad-bottom`) holds `InlineTitle` and then `Editor` or `Reader`. The title scrolls with the text. CodeMirror is auto-height and relies on that ancestor scroll. The editor store saves and restores `.doc-scroll.scrollTop` per note.
+**Document scrolling.** `.doc-scroll` is the scroll container. Inside it, `.doc-column` (max-width `--content-max`, centered, horizontal padding `--content-pad-x`, which shrinks with the pane, bottom padding `--content-pad-bottom`) holds `InlineTitle` and then `Editor` or `Reader`. The title scrolls with the text. CodeMirror is auto-height and relies on that ancestor scroll. The editor store saves and restores `.doc-scroll.scrollTop` per note. A PDF scrolls in a container of its own (§10.5); `.doc-scroll` is hidden meanwhile and stays mounted, with the single `EditorView` in it.
 
 ### 9.1 Keyboard shortcuts (`Mod` = ⌘ on macOS, Ctrl elsewhere)
 
@@ -519,8 +526,11 @@ These are the defaults. Settings → Shortcuts rebinds every global command and 
 | Mod-Enter | Open the link under the cursor | editor |
 | Tab / Shift-Tab | Indent / outdent (list item with its subtree) | editor |
 | Enter / Backspace | Continue / remove list & quote markup | editor |
-| Mod-F | Find; pressed again in the panel, it focuses the input and selects its text. Mod-H (Mod-Alt-F on macOS) opens replace, and the panel's chevron toggles the replace row. Outside the editor (reading view, tree, blank page) it switches to editing and opens the panel (EDIT-09). In the code view it finds only | editor (+ global fallback) |
+| Mod-F | Find; pressed again in the panel, it focuses the input and selects its text. Mod-H (Mod-Alt-F on macOS) opens replace, and the panel's chevron toggles the replace row. Outside the editor (reading view, tree, blank page) it switches to editing and opens the panel (EDIT-09). In the code view it finds only. Over a PDF it opens the PDF's own find bar (§10.5) | editor (+ global fallback) |
 | Mod-A; arrows, Page Up/Down, Home/End | Select all; scroll (the code view has no caret to move) | code view |
+| Mod-= / Mod-- / Mod-0 | Zoom in / zoom out / the default zoom | anywhere while a PDF is shown |
+| ← / →; arrows, Page Up/Down, Home/End, Space | Previous / next page, while the pages do not scroll sideways; scroll | PDF pages |
+| Enter / Shift-Enter; Mod-G / Mod-Shift-G; F3 / Shift-F3; Esc | Next / previous match; close the find bar | PDF find bar (the stepping keys also from the pages) |
 | ↑ on the first visual line | Move to the inline title, caret at its end (EDIT-15) | editor |
 | ↑ / ↓ (also with Shift) next to a rendered table or image | Put the caret on the widget's nearest source line, revealing it; the default motion would skip the widget | editor |
 | Alt-click | Add a cursor (Mod-click is reserved for links) | editor |
@@ -551,8 +561,8 @@ These are the defaults. Settings → Shortcuts rebinds every global command and 
 - A document-level `click` listener prevents default on every `<a>`; the webview never navigates. Components that handle their own links do so first:
   - `http(s):` and `mailto:` go to `openUrl` from plugin-opener;
   - internal targets go to `editor.openLink`.
-- **Wikilinks.** A resolved target opens. An unresolved one opens a **virtual** note (§8.3), unless it names an image or another known kind of file (`[[Q3.pdf]]`; `targets.ts › mayBecomeNote`). An unknown "extension" stays a note title (`Meeting 2024.01`).
-- **Markdown links.** A relative `.md` link opens the note. A missing note target behaves like an unresolved wikilink (LINK-01, LINK-05), except that an existing file that is not a note or an image (relative to the note, then to the vault root) is never shadowed by a new note: then nothing happens. A `#heading` anchor scrolls to the heading.
+- **Wikilinks.** A resolved target opens: a note, an image, or a PDF in its viewer (`[[Q3.pdf]]`, TREE-20). An unresolved one opens a **virtual** note (§8.3), unless it names an image or another known kind of file (`[[Q3.zip]]`; `targets.ts › mayBecomeNote`). An unknown "extension" stays a note title (`Meeting 2024.01`).
+- **Markdown links.** A relative `.md` link opens the note, and one to an image or a PDF opens that file. A missing note target behaves like an unresolved wikilink (LINK-01, LINK-05), except that an existing file that is not a note or an image (relative to the note, then to the vault root) is never shadowed by a new note: then nothing happens. A `#heading` anchor scrolls to the heading.
 - **Positions in another note** (search hits, `[[Note#Heading]]`, `[x](Note.md#h)`) land in either view (NAV-05): the editor moves its caret (a search hit's text is selected, SRCH-01), and the reading view scrolls to the same source line through `editor.lineRequest` (§11).
 
 ## 10. Editor (`src/lib/editor`)
@@ -674,6 +684,27 @@ A code file is shown by the same `EditorView`, in a state of its own kind. The e
 - **A move that changes what the file is** (`editor.#reopenShown`): when the shown file's new name opens differently (a text file renamed to `.md`, a script to another language, any file into or out of an unsupported type), it is shown again as what it is now, at the same selection and scroll position. The check runs after every move, because another file's controller may also have taken the shown file's place. A note shown this way gets its recovery copy checked like any opened note (§8.4). This is not a navigation: it takes no turn in the open sequence, so it never cancels an open the user started, and it gives up when one starts or the file moves again. History and the tree stay as they are. Unsaved note text never leaves its editor this way.
 - **Layout** (`Main.svelte`, `code.css`): the document column takes the wider of the text measure and the code measure (`--code-max`). The line numbers hang in the page margin, so the code starts where the inline title does; a gutter wider than the margin moves the code right instead.
 
+### 10.5 PDF view (`lib/pdf`, `state/pdf.svelte.ts`, TREE-20)
+
+A PDF is not text, so it has no controller in the editor store: `editor.kind` is `"pdf"`, as it is `"image"` for an image, and `Main.svelte` puts `PdfView` where `.doc-scroll` is. The view is Chrome's PDF viewer in layout and keys (DESIGN §7); PDF.js draws it.
+
+- **Engine** (`pdf/engine.ts › loadPdfEngine`). `pdfjs-dist` is imported when the first PDF is opened, as two chunks, and kept: the library (`legacy/build/pdf.mjs`), then its viewer components (`legacy/web/pdf_viewer.mjs`), which read the library from `globalThis.pdfjsLib` while they are evaluated. The `legacy` builds carry the polyfills that WKWebView and WebKitGTK need. The worker (`pdf.worker.min.mjs`) is published as a file of its own (`?url`), and PDF.js starts it as a module worker, one per document.
+- **Files fetched at run time** (`vite.config.ts › pdfAssets`, `pdfAssetUrl`). The character maps and the standard fonts (PDFs that embed none, CJK ones above all), the WebAssembly image decoders with their JavaScript fallbacks, the color profiles and the annotation icons are served under `/pdfjs/` in development and copied to `dist/pdfjs/` by a build, with their licenses. The CSP allows `'wasm-unsafe-eval'` in `script-src` for the decoders; nothing else of it changed.
+- **Reading the file.** `binary_read` (§5) returns the bytes in one piece, read with the epoch the open started in, and PDF.js takes them over. The asset protocol is not used: it refuses a link (§6.8) and would need `connect-src` opened.
+- **Viewer** (`pdf.#show`). PDF.js's `PDFViewer` is built over the view's scroll container with an `EventBus`, a `PDFLinkService` and a `PDFFindController`. It draws only the pages in and near view, each as a canvas with a text layer (selection, find) and an annotation layer (links, notes).
+  - Annotations are shown, never edited: `AnnotationMode.ENABLE` draws form fields as the file has them, the annotation editor is disabled, and no scripting manager is given, so a PDF's JavaScript never runs.
+  - The container must be absolutely positioned, which PDF.js checks, and its first child is the `.pdfViewer` element the pages go into.
+  - The store mirrors the viewer's events into its fields: `pagechanging`, `scalechanging`, `rotationchanging`, `updatefindmatchescount` and `updatefindcontrolstate`. `updateviewarea` gives the place to remember.
+- **Zoom** (`pdf/zoom.ts`). The buttons step through Chrome's levels (`ZOOM_STEPS`), and a typed percentage is clamped to them. `auto`, `page-fit` and `page-width` are PDF.js's own fits; a `ResizeObserver` on the container applies the current one again when the pane changes its size. Every other zoom goes through `PDFViewer.updateScale` with an origin that stays in place: the middle of the pane for the buttons, the pointer for Ctrl+wheel and for a pinch. A pinch arrives as Ctrl+wheel with small deltas in Chromium and as `gesturechange` in WebKit; what is too small to show (the zoom moves in whole percents) is carried over to the next event.
+- **Keys.** `PdfView` answers the zoom keys on the window, and ← and → on the pages. Mod-F and the find-again keys go through `App.svelte › onKeydownLate` to `pdf.openFind`, `findNext` and `findPrevious`; inside the find field the field handles them. Every handler returns on `isComposing(e)`.
+- **Find.** The bar dispatches PDF.js's `find` event (`type: ""` for a changed query, which PDF.js debounces, `"again"` for a step) and `findbarclose`; `PDFFindController` extracts the text page by page and marks the matches in the text layers.
+- **Links.** An internal link is PDF.js's own `onclick`, which cancels the click. An external one is an `<a href>`: the document's link handler (§9.2) opens `http(s):`, `mailto:` and `tel:` and lets nothing else navigate.
+- **Side panel** (`PdfThumbnails`, `PdfOutline`). A thumbnail is the page rendered once more into a small canvas (`pdf.drawThumbnail`): only those in or near view, one at a time, and at most 120 drawings are kept. The outline is `getOutline()` as a tree; an entry goes through `PDFLinkService.goToDestination`.
+- **Places.** `updateviewarea` reports the page and the top-left point of the view in PDF points. The store keeps the last one per vault epoch and path (100 at most, not persisted) and applies it at `pagesinit` of the next open: turn, zoom, then `scrollPageIntoView` with an `XYZ` destination.
+- **Closing** (`pdf.#dispose`). `setDocument(null)` first: PDF.js keeps one set of selection listeners for all text layers, and only a cancelled text layer lets go of them. Then the session's `AbortController` ends every listener and observer, and the loading task is destroyed, which ends the worker. `{#key}` gives each PDF a `PdfView` of its own, and `close(container)` lets a view close only its own document.
+- **Styles** (`styles/pdf.css`). The page, canvas, text-layer and annotation-layer rules are the part of `pdfjs-dist/web/pdf_viewer.css` those layers need, written without nesting. That stylesheet is not imported whole: it also styles PDF.js's own dialogs and its `.sidebar`, with selectors that reach this app's elements. `.pdfViewer *` is `content-box` again, because PDF.js sizes a page by its content and the app's reset would count the page's border in.
+- **Not followed.** The watcher drops content changes of files that are not notes, images or code (§6.4), so an open PDF keeps what it read; opening it again reads the file anew.
+
 ## 11. Reading view (`src/lib/markdown`, READ-01…07)
 
 - `render.ts › renderMarkdown(text, ctx)` returns sanitized HTML. It uses one markdown-it instance configured once, with `{ html: true, linkify: true, breaks: true, typographer: false }` and per-render context passed through `env`.
@@ -712,12 +743,13 @@ A code file is shown by the same `EditorView`, in a state of its own kind. The e
 - **Search:** runs in Rust, debounced 200 ms in the UI, and stale responses are dropped.
 - **Reading view:** renders only while visible.
 - **Code view:** a language's mode is fetched on first use; colors cover the viewport and a little past it, like the note parser (§10.1). Line decorations are built for visible lines only.
+- **PDF view:** PDF.js is fetched when the first PDF opens. Pages and thumbnails are drawn only in and near view; a zoom by wheel or pinch stretches the drawn pages and redraws them after 400 ms without another.
 - **Layout:** no layout reads inside effects that write.
 
 ## 13. Testing policy
 
 The owner wants minimal verification:
 - `npm run check` and `cargo check` must be clean.
-- `vitest` runs unit tests for pure logic only: utils, resolve, tree, syntax, render plugins, the code view's tables and modes, and small state helpers.
-- Rust unit tests cover only the path guard, the listing rules, links (listed, read, written through, moved), search helpers and the command line's targets.
+- `vitest` runs unit tests for pure logic only: utils, resolve, tree, syntax, render plugins, the code view's tables and modes, the PDF view's zoom steps, and small state helpers.
+- Rust unit tests cover only the path guard, the listing rules, links (listed, read, written through, moved), the binary read's limits, search helpers and the command line's targets.
 - There are no integration or E2E tests, and the app is not launched to verify.

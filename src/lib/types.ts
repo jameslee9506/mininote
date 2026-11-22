@@ -47,11 +47,11 @@ export interface ListResult {
 }
 
 /**
- * What a file opens as: a note in the editor, an image in its viewer, a code or
- * plain-text file in the read-only code view (TREE-17). Every other file is "other"
- * and only says that its type is not supported (TREE-16).
+ * What a file opens as: a note in the editor, an image in its viewer, a PDF in its
+ * viewer (TREE-20), a code or plain-text file in the read-only code view (TREE-17).
+ * Every other file is "other" and only says that its type is not supported (TREE-16).
  */
-export type FileKind = "note" | "image" | "code" | "other";
+export type FileKind = "note" | "image" | "pdf" | "code" | "other";
 
 export interface TreeNode {
   path: VaultPath;

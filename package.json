@@ -33,7 +33,8 @@
     "@tauri-apps/plugin-process": "^2.4.0",
     "@tauri-apps/plugin-updater": "^2.14.1",
     "dompurify": "^3.4.17",
-    "markdown-it": "^15.0.3"
+    "markdown-it": "^15.0.3",
+    "pdfjs-dist": "^6.5.438"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.1",

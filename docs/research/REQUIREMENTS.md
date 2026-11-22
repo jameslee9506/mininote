@@ -145,6 +145,7 @@ Anything not listed is out of scope (§13).
   - Folders.
   - Notes (`.md`, `.markdown`, in any letter case), shown without the extension.
   - Images (`png jpg jpeg gif webp svg bmp avif`), in muted text with their extension.
+  - PDFs (`pdf`), with their extension (TREE-20).
   - Code and plain-text files, with their extension (TREE-17).
   - Every other file, in muted text with its extension (TREE-16). Names are NFC-normalized for display only.
 - **Hidden.**
@@ -337,13 +338,13 @@ Sources: OB §3, ZT §3.3–3.4, MT §2.
 
 #### TREE-16 · Open a file of another kind · P0
 - **Behavior.**
-  - Clicking the row of a file that is not a note, an image or a code file (TREE-17) shows, in the main area, a notice that its type is not supported, naming the extension (“.pdf” files aren’t supported). Nothing is read from the file.
+  - Clicking the row of a file that is not a note, an image, a PDF (TREE-20) or a code file (TREE-17) shows, in the main area, a notice that its type is not supported, naming the extension (“.zip” files aren’t supported). Nothing is read from the file.
   - The inline title shows the full file name and renames it as for images (TREE-15). Mod+E, find and the editor shortcuts do nothing. Back, forward and the session's last file include it.
 - **Edge cases.**
   - A name without an extension, unless TREE-17 knows it (`Makefile`, `LICENSE`), gets a notice without one.
-  - Links never resolve to such a file: the link index holds notes and images only, so link resolution and its cost stay as they were. Dragged from the tree into a note, such a file inserts no link.
+  - Links never resolve to such a file: the link index holds notes, images and PDFs only, so link resolution and its cost stay as they were. Dragged from the tree into a note, such a file inserts no link.
   - Only a listed file opens this way, so a folder or a path that vanished never shows the notice.
-- **Decision.** Listing everything makes the tree true to the folder (TREE-01); opening stays minimal. Code and plain text have a viewer (TREE-17); one for further types would be its own requirement.
+- **Decision.** Listing everything makes the tree true to the folder (TREE-01); opening stays minimal. Code and plain text have a viewer (TREE-17), and so have PDFs (TREE-20); one for further types would be its own requirement.
 - **Sources.** ARCHITECTURE.md §9 (`UnsupportedView.svelte`).
 
 #### TREE-17 · View a code file · P0
@@ -398,6 +399,30 @@ Sources: OB §3, ZT §3.3–3.4, MT §2.
   - If the copy fails, an error toast appears, and no partial file stays.
 - **Decision.** Copy and paste, where a Duplicate item was planned (TREE-14). The copy key was there (TREE-11), and one pair of keys both duplicates a file where it is and copies it into another folder. A folder is not copied: one paste could write thousands of files. *Changed:* the path the copy key put on the clipboard was pasted into the open note whenever a click on a row had opened it.
 - **Sources.** OB §3 (copy and paste with Mod+C and Mod+V, Duplicate), ZT §3.3 (Duplicate).
+
+#### TREE-20 · View a PDF · P1
+- **Behavior.**
+  - A PDF opens in the main area as a viewer that works like Chrome's: the pages one under the other on a gray ground, scrolled as one document, with the text selectable and the links live. Nothing in the app ever writes the file.
+  - The top strip carries the controls, laid out as Chrome's toolbar: a button for the side panel and the file's name at the left; in the middle the page number before the page count, the zoom with a button on either side, the fit button and the turn button.
+    - A page number typed into its field shows that page on Enter. ← and → show the previous and the next page while the pages do not scroll sideways; the arrow, Page, Home and End keys and Space scroll.
+    - The zoom buttons step through Chrome's levels, from 25 % to 500 %. A percentage typed into the field is taken as it is, within those limits. Mod+= and Mod+- zoom from anywhere in the window, and Mod+0 goes back to the default. Ctrl+wheel and a trackpad pinch zoom around the pointer.
+    - The fit button fits the whole page, then the page's width, in turn. A fit follows the pane as the window, the sidebar or the side panel changes its size. A document opens at the default zoom: the page's width fitted, up to 125 %.
+    - The turn button turns every page a quarter counter-clockwise, in the view only.
+  - The side panel shows a thumbnail of every page with its number, the current one marked; a click shows that page. A document with an outline (bookmarks) gets a second tab with it: a tree whose entries lead to their places.
+  - Mod+F opens a find bar at the top right. Every match is marked and the current one stands out; Enter and Shift+Enter (also Mod+G and Mod+Shift+G, F3 and Shift+F3) step through them, a count shows which one of how many, and Escape closes the bar. Finding ignores case and accents.
+  - A link inside the document shows its place. A web or mail link opens in the OS default app (LINK-01).
+  - A link in a note that names a PDF (`[[paper.pdf]]`, `[x](docs/paper.pdf)`) opens it. A PDF is found by its full name, like an image; `[[` completion does not offer it. Dragged from the tree into a note, it inserts its wikilink.
+  - Back, forward and the session's last file include a PDF. Opened again while the app runs, it shows the page, the zoom and the turn it was left at.
+- **Edge cases.**
+  - A protected document asks for its password in the view, and asks again after a wrong one.
+  - A file that cannot be read as a PDF, or is larger than 512 MB, does not open: one error toast, and the view stays empty.
+  - A PDF fills its pane and has no inline title: F2 renames it in the tree. Mod+E and the editor shortcuts do nothing.
+  - Form fields are drawn as the file has them and cannot be filled in. Scripts in a PDF never run.
+  - A page is paper: it stays white in dark mode, and so do the marks on it (selection, matches).
+  - The view does not follow the file: a PDF that changed on disk shows its new content when it is opened again.
+  - The quick switcher and the full-text search cover notes only. Printing and saving a copy are not offered.
+- **Decision.** *Changed:* a PDF used to get the notice of TREE-16. People keep papers and manuals next to their notes and read them there. Chrome's viewer is the one most people know, so its layout and its keys are taken as they are, drawn in the app's own grays. The pages are drawn by PDF.js, a dependency loaded when the first PDF is opened.
+- **Sources.** ARCHITECTURE.md §10.5, DESIGN.md §7; Chrome's PDF viewer.
 
 ---
 
@@ -1000,7 +1025,7 @@ Split panes are out of scope; separate windows are VAULT-08.
   - The click moves neither the keyboard nor the selection: typing goes on where it was.
 - **Edge cases.**
   - An empty file has nothing to copy: the icon is disabled, and the clipboard keeps what it holds.
-  - Images, unsupported files (TREE-15, TREE-16) and the blank state (NAV-08) have no copy icon.
+  - Images, PDFs, unsupported files (TREE-15, TREE-20, TREE-16) and the blank state (NAV-08) have no copy icon.
   - The text goes to the clipboard as the editor keeps it, with LF line breaks (EDIT-02), not with the file's own. The BOM is not part of it.
   - The check belongs to the file that was copied: a file opened meanwhile shows the icon.
 - **Decision.** A whole file is copied to be pasted elsewhere, into a chat or another editor, and selecting all of it first costs the selection and the place in the text. The check is the one success the UI shows: a clipboard shows nothing of its own, and without it a click could not be told from one that missed.
@@ -1052,7 +1077,7 @@ Replace across files is out of scope.
   - `http(s):` and `mailto:` targets [critic] (and `tel:`, which READ-04 already allows) open in the OS default app, and the webview never navigates.
   - A relative `.md` target opens in mininote. It is percent-decoded (the `<…>` form is allowed) and resolved against the note's folder first, then the vault root.
   - `#anchor` scrolls to the heading with that Unicode-aware slug; Hangul is kept.
-  - [critic] *Changed:* images open in the viewer (TREE-15). Other local files inside the vault (P1) open in the OS default app only when their extension is on an allowlist of document and media types: PDF, plain text, CSV, office and Hangul (`hwp`, `hwpx`) documents, images other than SVG, audio and video. Any other file is revealed in the file manager instead, never opened. The earlier rule ("other local files open in the OS default app") would run a linked `.command`, `.exe` or `.lnk` from a shared vault with one click, while LINK-09 deferred the safeguard to P2.
+  - [critic] *Changed:* images open in the viewer (TREE-15), and so do PDFs (TREE-20). Other local files inside the vault (P1) open in the OS default app only when their extension is on an allowlist of document and media types: plain text, CSV, office and Hangul (`hwp`, `hwpx`) documents, images other than SVG, audio and video. Any other file is revealed in the file manager instead, never opened. The earlier rule ("other local files open in the OS default app") would run a linked `.command`, `.exe` or `.lnk` from a shared vault with one click, while LINK-09 deferred the safeguard to P2.
   - A missing `.md` target behaves like an unresolved wikilink (LINK-05).
   - [critic] One shared, unit-tested `classifyHref()` makes these decisions for the editor and the reading view alike. `http(s):`, `mailto:` and `tel:` open externally; vault paths open in mininote; everything else does nothing. That includes `file:`, `javascript:`, `data:`, drive paths, UNC paths (`\\host\share`, which can leak Windows credentials over SMB) and custom schemes (`obsidian:`, `ms-…:`).
 - **Edge cases.**

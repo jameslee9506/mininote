@@ -268,7 +268,8 @@ function renameActive(): void {
   const path = editor.path;
   if (path === null) return;
   clearOverlays();
-  if (settings.values.inlineTitle) {
+  // A PDF fills its pane and shows no inline title: it is renamed in the tree.
+  if (settings.values.inlineTitle && editor.kind !== "pdf") {
     ui.focusTitle();
     return;
   }

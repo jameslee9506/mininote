@@ -4,6 +4,8 @@
   import Icon from "./Icon.svelte";
   import ImageView from "./ImageView.svelte";
   import InlineTitle from "./InlineTitle.svelte";
+  import PdfToolbar from "./PdfToolbar.svelte";
+  import PdfView from "./PdfView.svelte";
   import Reader from "./Reader.svelte";
   import UnsupportedView from "./UnsupportedView.svelte";
   import UpdateButton from "./UpdateButton.svelte";
@@ -26,10 +28,12 @@
   /** A code file: the editor view shows it too, read-only (TREE-17). */
   const isCode = $derived(editor.path !== null && editor.kind === "code");
   const reading = $derived(isNote && editor.viewMode === "read");
-  /** The single EditorView stays mounted; it is only hidden for images and unsupported files, reading view and the blank state. */
+  /** The single EditorView stays mounted; it is only hidden for images, PDFs and unsupported files, reading view and the blank state. */
   const showEditor = $derived((isNote && editor.viewMode === "edit") || isCode);
   const imagePath = $derived(editor.kind === "image" ? editor.path : null);
-  /** A file that is not a note, an image or a code file: listed, but not opened (TREE-16). */
+  /** A PDF takes the whole pane below the strip, which carries its controls (TREE-20). */
+  const pdfPath = $derived(editor.kind === "pdf" ? editor.path : null);
+  /** A file that is not a note, an image, a PDF or a code file: listed, but not opened (TREE-16). */
   const otherPath = $derived(editor.kind === "other" ? editor.path : null);
 
   /** Reading-view text, recomputed on doc changes while (and only while) it is visible. */
@@ -142,7 +146,11 @@
     >
       <Icon name="arrow-right" />
     </button>
-    <div class="grow"></div>
+    {#if pdfPath !== null}
+      <PdfToolbar path={pdfPath} />
+    {:else}
+      <div class="grow"></div>
+    {/if}
     <!-- A file that cannot be written, and every code file: the code view never edits. -->
     {#if (editor.readOnly || isCode) && editor.path !== null}
       <span class="lock" role="img" aria-label={t("ariaReadOnly")}>
@@ -175,7 +183,14 @@
     {/if}
   </header>
 
-  <div class="doc-scroll" role="presentation" bind:this={docScrollEl} onmousedown={onDocMouseDown}>
+  {#if pdfPath !== null}
+    <!-- One view per document: each PDF gets a viewer of its own. -->
+    {#key pdfPath}
+      <PdfView path={pdfPath} />
+    {/key}
+  {/if}
+  <!-- Stays mounted under a PDF, hidden: the single EditorView lives in it. -->
+  <div class="doc-scroll" class:hidden={pdfPath !== null} role="presentation" bind:this={docScrollEl} onmousedown={onDocMouseDown}>
     <div class="doc-column" class:code={isCode}>
       {#if settings.values.inlineTitle}
         <InlineTitle />
@@ -261,6 +276,7 @@
     max-width: max(var(--content-max), var(--code-max));
   }
 
+  .doc-scroll.hidden,
   .editor-slot.hidden {
     display: none;
   }

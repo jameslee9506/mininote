@@ -5,17 +5,19 @@ import { extname, key } from "./path";
 
 export const NOTE_EXTS = ["md", "markdown"] as const;
 export const IMAGE_EXTS = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"] as const;
+export const PDF_EXT = "pdf";
 
 /**
- * What a file name (or a path: its last segment) names: a note or an image by its
- * extension, a code file by the table of `codeFiles.ts`, or another file. The tree
- * lists every file; notes, images and code open in a view of their own (TREE-15,
- * TREE-16, TREE-17).
+ * What a file name (or a path: its last segment) names: a note, an image or a PDF by
+ * its extension, a code file by the table of `codeFiles.ts`, or another file. The tree
+ * lists every file; notes, images, PDFs and code open in a view of their own (TREE-15,
+ * TREE-16, TREE-17, TREE-20).
  */
 export function fileKindOf(name: string): FileKind {
   const e = extname(name);
   if ((NOTE_EXTS as readonly string[]).includes(e)) return "note";
   if ((IMAGE_EXTS as readonly string[]).includes(e)) return "image";
+  if (e === PDF_EXT) return "pdf";
   return codeLanguageOf(name) === null ? "other" : "code";
 }
 

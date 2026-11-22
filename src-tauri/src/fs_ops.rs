@@ -16,7 +16,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
-use tauri::ipc::{InvokeBody, Request};
+use tauri::ipc::{InvokeBody, Request, Response};
 use tauri::{AppHandle, Manager, WebviewWindow};
 use unicode_normalization::UnicodeNormalization;
 
@@ -25,6 +25,9 @@ use crate::vault::{self, blocking, VaultState};
 
 /// Notes larger than this are refused by `note_read` (SAVE-11).
 pub const MAX_NOTE_BYTES: u64 = 20 * 1024 * 1024;
+/// Files larger than this are refused by `binary_read`: the whole file crosses
+/// IPC in one piece and is held in memory by the viewer (TREE-20).
+pub const MAX_BINARY_BYTES: u64 = 512 * 1024 * 1024;
 /// Listing cap (VAULT-01); `truncated` is set beyond it.
 pub const MAX_ENTRIES: usize = 100_000;
 /// Two mtimes closer than this (in ms) are equal: absorbs float rounding of the
@@ -904,6 +907,36 @@ fn decode_note(
         size: baseline.len(),
         hash,
     })
+}
+
+/// `binary_read` (scoped): the bytes of a file as they are, sent as a raw body.
+/// The PDF viewer reads its document this way (TREE-20). A link is read as the
+/// file it leads to (TREE-18).
+#[tauri::command]
+pub async fn binary_read(window: WebviewWindow, epoch: u64, path: String) -> AppResult<Response> {
+    blocking(&window, move |state| {
+        let root = state.check(epoch)?;
+        let abs = vault::resolve(&root, &path)?;
+        read_binary(&abs, &path, MAX_BINARY_BYTES).map(Response::new)
+    })
+    .await
+}
+
+fn read_binary(abs: &Path, rel: &str, max: u64) -> AppResult<Vec<u8>> {
+    let too_large = || AppError::new(ErrorKind::TooLarge, format!("too large to read: {rel}"));
+    let meta = stat(abs, rel)?;
+    if !meta.is_file() {
+        return Err(invalid(format!("not a file: {rel}")));
+    }
+    if meta.len() > max {
+        return Err(too_large());
+    }
+    let bytes = fs::read(abs).map_err(|e| AppError::from_io(e, rel))?;
+    // The file may have grown between the stat and the read.
+    if bytes.len() as u64 > max {
+        return Err(too_large());
+    }
+    Ok(bytes)
 }
 
 // ---------------------------------------------------------------- raw-body requests
@@ -2019,6 +2052,20 @@ mod tests {
         assert_eq!(notes, ["alias.md", "real.md", "sub/deep.md"]);
         fs::remove_dir_all(&root).unwrap();
         fs::remove_dir_all(&outside).unwrap();
+    }
+
+    #[test]
+    fn read_binary_returns_the_bytes_within_its_limit() {
+        let root = scratch_dir("binary");
+        let bytes = [0x25, 0x50, 0x44, 0x46, 0xFF, 0x00, 0xFE];
+        fs::write(root.join("a.pdf"), bytes).unwrap();
+        fs::create_dir(root.join("dir.pdf")).unwrap();
+        assert_eq!(read_binary(&root.join("a.pdf"), "a.pdf", 7).unwrap(), bytes);
+        let kind = |rel: &str, max| read_binary(&root.join(rel), rel, max).unwrap_err().kind;
+        assert_eq!(kind("a.pdf", 6), ErrorKind::TooLarge);
+        assert_eq!(kind("dir.pdf", 7), ErrorKind::InvalidPath);
+        assert_eq!(kind("none.pdf", 7), ErrorKind::NotFound);
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[cfg(unix)]

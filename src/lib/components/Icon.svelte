@@ -27,7 +27,17 @@
     | "download"
     | "restart"
     | "code"
-    | "copy";
+    | "copy"
+    | "pdf"
+    | "menu"
+    | "minus"
+    | "fit-page"
+    | "fit-width"
+    | "rotate-left"
+    | "thumbnails"
+    | "outline"
+    | "arrow-up"
+    | "arrow-down";
 </script>
 
 <script lang="ts">
@@ -118,8 +128,8 @@
     <path d="m5 2.75 3 3 3-3M5 13.25l3-3 3 3" />
   {:else if name === "plus"}
     <path d="M8 3.5v9M3.5 8h9" />
-  {:else if name === "reset"}
-    <!-- A counter-clockwise arrow: back to the default. -->
+  {:else if name === "reset" || name === "rotate-left"}
+    <!-- A counter-clockwise arrow: back to the default, or a quarter turn that way. -->
     <path d="M2.5 8a5.5 5.5 0 1 0 5.5-5.5 6 6 0 0 0-4.12 1.68L2.5 5.5" />
     <path d="M2.5 2.5v3h3" />
   {:else if name === "download"}
@@ -139,6 +149,38 @@
     <!-- Two sheets, the front one whole and the back one showing behind it: copy the text. -->
     <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" />
     <path d="M10.5 5.5V4A1.5 1.5 0 0 0 9 2.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5" />
+  {:else if name === "pdf"}
+    <!-- The note's page with a label across it for its lines: a PDF (TREE-20). -->
+    <path d="M9 2H4.5A1.5 1.5 0 0 0 3 3.5v9A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V6Z" />
+    <path d="M9 2v4h4" />
+    <rect x="5.75" y="8.5" width="4.5" height="3" rx="0.5" />
+  {:else if name === "menu"}
+    <!-- Three bars: the PDF's side panel. -->
+    <path d="M3 4.5h10M3 8h10M3 11.5h10" />
+  {:else if name === "minus"}
+    <path d="M3.5 8h9" />
+  {:else if name === "fit-page"}
+    <!-- A sheet with an arrow from its top edge to its bottom edge: the whole page in view. -->
+    <rect x="3.5" y="2" width="9" height="12" rx="1.5" />
+    <path d="M8 5v6M6.5 6.25 8 4.75l1.5 1.5M6.5 9.75 8 11.25l1.5-1.5" />
+  {:else if name === "fit-width"}
+    <!-- A sheet with an arrow from its left edge to its right edge: the page as wide as the view. -->
+    <rect x="2" y="3.5" width="12" height="9" rx="1.5" />
+    <path d="M5 8h6M6.25 6.5 4.75 8l1.5 1.5M9.75 6.5 11.25 8l-1.5 1.5" />
+  {:else if name === "thumbnails"}
+    <!-- Four small sheets: the page thumbnails. -->
+    <rect x="2.5" y="2.5" width="4.5" height="4.5" rx="1" />
+    <rect x="9" y="2.5" width="4.5" height="4.5" rx="1" />
+    <rect x="2.5" y="9" width="4.5" height="4.5" rx="1" />
+    <rect x="9" y="9" width="4.5" height="4.5" rx="1" />
+  {:else if name === "outline"}
+    <!-- Lines stepping in: the document outline. -->
+    <path d="M3 4h10M5.5 8H13M8 12h5" />
+  {:else if name === "arrow-up"}
+    <!-- As the editor's find panel draws them: the previous and the next match. -->
+    <path d="M8 13V3M4 7l4-4 4 4" />
+  {:else if name === "arrow-down"}
+    <path d="M8 3v10M4 9l4 4 4-4" />
   {/if}
 </svg>
 

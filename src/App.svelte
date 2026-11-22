@@ -20,6 +20,7 @@
   import { onFlushRequest, onWindowOpen } from "./lib/ipc/events";
   import { commands } from "./lib/state/commands.svelte";
   import { editor } from "./lib/state/editor.svelte";
+  import { pdf } from "./lib/state/pdf.svelte";
   import { settings } from "./lib/state/settings.svelte";
   import { ui } from "./lib/state/ui.svelte";
   import { updater } from "./lib/state/updater.svelte";
@@ -219,10 +220,21 @@
     }
     if (!FIND_KEYS.some((k) => matchShortcut(e, k))) return;
     e.preventDefault();
+    const free = ui.modal === null && ui.confirmDialog === null && !isTextField(e.target);
+    // A PDF has a find bar of its own (TREE-20), which these keys open and step through. Its
+    // field handles them itself; other text fields and dialogs keep them inert.
+    if (editor.kind === "pdf") {
+      if (!free) return;
+      if (matchShortcut(e, "Mod-f")) {
+        if (!e.repeat) pdf.openFind();
+      } else if (e.shiftKey) pdf.findPrevious();
+      else pdf.findNext();
+      return;
+    }
     // EDIT-09: Mod+F anywhere else (reading view, the tree, the blank page) opens the note's
     // find panel, switching to editing first. Text fields and dialogs keep the key inert.
-    if (e.repeat || !matchShortcut(e, "Mod-f") || isTextField(e.target)) return;
-    if (ui.modal === null && ui.confirmDialog === null) void editor.openFind();
+    if (e.repeat || !matchShortcut(e, "Mod-f")) return;
+    if (free) void editor.openFind();
   }
 
   // ── Mouse back/forward buttons (NAV-03) ──────────────────────────────────

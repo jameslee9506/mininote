@@ -696,9 +696,11 @@
       return;
     }
     dt.setData(DRAG_TYPE, node.path);
-    // Dropped into the editor (or any text field), a note or an image becomes a wikilink;
+    // Dropped into the editor (or any text field), a note, an image or a PDF becomes a wikilink;
     // code and other files have no link that would resolve (TREE-16).
-    if (node.fileKind === "note" || node.fileKind === "image") dt.setData("text/plain", `[[${vault.linkTextFor(node.path)}]]`);
+    if (node.fileKind === "note" || node.fileKind === "image" || node.fileKind === "pdf") {
+      dt.setData("text/plain", `[[${vault.linkTextFor(node.path)}]]`);
+    }
     dt.effectAllowed = "all";
     dragSource = node.path;
   }

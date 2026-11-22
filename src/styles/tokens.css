@@ -2,6 +2,8 @@
  * Design tokens — the single source of visual truth (see docs/DESIGN.md).
  * Monotone: every color is a gray, except the syntax colors of the code view
  * (--c-syn-*) and the folders of the "color" icon set (--c-icon-folder-tint).
+ * The --c-pdf-* grays are drawn on a PDF's pages and have one value: a page is
+ * paper in either theme (DESIGN §7).
  * Components must use these variables only.
  * --fs-content, --content-max, --sidebar-width and --font-mono are overridden at
  * runtime from user settings (set on :root by the app shell).
@@ -51,6 +53,17 @@
   --c-syn-comment: #994400;
   --c-syn-meta: #404740;        /* annotations, preprocessor lines */
   --c-syn-invalid: #ff0000;
+
+  /* ── Color: PDF pages (pdf.css) ───────────────────────────────
+   * What is drawn on a page. One value for both themes: the page stays white (DESIGN §7). */
+  --c-pdf-page: #ffffff;
+  --c-pdf-selection: rgba(0, 0, 0, 0.18);
+  --c-pdf-match: rgba(0, 0, 0, 0.14);          /* every find match */
+  --c-pdf-match-current: rgba(0, 0, 0, 0.38);  /* the match shown */
+  --c-pdf-link-hover: rgba(0, 0, 0, 0.08);
+  --c-pdf-note: #f4f4f4;                       /* a note annotation's text box */
+  --c-pdf-note-text: #2b2b2b;
+  --c-pdf-note-border: #d2d2d2;
 
   /* ── Typography ───────────────────────────────────────────── */
   --font-text: -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo",
@@ -110,6 +123,10 @@
   --code-max: calc(var(--fs-code) * 60); /* the least measure of a code file: about 100 columns */
   --code-gutter-gap: 12px;      /* line numbers to code */
   --code-gutter-edge: 4px;      /* least room left of the line numbers */
+
+  /* ── PDF view ───────────────────────────────────────────────── */
+  --pdf-panel-width: 168px;     /* the thumbnail and outline panel */
+  --pdf-thumb-width: 108px;     /* one thumbnail */
 
   /* ── Layout ───────────────────────────────────────────────── */
   --sidebar-width: 248px;       /* settings.sidebarWidth */

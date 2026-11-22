@@ -57,13 +57,15 @@
 
   const node = $derived(row.node);
   /**
-   * A folder that opens and closes, a page for notes, a picture for images, a page of code, a blank
-   * page for anything else. The icon set (SET-08) restyles the folder in CSS; the glyphs stay these.
+   * A folder that opens and closes, a page for notes, a picture for images, a labeled page for PDFs,
+   * a page of code, a blank page for anything else. The icon set (SET-08) restyles the folder in CSS;
+   * the glyphs stay these.
    */
   const icon: IconName = $derived.by(() => {
     if (node.kind === "dir") return row.expanded ? "folder-open" : "folder";
     if (node.fileKind === "note") return "note";
     if (node.fileKind === "code") return "code";
+    if (node.fileKind === "pdf") return "pdf";
     return node.fileKind === "image" ? "image" : "file";
   });
 

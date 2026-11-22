@@ -75,8 +75,18 @@ class VaultStore {
   notes = $derived([...this.data.nodes.values()].filter((n) => n.fileKind === "note"));
   /** Notes and images in the same order: what `[[` completion offers (LINK-04). */
   linkables = $derived([...this.data.nodes.values()].filter((n) => n.fileKind === "note" || n.fileKind === "image"));
-  /** Link index over notes and images: a link never resolves to another kind of file (TREE-16). */
-  linkIndex: LinkIndex = $derived(buildLinkIndex(this.linkables.map((n) => ({ path: n.path, isNote: n.fileKind === "note" }))));
+  /**
+   * Link index over the files a link can open: notes, images and PDFs. A link never resolves
+   * to another kind of file (TREE-16). A PDF is found by its full name, like an image, and is
+   * not offered by `[[` completion (TREE-20).
+   */
+  linkIndex: LinkIndex = $derived(
+    buildLinkIndex(
+      [...this.data.nodes.values()]
+        .filter((n) => n.fileKind === "note" || n.fileKind === "image" || n.fileKind === "pdf")
+        .map((n) => ({ path: n.path, isNote: n.fileKind === "note" })),
+    ),
+  );
   /** The file behind each listed image that is a link on disk (TREE-18): its absolute path. */
   #realPaths = $derived(new Map(Object.entries(this.listing.realPaths)));
 

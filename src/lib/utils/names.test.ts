@@ -55,7 +55,10 @@ describe("names", () => {
     // A note or an image stays one, whatever its name starts with.
     expect(fileKindOf("Makefile.md")).toBe("note");
     expect(fileKindOf("Dockerfile.png")).toBe("image");
-    expect(fileKindOf("report.pdf")).toBe("other");
+    expect(fileKindOf("report.pdf")).toBe("pdf");
+    expect(fileKindOf("docs/Q3.PDF")).toBe("pdf");
+    expect(fileKindOf("Makefile.pdf")).toBe("pdf");
+    expect(fileKindOf("archive.zip")).toBe("other");
     expect(fileKindOf(".md")).toBe("other");
     expect(fileKindOf("md")).toBe("other");
   });
