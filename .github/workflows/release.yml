@@ -2,7 +2,7 @@ name: Release
 
 # A version tag builds every platform, uploads the installers, the signed updater
 # archives and latest.json to a draft release, and checks the manifest. Publish the
-# draft by hand once every job is green; see docs/releasing.md.
+# draft by hand once every job is green.
 on:
   push:
     tags:
@@ -111,7 +111,7 @@ jobs:
 
       - run: npm ci
 
-      # Apple Developer ID signing and notarization can be added here; see docs/releasing.md.
+      # Apple Developer ID signing and notarization can be configured on this step.
       - name: Build and upload
         uses: tauri-apps/tauri-action@v1
         env:

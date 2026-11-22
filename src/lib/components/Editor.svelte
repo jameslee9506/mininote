@@ -19,7 +19,7 @@
   let { scroller }: Props = $props();
 
   let host: HTMLDivElement | undefined = $state();
-  // CodeMirror objects never live in $state (CLAUDE.md); effects below run after the one that sets these.
+  // Keep CodeMirror objects outside $state. The effects below run after the one that sets these.
   let view: EditorView | null = null;
   let attachedScroller: HTMLElement | null = null;
 
