@@ -29,6 +29,7 @@ import { markdownExtensions } from "./syntax";
 import { arrowTyping } from "./arrows";
 import { editingKeymap, editorShortcuts, listTabKeymap, markupEnterKeymap, renumberAfterDelete } from "./commands";
 import { completionBindings, wikiCompletion } from "./complete";
+import { fenceTyping } from "./fences";
 import { imeKeys } from "./ime";
 import { pasteAndDrop } from "./paste";
 import { findKeymap, findPanel } from "./searchPanel";
@@ -202,7 +203,7 @@ const plainHtmlTyping = EditorView.inputHandler.of((view, from, to, text, insert
   return false;
 });
 
-/** Only "(" and "[" pair (EDIT-06), so "[[" gives "[[]]". */
+/** Only "(" and "[" pair (EDIT-06), so "[[" gives "[[]]". A code fence gets its closing fence from fences.ts (EDIT-19). */
 const closeBracketsConfig = EditorState.languageData.of(() => [{ closeBrackets: { brackets: ["(", "["] } }]);
 
 /**
@@ -271,6 +272,7 @@ const staticExtensions: Extension = [
   imeKeys,
   plainHtmlTyping,
   arrowTyping,
+  fenceTyping,
   markdownSupport,
   renumberAfterDelete,
   closeBracketsConfig,

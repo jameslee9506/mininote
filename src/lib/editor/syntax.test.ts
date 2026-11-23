@@ -43,7 +43,8 @@ describe("markdown syntax extensions", () => {
 });
 
 /** Nodes that take part in block structure, as `outline` prints them. */
-const BLOCKS = /^(?:Paragraph|Task|Blockquote|BulletList|OrderedList|ListItem|CodeBlock|HorizontalRule|Table|ATXHeading\d|SetextHeading\d)$/;
+const BLOCKS =
+  /^(?:Paragraph|Task|Blockquote|BulletList|OrderedList|ListItem|CodeBlock|FencedCode|HorizontalRule|Table|ATXHeading\d|SetextHeading\d)$/;
 
 /** The block structure of `text`: "Blockquote(Paragraph) Paragraph". */
 function outline(text: string): string {
@@ -91,5 +92,17 @@ describe("block dialect (shared with the reading view, markdown/render.test.ts)"
   it("finishes the block a lazy line ends as a blank line would", () => {
     expect(outline("- [ ] a\nb")).toBe("BulletList(ListItem(Task)) Paragraph");
     expect(outline("- | a | b |\n  | - | - |\n| c | d |")).toBe("BulletList(ListItem(Table)) Paragraph");
+  });
+
+  it("keeps a list item open over a blank line once a block has started in it", () => {
+    // Behind a tab, Lezer takes a short first line for a blank one.
+    expect(outline("- a\n\t- ```\n\t  \n\t  ```\n- b")).toBe(
+      "BulletList(ListItem(Paragraph BulletList(ListItem(FencedCode))) ListItem(Paragraph))",
+    );
+    expect(outline("- a\n\t- b\n\n\t  c")).toBe("BulletList(ListItem(Paragraph BulletList(ListItem(Paragraph Paragraph))))");
+    expect(outline("- \n  a\n\n  b")).toBe("BulletList(ListItem(Paragraph Paragraph))");
+    // An item that begins with two blank lines still ends there.
+    expect(outline("- \n\n  a")).toBe("BulletList(ListItem) Paragraph");
+    expect(outline("- a\n\n  b")).toBe("BulletList(ListItem(Paragraph Paragraph))");
   });
 });

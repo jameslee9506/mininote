@@ -7,7 +7,7 @@
  *   WikiLinkTarget, WikiLinkAlias  — the parts around "|"  (target may contain "#heading")
  *   Highlight, HighlightMark       — "==text==" and its "==" marks
  */
-import type { DelimiterType, InlineContext, LeafBlockParser, MarkdownConfig } from "@lezer/markdown";
+import type { BlockParser, DelimiterType, InlineContext, LeafBlockParser, MarkdownConfig } from "@lezer/markdown";
 import { Tag, tags } from "@lezer/highlight";
 
 /** Highlighting tags so source mode can style these constructs too. */
@@ -121,6 +121,26 @@ const lazyLineParser: LeafBlockParser = {
 };
 
 /**
+ * Keeps a list item open over a blank line once a block has started in it, as CommonMark
+ * and the reading view do. Only an item that begins with two blank lines ends there, and
+ * Lezer (1.8.1) takes two more for such an item, each ended by its first blank line:
+ * - one whose first line is short and stands behind a tab (a column is compared with a
+ *   length), which is every nested bullet whose marker is followed by "```" alone;
+ * - one whose first line is blank and whose second is not.
+ * It parses nothing: the first block parser asked about a line that has text only takes
+ * the mark back, on the item that is open there (`block`, a field Lezer does not type).
+ */
+const itemStartParser: BlockParser = {
+  name: "ItemStart",
+  before: "LinkReference",
+  parse(cx, line) {
+    const { block } = cx as unknown as { block?: { blankFirstLine?: boolean } };
+    if (block?.blankFirstLine && line.next >= 0) block.blankFirstLine = false;
+    return false;
+  },
+};
+
+/**
  * The block dialect both views read (the reading view's half is markdown/plugins/dialect.ts;
  * keep them in sync). What a line is never depends on a line typed after it, and a line
  * belongs to a quote or a list item only through its own markup:
@@ -133,7 +153,7 @@ const lazyLineParser: LeafBlockParser = {
 export const Dialect: MarkdownConfig = {
   remove: ["SetextHeading"],
   // First among the leaf parsers: a lazy line ends the block before any of them reads it.
-  parseBlock: [{ name: "LazyLine", before: "LinkReference", leaf: () => lazyLineParser }],
+  parseBlock: [{ name: "LazyLine", before: "LinkReference", leaf: () => lazyLineParser }, itemStartParser],
 };
 
 /** Extensions to pass to `markdown({ extensions })`, after GFM. */

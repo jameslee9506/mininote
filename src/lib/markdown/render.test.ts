@@ -294,6 +294,14 @@ describe("block dialect (shared with the editor, editor/syntax.test.ts)", () => 
     // A row without the item's indentation is no row of the item's table.
     expect(render("- | a | b |\n  | - | - |\n| c | d |")).toContain("</ul>\n<p data-line=\"2\">| c | d |</p>");
   });
+
+  it("keeps a list item open over a blank line once a block has started in it", () => {
+    expect(render("- a\n\t- ```\n\t  \n\t  ```\n- b")).toContain('<pre><code data-line="1">\n</code></pre>\n</li>\n</ul>\n</li>\n<li data-line="4">');
+    expect(render("- a\n\t- b\n\n\t  c")).toContain('<p data-line="1">b</p>\n<p data-line="3">c</p>\n</li>');
+    expect(render("- \n  a\n\n  b")).toContain('<p data-line="1">a</p>\n<p data-line="3">b</p>\n</li>');
+    // An item that begins with two blank lines still ends there.
+    expect(render("- \n\n  a")).toContain('</ul>\n<p data-line="2">a</p>');
+  });
 });
 
 describe("anchorKey", () => {
