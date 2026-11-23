@@ -4,8 +4,8 @@
  * functions, exported for unit tests.
  */
 import { completionStatus } from "@codemirror/autocomplete";
-import { EditorSelection, Prec, countColumn } from "@codemirror/state";
-import type { ChangeDesc, ChangeSet, ChangeSpec, EditorState, Extension, Line, StateCommand, Transaction } from "@codemirror/state";
+import { EditorSelection, EditorState, Prec, countColumn } from "@codemirror/state";
+import type { ChangeDesc, ChangeSet, ChangeSpec, Extension, Line, StateCommand, Transaction } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import type { Command, KeyBinding } from "@codemirror/view";
 import { ensureSyntaxTree, forceParsing, syntaxTree, syntaxTreeAvailable } from "@codemirror/language";
@@ -523,17 +523,54 @@ function topBlock(node: SyntaxNode): SyntaxNode {
   return top;
 }
 
-/** The nodes of `tree` over [from, to] as text, each placed where `map` puts it: equal for two trees of one shape. */
-function shapeOf(tree: Tree, from: number, to: number, map: ChangeDesc | null): string {
+/** The nodes of `tree` over [from, to] as text, each placed where `moved` puts it: equal for two trees of one shape. */
+function shapeOf(tree: Tree, from: number, to: number, moved: ((pos: number) => number) | null): string {
   let out = "";
   tree.iterate({
     from,
     to,
     enter: (n) => {
-      out += `${n.name} ${map ? map.mapPos(n.from, 1) : n.from} ${map ? map.mapPos(n.to, -1) : n.to},`;
+      out += `${n.name} ${moved ? moved(n.from) : n.from} ${moved ? moved(n.to) : n.to},`;
     },
   });
   return out;
+}
+
+/**
+ * Where the changed numbers put a position that is not inside one of them, as the bounds of a
+ * node never are. `mapPos` walks every change before the position, which is too slow to ask
+ * for each node of a long list.
+ */
+function movedBy(numbers: ChangeDesc): (pos: number) => number {
+  const starts: number[] = [];
+  const shifts: number[] = [];
+  let shift = 0;
+  numbers.iterChangedRanges((fromA, toA, fromB, toB) => {
+    starts.push(fromA);
+    shifts.push((shift += toB - fromB - (toA - fromA)));
+  });
+  return (pos) => {
+    // The changes that start before `pos`: one that starts at it leaves it in place.
+    let count = 0;
+    for (let end = starts.length; count < end; ) {
+      const mid = (count + end) >> 1;
+      if (starts[mid] < pos) count = mid + 1;
+      else end = mid;
+    }
+    return count === 0 ? pos : pos + shifts[count - 1];
+  };
+}
+
+/**
+ * True when `numbers` leave every line of [from, to] in the block it is in now (`tree` is the
+ * tree of `state`). A number that gains or loses a digit moves the text column of its item,
+ * and a line aligned under "9." is outside "10.".
+ */
+function keepsBlocks(state: EditorState, tree: Tree, numbers: ChangeSet, from: number, to: number): boolean {
+  const moved = movedBy(numbers);
+  const end = moved(to);
+  const after = treeUpTo(state.update({ changes: numbers }).state, end);
+  return shapeOf(tree, from, to, moved) === shapeOf(after, moved(from), end, null);
 }
 
 /**
@@ -627,13 +664,8 @@ function renumberShifted(state: EditorState, shift: ChangeSet, moved: readonly S
   if (changes.length === 0) return null;
 
   const numbers = mid.changes(changes);
-  const all = shift.compose(numbers);
-  if (resized) {
-    const end = numbers.mapPos(to);
-    const after = treeUpTo(state.update({ changes: all }).state, end);
-    if (shapeOf(tree, from, to, numbers) !== shapeOf(after, numbers.mapPos(from, 1), end, null)) return null;
-  }
-  return all;
+  if (resized && !keepsBlocks(mid, tree, numbers, from, to)) return null;
+  return shift.compose(numbers);
 }
 
 /**
@@ -920,7 +952,12 @@ const continueItem: StateCommand = ({ state, dispatch }) => {
   return true;
 };
 
-/** Enter in front of an existing list marker ("- a|- b"): break the line without adding a second marker. */
+/**
+ * Enter in front of an existing list marker ("- a|- b"): break the line without adding a
+ * second marker. A number that counts on from the item's own ("1. a|2. b") makes the next
+ * item, so the items below count on from it: joining the two lines took them one down
+ * (`renumberAfterDelete`), and this gives it back.
+ */
 const splitBeforeMarker: StateCommand = ({ state, dispatch }) => {
   const sel = state.selection;
   if (state.readOnly || sel.ranges.length !== 1 || !sel.main.empty) return false;
@@ -932,18 +969,18 @@ const splitBeforeMarker: StateCommand = ({ state, dispatch }) => {
   if (!ITEM_MARKER.test(after.slice(gap))) return false;
   const prefix = listLinePrefix(line.text.slice(0, offset));
   if (prefix.beforeMarker === null || line.text.slice(prefix.contentStart, offset).trim() === "") return false;
-  if (markupContext(treeUpTo(state, pos), pos) !== "item") return false;
+  const item = markupContainer(treeUpTo(state, line.to), pos);
+  if (!item || item.name !== "ListItem") return false;
   let from = pos;
   while (from - line.from > prefix.contentStart && /[ \t]/.test(line.text[from - line.from - 1])) from--;
   const insert = state.lineBreak + prefix.beforeMarker;
-  dispatch(
-    state.update({
-      changes: { from, to: pos + gap, insert },
-      selection: { anchor: from + insert.length },
-      scrollIntoView: true,
-      userEvent: "input",
-    }),
-  );
+  const changes: ChangeSpec[] = [{ from, to: pos + gap, insert }];
+  const mark = listMark(item);
+  const digits = mark && mark.from >= line.from ? markDigits(state, mark) : null;
+  const split = /^(\d+)([.)])/.exec(after.slice(gap));
+  if (mark && digits !== null && split && Number(split[1]) === Number(digits) + 1 && split[2] === state.sliceDoc(mark.to - 1, mark.to))
+    renumberFollowing(state, item, Number(digits), 1, changes);
+  dispatch(state.update({ changes, selection: { anchor: from + insert.length }, scrollIntoView: true, userEvent: "input" }));
   return true;
 };
 
@@ -1004,6 +1041,248 @@ export const insertSoftBreak: StateCommand = ({ state, dispatch }) => {
   dispatch(state.update(spec, { scrollIntoView: true, userEvent: "input" }));
   return true;
 };
+
+// ── Lists: deleting an item (EDIT-03) ────────────────────────────────────
+
+/** Blocks that can hold a list: a search for list markers enters nothing else. */
+const LIST_HOLDERS = new Set(["Document", "Blockquote", "BulletList", "OrderedList", "ListItem"]);
+
+/** The ListMark that starts at `pos`, or null. */
+function listMarkAt(tree: Tree, pos: number): SyntaxNode | null {
+  const node = tree.resolveInner(pos, 1);
+  return node.name === "ListMark" && node.from === pos ? node : null;
+}
+
+/** An ordered item that a deletion reaches. */
+interface ReachedItem {
+  item: SyntaxNode;
+  mark: SyntaxNode;
+  number: number;
+  /** The deletion took the whole marker. */
+  whole: boolean;
+}
+
+/** What a deletion removed right before an ordered item that stayed. */
+interface Removed {
+  /** The number of the removed item it followed. */
+  last: number;
+  /** The number its list started with, where it takes that number over; else null. */
+  first: number | null;
+  /** Its own marker ("3."), as it was. */
+  mark: string;
+}
+
+/** The ordered items that followed one a deletion removed, read in the state `mid` that the deletion leaves. */
+interface Followers {
+  /** By the start of their marker in `mid`. */
+  followed: Map<number, Removed>;
+  mid: EditorState;
+  tree: Tree;
+  /** Where the lists of these items end in `mid`, at the latest. */
+  upto: number;
+}
+
+/**
+ * The ordered items that followed one `tr` removed, or null without any.
+ *
+ * An item is removed when the deletion takes its whole marker, or leaves the marker where
+ * it no longer starts an item: its line was joined to the one above. A marker that lost a
+ * part is not removed, since it is being typed: "12." cut down to "2.", or "1." down to "."
+ * for another number. Nor is one whose line reads as before up to its end, whatever the
+ * lines above it became.
+ *
+ * What followed takes over the number its list started with where every item before it
+ * went with its marker. After an item that was only joined to the line above it does not:
+ * that marker is there as text, and Enter in front of it gives the item back.
+ */
+function followersOfRemoved(tr: Transaction): Followers | null {
+  const state = tr.startState;
+  const { doc } = state;
+  const { changes } = tr;
+  let end = -1;
+  changes.iterChangedRanges((fromA, toA) => {
+    if (toA > fromA) end = toA;
+  });
+  if (end < 0) return null;
+  // One line further: the marker of the item that follows a deleted line.
+  const before = treeUpTo(state, doc.line(Math.min(doc.lines, doc.lineAt(end).number + 1)).to);
+
+  /** By the start of their marker. A range reaches the markers it meets, and those on the line it ends in. */
+  const reached = new Map<number, ReachedItem>();
+  changes.iterChangedRanges((fromA, toA) => {
+    if (toA === fromA) return;
+    before.iterate({
+      from: fromA,
+      to: doc.lineAt(toA).to,
+      enter: (node) => {
+        if (node.name !== "ListMark") return LIST_HOLDERS.has(node.name);
+        const mark = node.node;
+        const item = mark.parent;
+        const digits = markDigits(state, mark);
+        if (!item || item.parent?.name !== "OrderedList" || digits === null || mark.to <= fromA) return false;
+        const whole = fromA <= mark.from && mark.to <= toA;
+        const seen = reached.get(mark.from);
+        if (seen) seen.whole ||= whole;
+        else reached.set(mark.from, { item, mark, number: Number(digits), whole });
+        return false;
+      },
+    });
+  });
+  if (reached.size === 0) return null;
+
+  const mid = tr.state;
+  let upto = 0;
+  for (const { item } of reached.values()) upto = Math.max(upto, topBlock(item).to);
+  upto = changes.mapPos(upto);
+  const tree = treeUpTo(mid, upto);
+  /** The removed items, by the start of their marker. */
+  const removed = new Map<number, ReachedItem>();
+  for (const [at, it] of reached) {
+    if (!it.whole) {
+      const pos = changes.mapPos(at, 1);
+      const line = mid.doc.lineAt(pos);
+      const text = doc.sliceString(at, it.mark.to);
+      if (mid.doc.sliceString(pos, Math.min(line.to, pos + text.length)) !== text) continue;
+      if (mid.doc.sliceString(line.from, pos) === doc.sliceString(doc.lineAt(at).from, at) || listMarkAt(tree, pos)) continue;
+    }
+    removed.set(at, it);
+  }
+
+  const followed = new Map<number, Removed>();
+  const removedItem = (item: SyntaxNode | null): ReachedItem | null => {
+    const mark = item && listMark(item);
+    return (mark && removed.get(mark.from)) ?? null;
+  };
+  for (const last of removed.values()) {
+    const next = nextItem(last.item);
+    const nextMark = next && listMark(next);
+    if (!nextMark || markDigits(state, nextMark) === null || removed.has(nextMark.from)) continue;
+    // The run of removed items that ends with this one, and the item that stayed before it.
+    let first = last;
+    let kept = previousItem(first.item);
+    for (let run = removedItem(kept); run; run = removedItem(kept)) {
+      first = run;
+      kept = previousItem(first.item);
+    }
+    followed.set(changes.mapPos(nextMark.from, 1), {
+      last: last.number,
+      first: kept || !first.whole ? null : first.number,
+      mark: state.sliceDoc(nextMark.from, nextMark.to),
+    });
+  }
+  return followed.size > 0 ? { followed, mid, tree, upto } : null;
+}
+
+/**
+ * The numbers of the ordered items that followed one a deletion removed (EDIT-03), as
+ * changes to the document `tr` leaves, or null when no number changes.
+ *
+ * The lists are read from the document as the deletion leaves it (as in `renumberShifted`):
+ * - what followed a removed item counts on from the item now before it. With none before
+ *   it, it takes over the number its list started with, or keeps its own where the
+ *   deletion split the list, and where it is "1.";
+ * - the items after it go on counting from there, as far as they counted up before:
+ *   "1. 1. 1." stays as it is.
+ *
+ * Where a first item leaves its text as a paragraph right above the next item, that item
+ * is text too: only "1." starts a list there. It gets its number first, in a state that is
+ * never dispatched, and the list is numbered from that state when it is a list again.
+ *
+ * The numbers never change what a line belongs to: where a number of another width would
+ * (`keepsBlocks`), they stay as they were.
+ */
+function numbersAfterDelete(tr: Transaction): ChangeSet | null {
+  const found = followersOfRemoved(tr);
+  if (!found) return null;
+  const { followed, mid, upto } = found;
+
+  const restart: ChangeSpec[] = [];
+  /** By marker: the number an item had before `restart` gave it the one its list started with. */
+  const had = new Map<number, number>();
+  for (const [pos, { last, first, mark }] of followed) {
+    const digits = mark.slice(0, -1);
+    if (listMarkAt(found.tree, pos) || first === null || Number(digits) !== last + 1) continue;
+    const insert = String(first);
+    // Only where the marker reads as it did, and in the same width: the lines of the item stay under it.
+    if (mid.doc.sliceString(pos, pos + mark.length) !== mark || insert.length !== digits.length) continue;
+    restart.push({ from: pos, to: pos + digits.length, insert });
+    had.set(pos, Number(digits));
+  }
+  let base = mid;
+  let tree = found.tree;
+  let started: ChangeSet | null = null;
+  if (restart.length > 0) {
+    const changes = mid.changes(restart);
+    const next = mid.update({ changes }).state;
+    const nextTree = treeUpTo(next, upto);
+    if ([...had.keys()].every((pos) => listMarkAt(nextTree, pos))) {
+      base = next;
+      tree = nextTree;
+      started = changes;
+    } else {
+      had.clear();
+    }
+  }
+
+  const lists = new Map<number, SyntaxNode>();
+  let from = base.doc.length;
+  let to = 0;
+  for (const pos of followed.keys()) {
+    // What is no item any more has no number to keep.
+    const list = listMarkAt(tree, pos)?.parent?.parent;
+    if (!list || list.name !== "OrderedList") continue;
+    lists.set(list.from, list);
+    const top = topBlock(list);
+    from = Math.min(from, top.from);
+    to = Math.max(to, top.to);
+  }
+
+  const numbers: ChangeSpec[] = [];
+  let resized = false;
+  for (const list of lists.values()) {
+    /** The number the item before will have (null before the first one). */
+    let prev: number | null = null;
+    /** The number an item must have had to go on counting, or null once the count has stopped. */
+    let expect: number | null = null;
+    for (let item = list.firstChild; item; item = item.nextSibling) {
+      // Lines of a list inside a quote put QuoteMark nodes between the items.
+      const mark = item.name === "ListItem" ? listMark(item) : null;
+      const digits = mark && markDigits(base, mark);
+      if (!mark || !digits) continue;
+      const shown = Number(digits);
+      const was = had.get(mark.from) ?? shown;
+      const gone = followed.get(mark.from);
+      if (gone) expect = gone.last + 1;
+      let now = shown;
+      // A list that starts with "1." keeps it: right below a line of text, no other number starts one.
+      if (was === expect) now = prev !== null ? prev + 1 : shown === 1 ? 1 : (gone?.first ?? shown);
+      expect = now === was ? null : was + 1;
+      if (now !== shown) {
+        const insert = String(now);
+        numbers.push({ from: mark.from, to: mark.from + digits.length, insert });
+        if (insert.length !== digits.length) resized = true;
+      }
+      prev = now;
+    }
+  }
+  if (numbers.length === 0) return started;
+
+  const counted = base.changes(numbers);
+  if (resized && !keepsBlocks(base, tree, counted, from, to)) return null;
+  return started ? started.compose(counted) : counted;
+}
+
+/**
+ * Deleting an ordered item numbers the items that followed it (EDIT-03), whatever deleted
+ * it: Backspace, Delete, a cut, a line or a selection. They all dispatch a "delete" user
+ * event, and the numbers join that transaction, so one undo gives both back. Shift-Tab's
+ * "delete.dedent" takes only indentation away and numbers what it moves by itself.
+ */
+export const renumberAfterDelete: Extension = EditorState.transactionFilter.of((tr) => {
+  if (!tr.docChanged || !tr.isUserEvent("delete") || tr.isUserEvent("delete.dedent")) return tr;
+  const numbers = numbersAfterDelete(tr);
+  return numbers ? [tr, { changes: numbers, sequential: true }] : tr;
+});
 
 // ── Links (LINK-02 Mod-Enter) ────────────────────────────────────────────
 

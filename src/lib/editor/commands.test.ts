@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { EditorSelection, EditorState, type StateCommand } from "@codemirror/state";
+import { EditorSelection, EditorState, type Extension, type StateCommand } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
-import { commonmarkLanguage, markdown } from "@codemirror/lang-markdown";
+import { deleteCharBackward, history, undo } from "@codemirror/commands";
+import { commonmarkLanguage, deleteMarkupBackward, markdown } from "@codemirror/lang-markdown";
 import { indentUnit } from "@codemirror/language";
 import { GFM } from "@lezer/markdown";
 import { markdownExtensions } from "./syntax";
@@ -18,6 +19,7 @@ import {
   listLinePrefix,
   outdentListOrLines,
   outdentWhitespace,
+  renumberAfterDelete,
   setHeading,
   toggleBold,
   toggleItalic,
@@ -26,17 +28,17 @@ import {
 const md = markdown({ base: commonmarkLanguage, extensions: [GFM, ...markdownExtensions] });
 
 /** "a |b| c": the first "|" is the anchor, a second one the head (one "|" is a caret). */
-function stateOf(marked: string): EditorState {
+function stateOf(marked: string, extra: Extension = []): EditorState {
   const anchor = marked.indexOf("|");
   const head = marked.indexOf("|", anchor + 1);
   const doc = marked.replace(/\|/g, "");
   const selection = head < 0 ? EditorSelection.single(anchor) : EditorSelection.single(anchor, head - 1);
-  return EditorState.create({ doc, selection, extensions: [md, indentUnit.of("\t"), EditorState.tabSize.of(4)] });
+  return EditorState.create({ doc, selection, extensions: [md, indentUnit.of("\t"), EditorState.tabSize.of(4), extra] });
 }
 
 /** Runs a command and returns the result in the same "|" notation (null when the command declined). */
-function run(cmd: StateCommand, marked: string): string | null {
-  let state = stateOf(marked);
+function run(cmd: StateCommand, marked: string, extra: Extension = []): string | null {
+  let state = stateOf(marked, extra);
   const handled = cmd({ state, dispatch: (tr) => (state = tr.state) });
   if (!handled) return null;
   const { anchor, head } = state.selection.main;
@@ -212,6 +214,76 @@ describe("Enter in lists", () => {
     expect(run(enter, "- a\n- |\n- c")).toBe("- a|\n- c");
     expect(run(enter, "1. a\n2. |\n3. c")).toBe("1. a|\n2. c");
     expect(run(enter, "- a\n- |")).toBe("- a\n|");
+  });
+});
+
+describe("deleting ordered items", () => {
+  const enter: StateCommand = (target) => continueMarkup(target as unknown as EditorView);
+  /** Deletes the selection, as a key or a cut does. */
+  const remove: StateCommand = ({ state, dispatch }) => {
+    dispatch(state.update(state.replaceSelection(""), { userEvent: "delete.selection" }));
+    return true;
+  };
+  /** Backspace as the editor binds it: the markup first, then the character. */
+  const backspace: StateCommand = (target) => deleteMarkupBackward(target) || deleteCharBackward(target as unknown as EditorView);
+  const del = (marked: string, cmd: StateCommand = remove) => run(cmd, marked, renumberAfterDelete);
+
+  it("numbers the items after a removed one, as far as they counted up", () => {
+    expect(del("1. a\n|2. b\n|3. c\n4. d")).toBe("1. a\n|2. c\n3. d");
+    expect(del("1. a\n2. b|b\n3. c\n4. d|d\n5. e")).toBe("1. a\n2. b|d\n3. e");
+    expect(del("> 1. a\n|> 2. b\n|> 3. c")).toBe("> 1. a\n|> 2. c");
+    expect(del("1. a\n\t1. x\n|\t2. y\n|\t3. z\n2. b")).toBe("1. a\n\t1. x\n|\t2. z\n2. b");
+    expect(del("1. a\n|2. b\n|3. c\n7. d")).toBe("1. a\n|2. c\n7. d");
+    expect(del("1. a\n|1. b\n|1. c")).toBe("1. a\n|1. c");
+    // Lists that a deletion only joins keep their numbers.
+    expect(del("1. a\n\n|b\n\n|1. c")).toBe("1. a\n\n|1. c");
+  });
+
+  it("takes Backspace through the marker, and a line joined to the one above", () => {
+    expect(del("1. a\n2. |\n3. c", backspace)).toBe("1. a\n   |\n2. c");
+    expect(del("1. a\n|2. b\n3. c", backspace)).toBe("1. a|2. b\n2. c");
+    // Enter in front of that marker gives the item back, and the numbers with it.
+    expect(run(enter, "1. a|2. b\n2. c")).toBe("1. a\n|2. b\n3. c");
+    expect(run(enter, "1. a|2. b\n3. c")).toBe("1. a\n|2. b\n3. c");
+  });
+
+  it("keeps the number a list started with", () => {
+    expect(del("|5. a\n|6. b\n7. c")).toBe("|5. b\n6. c");
+    expect(del("1. a\n|\t1. x\n|\t2. y")).toBe("1. a\n|\t1. y");
+    // A list that starts with "1." keeps it: right below a line of text, no other number starts one.
+    expect(del("|0. a\n|1. b\n2. c")).toBe("|1. b\n2. c");
+    // The first item's text stays as a line of text: only "1." starts a list right below it.
+    expect(del("1. |a\n2. b\n3. c", backspace)).toBe("|a\n1. b\n2. c");
+    expect(del("5. |a\n6. b", backspace)).toBe("|a\n6. b");
+    // A first item joined to the line above still has its marker, for Enter to give it back.
+    expect(del("# H\n|1. a\n2. b", backspace)).toBe("# H|1. a\n2. b");
+  });
+
+  it("leaves a number that is being typed", () => {
+    expect(del("1|. a\n2. b", backspace)).toBe("|. a\n2. b");
+    expect(del("10. a\n1|1. b\n12. c", backspace)).toBe("10. a\n|1. b\n12. c");
+  });
+
+  it("keeps the numbers where a narrower one would change what a line belongs to", () => {
+    // "       d" is a paragraph of "10. c"; under "9. c" it would be code.
+    expect(del("8. a\n|9. b\n|10. c\n\n       d")).toBe("8. a\n|10. c\n\n       d");
+    expect(del("8. a\n|9. b\n|10. c\n    d")).toBe("8. a\n|9. c\n    d");
+  });
+
+  it("acts on deletions alone, in their own undo step", () => {
+    const typed: StateCommand = ({ state, dispatch }) => {
+      dispatch(state.update(state.replaceSelection(""), { userEvent: "input" }));
+      return true;
+    };
+    expect(del("1. a\n|2. b\n|3. c", typed)).toBe("1. a\n|3. c");
+    // Shift-Tab numbers what it moves by itself.
+    expect(del("1. a\n\t1. b|\n\t2. c\n2. d", outdentListOrLines)).toBe("1. a\n2. b|\n\t1. c\n3. d");
+    const undone: StateCommand = ({ state, dispatch }) => {
+      let next = state;
+      remove({ state, dispatch: (tr) => (next = tr.state) });
+      return undo({ state: next, dispatch });
+    };
+    expect(run(undone, "1. a\n|2. b\n|3. c", [renumberAfterDelete, history()])).toBe("1. a\n|2. b\n|3. c");
   });
 });
 

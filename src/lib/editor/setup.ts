@@ -27,7 +27,7 @@ import type { EditorHost } from "./host";
 import { External, invalidateResolutions, refreshEffect } from "./shared";
 import { markdownExtensions } from "./syntax";
 import { arrowTyping } from "./arrows";
-import { editingKeymap, editorShortcuts, listTabKeymap, markupEnterKeymap } from "./commands";
+import { editingKeymap, editorShortcuts, listTabKeymap, markupEnterKeymap, renumberAfterDelete } from "./commands";
 import { completionBindings, wikiCompletion } from "./complete";
 import { imeKeys } from "./ime";
 import { pasteAndDrop } from "./paste";
@@ -272,6 +272,7 @@ const staticExtensions: Extension = [
   plainHtmlTyping,
   arrowTyping,
   markdownSupport,
+  renumberAfterDelete,
   closeBracketsConfig,
   closeBrackets(),
   history(),
