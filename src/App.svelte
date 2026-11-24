@@ -17,11 +17,13 @@
   import {
     closeForgottenVault,
     discardNewNote,
+    fileStepKey,
     flushBeforeExit,
     openRequest,
     openVault,
     quitApp,
     registerAppCommands,
+    runFileStep,
   } from "./lib/appCommands";
   import { t, uiLanguage } from "./lib/i18n";
   import { windowShow, windowStartup } from "./lib/ipc/commands";
@@ -228,6 +230,17 @@
       if (!e.repeat && e.target instanceof HTMLElement && e.target.closest(".cm-content") && discardNewNote()) {
         e.preventDefault();
       }
+      return;
+    }
+    // TREE-21: with nothing shown, the system's undo and redo keys are the file operations', so
+    // the key right after a delete brings the file back, also where no tree is on screen. The
+    // tree answers them itself while it has the keyboard; a text field keeps them for its text.
+    const step = fileStepKey(e);
+    if (step !== null) {
+      const blank = vault.info !== null && editor.path === null && !editor.loading;
+      if (!blank || isTextField(e.target) || ui.modal !== null || ui.confirmDialog !== null || ui.menu !== null) return;
+      e.preventDefault();
+      if (!e.repeat) runFileStep(step);
       return;
     }
     if (!FIND_KEYS.some((k) => matchShortcut(e, k))) return;

@@ -122,6 +122,7 @@ const en = {
   errRootUnavailable: "The vault folder isn’t available.",
   errTruncated: "This vault is very large; some files aren’t shown.",
   errTrash: "Couldn’t delete “{name}”.",
+  errRestore: "Couldn’t restore “{name}”.",
   errMove: "Couldn’t move “{name}”.",
   errCopyFile: "Couldn’t copy “{name}”.",
   errRename: "Couldn’t rename “{name}”.",

@@ -82,7 +82,7 @@
   // of vault.rows with keyboard navigation, context menus and drag-to-move.
   import { untrack } from "svelte";
   import TreeRow from "./TreeRow.svelte";
-  import { newFolder, newNote, openVault } from "../appCommands";
+  import { fileStepKey, newFolder, newNote, openVault, runFileStep } from "../appCommands";
   import { vault, type TreeRow as RowData } from "../state/vault.svelte";
   import { editor } from "../state/editor.svelte";
   import { fresh } from "../state/newNote.svelte";
@@ -263,6 +263,25 @@
       if (vault.renaming !== null || vault.creating !== null) return;
       el.focus({ preventScroll: true });
       if (selectedIndex >= 0) scrollToIndex(selectedIndex, "center");
+    });
+  });
+
+  // ui.restInTree(): the main area lost what had the keyboard, and the tree takes it, unless a
+  // field of the sidebar or an overlay has it. A request made while the tree was away is not
+  // answered when it comes back.
+  let seenRestTick = ui.treeRestTick;
+  $effect(() => {
+    const el = scroller;
+    const tick = ui.treeRestTick;
+    if (!el || tick === seenRestTick) return;
+    seenRestTick = tick;
+    untrack(() => {
+      if (vault.renaming !== null || vault.creating !== null) return;
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && active !== document.body) {
+        if (el.closest("aside")?.contains(active) || active.closest('[role="dialog"], [role="menu"]') !== null) return;
+      }
+      el.focus({ preventScroll: true });
     });
   });
 
@@ -524,6 +543,10 @@
     e.preventDefault();
     e.stopPropagation();
     const node = nodeAt(e.target);
+    // A right-click gives the tree the keyboard as a click does (TREE-11), which a secondary press
+    // does not always do by itself: the keys after the menu's action, undo among them (TREE-21),
+    // are the tree's. Not on the row of a new note with nothing typed in it (TREE-04).
+    if (document.activeElement !== scroller && !(node && fresh.holds(node.path))) scroller?.focus({ preventScroll: true });
     if (!node) {
       ui.showMenu(e.clientX, e.clientY, blankMenu());
       return;
@@ -549,6 +572,13 @@
   function onkeydown(e: KeyboardEvent): void {
     if (isComposing(e)) return;
     if (e.target !== scroller) return; // the rename input handles its own keys
+    // TREE-21: while the tree has the keyboard, the system's undo and redo keys are the file operations'.
+    const step = fileStepKey(e);
+    if (step !== null) {
+      e.preventDefault();
+      if (!e.repeat) runFileStep(step);
+      return;
+    }
     const plain = !e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey;
     const cmdOnly = isMac && e.metaKey && !e.altKey && !e.ctrlKey && !e.shiftKey;
     const n = rows.length;
@@ -737,7 +767,12 @@
     const src = e.dataTransfer?.getData(DRAG_TYPE) || dragSource;
     const { dir } = dropTargetAt(e);
     endDrag();
-    if (src && canDrop(src, dir)) safely(vault.move(src, dir));
+    if (!src || !canDrop(src, dir)) return;
+    // The keyboard is the tree's after a move, as after any click in it (TREE-11): undo takes the move back.
+    if (document.activeElement !== scroller && vault.renaming === null && vault.creating === null) {
+      scroller?.focus({ preventScroll: true });
+    }
+    safely(vault.move(src, dir));
   }
 </script>
 

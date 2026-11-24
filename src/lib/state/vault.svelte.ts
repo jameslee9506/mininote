@@ -19,6 +19,7 @@ import {
   pathDelete,
   pathExists,
   pathRename,
+  pathRestore,
   pathReveal,
   pathTrash,
   vaultClose,
@@ -33,6 +34,7 @@ import { basename, dirname, isSameOrAncestor, join, key, nfc, normalizeRel, reba
 import { copyName, fileKindOf, pastedImageName, titleOf, uniqueName, validateName } from "../utils/names";
 import { within } from "./autosave";
 import { editor, SWITCH_FLUSH_MS } from "./editor.svelte";
+import { StepHistory, type FileStep, type StepKind } from "./fileSteps";
 import { settings } from "./settings.svelte";
 import { noteTargetPath } from "./targets";
 import { ui } from "./ui.svelte";
@@ -50,6 +52,16 @@ const RESTORE_WAIT_MS = 500;
 const NAME_ATTEMPTS = 20;
 
 type Timer = ReturnType<typeof setTimeout>;
+
+/** What a delete took away, for the step that brings it back (TREE-21). */
+interface Removed {
+  /** What `pathRestore` brings the entry back with; null when nothing went to the trash. */
+  ticket: number | null;
+  /** The file the delete closed: the removed one, or one in the removed folder. */
+  shown: VaultPath | null;
+  /** The expanded folders the delete collapsed. */
+  expanded: VaultPath[];
+}
 
 /** A note or a code file: the files the editor reads, and keeps current while they are live (§8.2). */
 const isTextPath = (p: VaultPath): boolean => {
@@ -126,6 +138,10 @@ class VaultStore {
   #pendingReveal: VaultPath | null = null;
   /** The selection a listing dropped because its path vanished; an external rename of it restores it. */
   #lostSelection: VaultPath | null = null;
+  /** The file operations that can be taken back, and those taken back that can be done again (TREE-21). */
+  #steps = new StepHistory<FileStep>();
+  /** Undo and redo run one at a time, in the order they were asked for. */
+  #stepping: Promise<void> = Promise.resolve();
 
   /**
    * Opens `root` as this window's vault: vaultOpen → vaultList → restore session
@@ -282,8 +298,11 @@ class VaultStore {
    * except case-only renames of itself, flushes the editor if affected, calls
    * pathRename, notifies editor.onPathMoved, keeps expanded/selected consistent.
    * Toasts and returns null on failure. A virtual note only changes its target path.
+   * The rename can be undone (TREE-21), unless `record` is false: the first name typed
+   * for a new note is part of creating it.
    */
-  rename = (path: VaultPath, newName: string): Promise<VaultPath | null> => untrack(() => this.#rename(path, newName));
+  rename = (path: VaultPath, newName: string, opts?: { record?: boolean }): Promise<VaultPath | null> =>
+    untrack(() => this.#rename(path, newName, opts?.record !== false));
 
   /** Moves `path` into folder `destDir` ("" = root). Refuses self/descendant targets and collisions. */
   move = (path: VaultPath, destDir: VaultPath): Promise<VaultPath | null> => untrack(() => this.#move(path, destDir));
@@ -303,18 +322,32 @@ class VaultStore {
    * on success editor.onPathRemoved + refresh; on "trash_failed" confirm a
    * permanent delete → pathDelete; on failure/cancel unfreeze. Returns true when deleted.
    * An optional guard is rechecked after waits, before any destructive IPC call.
+   * What went to the trash can be brought back with undo() (TREE-21), unless `record` is
+   * false: a new note that was never kept is not kept by an undo either.
    */
-  remove = (path: VaultPath, guard?: () => boolean): Promise<boolean> => untrack(() => this.#remove(path, guard));
+  remove = (path: VaultPath, opts?: { guard?: () => boolean; record?: boolean }): Promise<boolean> =>
+    untrack(() => this.#remove(path, opts));
 
   /**
    * Lets go of a note that was created a moment ago and never typed in (TREE-04): the editor
-   * drops it at once, showing the previous note if it was the open one, and its file goes to
-   * the trash. Nothing is asked, flushed or frozen: such a note has no text to keep and no
-   * save under way. The tree keeps the selection the user's click gave it; only a selection
-   * on the note itself is cleared. Where the volume has no trash, remove() takes over, with
-   * its question. Returns true when the file is gone.
+   * drops it at once, leaving the main area blank if it was the open one, and its file goes
+   * to the trash. Nothing is asked, flushed or frozen: such a note has no text to keep and no
+   * save under way, and no undo brings it back. The tree keeps the selection the user's click
+   * gave it; only a selection on the note itself is cleared. Where the volume has no trash,
+   * remove() takes over, with its question. Returns true when the file is gone.
    */
   discard = (path: VaultPath): Promise<boolean> => untrack(() => this.#discard(path));
+
+  /**
+   * Takes back the last file operation (TREE-21): a renamed or moved entry goes back, a deleted
+   * one comes back from the trash, and a new folder or a pasted copy goes to the trash. Nothing
+   * is ever replaced: a step that finds its place taken, or its entry gone, is dropped with a
+   * toast. The entry it acted on is selected and revealed.
+   */
+  undo = (): Promise<void> => untrack(() => this.#step("undo"));
+
+  /** Does again the operation the last undo() took back, for as long as no other was done since. */
+  redo = (): Promise<void> => untrack(() => this.#step("redo"));
 
   revealInOs = (path: VaultPath): Promise<void> =>
     untrack(async () => {
@@ -528,6 +561,7 @@ class VaultStore {
     this.creating = null;
     this.#pendingReveal = null;
     this.#lostSelection = null;
+    this.#steps.clear();
   }
 
   /** Installs the vault:changed and window focus listeners once for the app's lifetime. */
@@ -768,8 +802,8 @@ class VaultStore {
     const info = this.info;
     if (!info || this.nodes.get(path)?.kind !== "file" || editor.busyUnder(path)) return false;
     const label = this.#label(path);
-    // The click that left the note chose its own row, or none: the note shown next does not take the selection.
-    editor.onPathRemoved(path, { reveal: false });
+    // The click that left the note chose its own row, or none, and the selection stays with it.
+    editor.onPathRemoved(path);
     if (this.selected === path) this.selected = null;
     if (this.#lostSelection === path) this.#lostSelection = null;
     if (this.renaming === path) this.renaming = null;
@@ -777,7 +811,7 @@ class VaultStore {
       await pathTrash(path, info.epoch);
     } catch (e) {
       if (this.info !== info) return false;
-      if (isIpcError(e, "trash_failed")) return this.#remove(path);
+      if (isIpcError(e, "trash_failed")) return this.#remove(path, { record: false });
       if (!isIpcError(e, "not_found")) {
         console.error("vault: trash failed", e);
         ui.notify(t("errTrash", { name: label }));
@@ -866,16 +900,18 @@ class VaultStore {
       return null;
     }
     await this.#refresh();
+    if (this.info !== info) return null;
+    const actual = this.findExisting(path) ?? path;
+    this.#steps.record({ do: "trash", path: actual });
     // A newer draft replaced this one meanwhile: the folder exists, but this draft's row is gone,
     // and a success would make it hand the keyboard to the tree, away from the newer draft's input.
-    if (this.info !== info || this.creating !== draft) return null;
+    if (this.creating !== draft) return null;
     this.creating = null;
-    const actual = this.findExisting(path) ?? path;
     this.revealInTree(actual);
     return actual;
   }
 
-  async #rename(path: VaultPath, newName: string): Promise<VaultPath | null> {
+  async #rename(path: VaultPath, newName: string, record: boolean): Promise<VaultPath | null> {
     const info = this.info;
     if (!info || path === "") return null;
     const node = this.nodes.get(path);
@@ -919,7 +955,9 @@ class VaultStore {
         return to;
       }
     }
-    return this.#movePath(path, to, "errRename", info);
+    const actual = await this.#movePath(path, to, "errRename", info);
+    if (actual !== null && record) this.#steps.record({ do: "move", from: actual, to: path });
+    return actual;
   }
 
   async #move(path: VaultPath, destDir: VaultPath): Promise<VaultPath | null> {
@@ -934,7 +972,9 @@ class VaultStore {
       ui.notify(t("errNameExists"));
       return null;
     }
-    return this.#movePath(path, to, "errMove", info);
+    const actual = await this.#movePath(path, to, "errMove", info);
+    if (actual !== null) this.#steps.record({ do: "move", from: actual, to: path });
+    return actual;
   }
 
   async #copyInto(path: VaultPath, destDir: VaultPath): Promise<VaultPath | null> {
@@ -970,6 +1010,7 @@ class VaultStore {
       if (this.info !== info) return null;
       // PLAT-06: the name the listing reports, as after a rename.
       const actual = this.findExisting(to) ?? to;
+      this.#steps.record({ do: "trash", path: actual });
       this.revealInTree(actual);
       return actual;
     }
@@ -1018,55 +1059,78 @@ class VaultStore {
     return actual;
   }
 
-  async #remove(path: VaultPath, guard?: () => boolean): Promise<boolean> {
+  async #remove(path: VaultPath, opts: { guard?: () => boolean; record?: boolean } = {}): Promise<boolean> {
     // Everything stays in `info`, the vault the delete started in (PLAT-08): the IPC carries its
     // epoch, and once another vault replaced it (its notes disposed by the switch) nothing more is done.
     const info = this.info;
+    const guard = opts.guard;
     if (!info || path === "" || guard?.() === false) return false;
     const node = this.nodes.get(path);
     if (!node && !editor.isVirtual(path)) return false;
     const isDir = node?.kind === "dir";
-    const label = this.#label(path);
     if (isDir || settings.values.confirmDelete) {
+      const label = this.#label(path);
       const message = isDir ? t("confirmDeleteFolder", { name: label }) : t("confirmDelete", { name: label });
       if (!(await ui.confirm(message)) || this.info !== info) return false;
     }
+    const gone = await this.#takeAway(path, info, { guard, permanently: true });
+    if (gone === null) return false;
+    // TREE-21: what went to the trash can come back. A permanent delete cannot.
+    if (gone.ticket !== null && opts.record !== false) this.#steps.record({ do: "restore", path, ...gone, ticket: gone.ticket });
+    return true;
+  }
+
+  /**
+   * The delete itself, once any question is answered (§8.3): flush → freeze → pathTrash → drop
+   * the controllers and the tree state under the path → refresh. With `permanently`, a volume
+   * without a trash is answered by the question for a permanent delete; without it, by a toast.
+   * Returns what was taken away, or null when nothing was: refused by `guard` or the user,
+   * or failed, which a toast has said.
+   */
+  async #takeAway(
+    path: VaultPath,
+    info: VaultInfo,
+    opts: { guard?: () => boolean; permanently: boolean },
+  ): Promise<Removed | null> {
+    const guard = opts.guard;
+    const label = this.#label(path);
     // TREE-08: the trashed copy holds the latest text, and no save may run after the delete.
-    if (guard?.() === false) return false;
+    if (guard?.() === false) return null;
     await within(editor.flushUnder(path), SWITCH_FLUSH_MS);
-    if (this.info !== info || guard?.() === false) return false;
+    if (this.info !== info || guard?.() === false) return null;
     await within(editor.freeze(path), SWITCH_FLUSH_MS);
-    if (this.info !== info) return false;
+    if (this.info !== info) return null;
     if (guard?.() === false) {
       editor.unfreeze(path);
-      return false;
+      return null;
     }
     if (editor.busyUnder(path)) {
       // Both waits are capped: a write still in flight could land after the trash and bring the file back.
       editor.unfreeze(path);
       ui.notify(t("errTrash", { name: label }));
-      return false;
+      return null;
     }
-    if (!node && editor.isVirtual(path)) {
+    if (!this.nodes.has(path) && editor.isVirtual(path)) {
       editor.onPathRemoved(path); // nothing on disk
-      return true;
+      return { ticket: null, shown: null, expanded: [] };
     }
     let deleted = false;
+    let ticket: number | null = null;
     try {
-      await pathTrash(path, info.epoch);
+      ticket = await pathTrash(path, info.epoch);
       deleted = true;
     } catch (e) {
-      if (this.info !== info) return false;
+      if (this.info !== info) return null;
       if (isIpcError(e, "not_found")) deleted = true;
-      else if (isIpcError(e, "trash_failed")) {
+      else if (isIpcError(e, "trash_failed") && opts.permanently) {
         const permanently = await ui.confirm(t("confirmDeletePermanently", { name: label }));
-        if (this.info !== info) return false;
+        if (this.info !== info) return null;
         if (permanently && guard?.() !== false) {
           try {
             await pathDelete(path, info.epoch);
             deleted = true;
           } catch (e2) {
-            if (this.info !== info) return false;
+            if (this.info !== info) return null;
             if (isIpcError(e2, "not_found")) deleted = true;
             else {
               console.error("vault: delete failed", e2);
@@ -1079,25 +1143,131 @@ class VaultStore {
         ui.notify(t("errTrash", { name: label }));
       }
     }
-    if (this.info !== info) return false;
+    if (this.info !== info) return null;
     if (!deleted) {
       editor.unfreeze(path);
-      return false;
+      return null;
     }
+    const open = editor.path;
+    const shown = open !== null && !editor.virtual && isSameOrAncestor(path, open) ? open : null;
     editor.onPathRemoved(path);
-    let pruned = false;
+    const expanded: VaultPath[] = [];
     for (const p of [...this.expanded]) {
       if (!isSameOrAncestor(path, p)) continue;
       this.expanded.delete(p);
-      pruned = true;
+      expanded.push(p);
     }
-    if (pruned) this.#persistExpanded();
+    if (expanded.length > 0) this.#persistExpanded();
     this.selected = null; // TREE-08
     this.#lostSelection = null;
     if (this.renaming !== null && isSameOrAncestor(path, this.renaming)) this.renaming = null;
     if (this.creating !== null && isSameOrAncestor(path, this.creating.parent)) this.creating = null;
     await this.#refresh();
-    return true;
+    return { ticket, shown, expanded };
+  }
+
+  // ── Undo and redo (TREE-21) ──────────────────────────────────────────────
+
+  #step(kind: StepKind): Promise<void> {
+    const run = this.#stepping.then(() => this.#runStep(kind));
+    this.#stepping = run.then(
+      () => {},
+      () => {},
+    );
+    return run;
+  }
+
+  async #runStep(kind: StepKind): Promise<void> {
+    const info = this.info;
+    // A name being typed in the tree is an operation of its own, and not over yet.
+    if (!info || this.renaming !== null || this.creating !== null) return;
+    const step = this.#steps.take(kind);
+    if (step === null) return;
+    const inverse = await this.#perform(step, info);
+    if (this.info !== info) return; // another vault by now: its steps went with the one before
+    if (inverse === "kept") this.#steps.putBack(kind, step);
+    else if (inverse !== null) this.#steps.performed(kind, inverse);
+  }
+
+  /**
+   * Performs one step, as the operation it mirrors would be (flushes, freezes and refusals
+   * included), and returns the step that takes it back. Null when it could not be done, which
+   * a toast has said; "kept" when the user answered its question with no.
+   */
+  async #perform(step: FileStep, info: VaultInfo): Promise<FileStep | "kept" | null> {
+    switch (step.do) {
+      case "move": {
+        const { from, to } = step;
+        // As for any rename or move, nothing is replaced. The entry's own row is no obstacle:
+        // a name that changed only its case goes back too.
+        if (this.#siblingKeys(dirname(to), from).has(key(basename(to))) || editor.unsavedAt(to, from)) {
+          ui.notify(t("errNameExists"));
+          return null;
+        }
+        const actual = await this.#movePath(from, to, dirname(from) === dirname(to) ? "errRename" : "errMove", info);
+        if (actual === null) return null;
+        this.revealInTree(actual);
+        return { do: "move", from: actual, to: from };
+      }
+      case "trash": {
+        const path = step.path;
+        const node = this.nodes.get(path);
+        if (!node) {
+          ui.notify(t("errTrash", { name: this.#label(path) }));
+          return null;
+        }
+        // TREE-08: a folder that holds something asks first, by this way too: what was put in it since goes with it.
+        if (node.kind === "dir" && (node.children?.length ?? 0) > 0) {
+          const ok = await ui.confirm(t("confirmDeleteFolder", { name: this.#label(path) }));
+          if (this.info !== info) return null;
+          if (!ok) return "kept";
+        }
+        const gone = await this.#takeAway(path, info, { permanently: false });
+        if (gone === null || gone.ticket === null) return null;
+        return { do: "restore", path, ...gone, ticket: gone.ticket };
+      }
+      case "restore": {
+        // Unsaved text of a note the listing does not show holds the path too, as for a rename.
+        if (editor.unsavedAt(step.path)) {
+          ui.notify(t("errNameExists"));
+          return null;
+        }
+        try {
+          await pathRestore(step.ticket, info.epoch);
+        } catch (e) {
+          if (this.info !== info) return null;
+          if (isIpcError(e, "exists")) ui.notify(t("errNameExists"));
+          else {
+            // "not_found": the trash was emptied, or the entry was taken out of it.
+            if (!isIpcError(e, "not_found")) console.error("vault: restore failed", e);
+            ui.notify(t("errRestore", { name: this.#label(step.path) }));
+          }
+          return null;
+        }
+        if (this.info !== info) return null;
+        await this.#refresh();
+        if (this.info !== info) return null;
+        // PLAT-06: the names the listing reports, as after a rename.
+        const actual = this.findExisting(step.path) ?? step.path;
+        let reopened = false;
+        for (const p of step.expanded) {
+          const dir = this.findExisting(p);
+          if (dir === null || this.nodes.get(dir)?.kind !== "dir" || this.expanded.has(dir)) continue;
+          this.expanded.add(dir);
+          reopened = true;
+        }
+        if (reopened) this.#persistExpanded();
+        this.revealInTree(actual);
+        // The file the delete closed is shown again, unless another one is by now. The keyboard stays where it is.
+        const shown = step.shown === null ? null : this.findExisting(step.shown);
+        if (shown !== null) {
+          await editor.settled();
+          if (this.info !== info) return null;
+          if (editor.path === null) await editor.open(shown, { focus: "none", reveal: false });
+        }
+        return { do: "trash", path: actual };
+      }
+    }
   }
 
   async #writeAttachment(notePath: VaultPath | null, data: Uint8Array, ext: string): Promise<VaultPath | null> {

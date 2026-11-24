@@ -66,6 +66,8 @@ class UiStore {
   /** How the latest title request wants the text: all selected (F2) or the caret at the end (↑ from the body). */
   titleFocusSelect = $state(true);
   treeFocusTick = $state(0);
+  /** A softer request than `treeFocusTick`: the tree takes the keyboard only if it is on screen and nothing else has it. */
+  treeRestTick = $state(0);
 
   /** The sidebar shows search results instead of the tree. */
   get searching(): boolean {
@@ -144,6 +146,15 @@ class UiStore {
     if (!settings.values.sidebarVisible) settings.update({ sidebarVisible: true });
     this.showFiles();
     this.treeFocusTick++;
+  };
+
+  /**
+   * The main area lost what had the keyboard (its file is gone): the tree takes it, where the
+   * arrows go on and the undo key takes the removal back (TREE-21). Nothing changes when the
+   * tree is not on screen, or while a field of the sidebar or an overlay has the keyboard.
+   */
+  restInTree = (): void => {
+    this.treeRestTick++;
   };
 }
 

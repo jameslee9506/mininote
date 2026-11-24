@@ -55,7 +55,7 @@
    * the title keeps focus (Mod+N, back/forward keys, mouse buttons 3/4, a search hit), with no
    * blur first; the text is then committed against that file (UI-4).
    */
-  let draft: { from: VaultPath; text: string } | null = null;
+  let draft: { from: VaultPath; text: string; naming: boolean } | null = null;
 
   /**
    * The day the shown note or code file was created (EDIT-15), on macOS and Windows only:
@@ -200,11 +200,13 @@
       if (exit === "body") leave("start");
       return;
     }
+    // The name typed for a new note with no text yet is part of creating it: no undo of its own (TREE-21).
+    const naming = placeholder;
     if (verdict.kind === "invalid") {
       // It stays for as long as the refused text does; under a title that went back, a while.
       report(verdict.message, exit === "blur");
       if (exit === "blur") value = rest;
-      else draft = { from, text: typed };
+      else draft = { from, text: typed, naming };
       return;
     }
     report(null);
@@ -218,7 +220,7 @@
     try {
       // vault.rename reports refusals itself, and only re-targets a virtual note, which has no
       // file yet (EDIT-15, LINK-05).
-      to = await vault.rename(from, verdict.target);
+      to = await vault.rename(from, verdict.target, { record: !naming });
     } catch (e) {
       console.error("rename failed", e);
       ui.notify(t("errRename", { name: titleFor(from) }));
@@ -232,7 +234,7 @@
     }
     // Refused after all: back to the title with the typed text, unless the user went elsewhere.
     value = typed;
-    draft = { from, text: typed };
+    draft = { from, text: typed, naming };
     const active = document.activeElement;
     if (active === null || active === document.body || active.closest(".cm-editor") !== null) {
       ui.focusTitle({ select: false });
@@ -240,7 +242,7 @@
   }
 
   /** Commits text typed for a file that is no longer shown, against that file (UI-4). */
-  async function commitDraft(d: { from: VaultPath; text: string }): Promise<void> {
+  async function commitDraft(d: { from: VaultPath; text: string; naming: boolean }): Promise<void> {
     const verdict = plan(d.from, d.text);
     if (verdict.kind === "same") return;
     if (verdict.kind === "invalid") {
@@ -248,7 +250,7 @@
       return;
     }
     try {
-      await vault.rename(d.from, verdict.target);
+      await vault.rename(d.from, verdict.target, { record: !d.naming });
     } catch (e) {
       console.error("rename failed", e);
       ui.notify(t("errRename", { name: titleFor(d.from) }));
@@ -289,7 +291,7 @@
     report(null);
     // A new note's field emptied again holds nothing to commit: its name stands (TREE-04).
     if (editor.path === null || (placeholder && clean.trim() === "")) draft = null;
-    else draft = { from: editor.path, text: clean };
+    else draft = { from: editor.path, text: clean, naming: placeholder };
   }
 
   function onBlur(): void {

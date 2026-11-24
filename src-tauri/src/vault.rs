@@ -14,6 +14,7 @@ use tauri::{AppHandle, Emitter, EventTarget, Manager, WebviewWindow};
 
 use crate::error::{AppError, AppResult, ErrorKind};
 use crate::fs_ops::{LinkTargets, SelfWrites};
+use crate::trashcan::TrashRecords;
 use crate::{store, watcher, windows};
 
 /// Event name; mirrors `EVENT_VAULT_FORGOTTEN` in src/lib/ipc/events.ts.
@@ -51,6 +52,8 @@ pub struct VaultState {
     registry: Mutex<SelfWrites>,
     /// The links the last listing found, by the file each leads to (TREE-18).
     links: Mutex<Arc<LinkTargets>>,
+    /// The entries `path_trash` put in the trash, for `path_restore` (TREE-21).
+    trashed: Mutex<TrashRecords>,
     /// Bumped by every search (and vault switch); a running search stops when it changes.
     pub search_gen: AtomicU64,
     /// Serializes this window's `vault_open` and `vault_close` calls.
@@ -65,6 +68,7 @@ impl VaultState {
             watcher: Mutex::new(None),
             registry: Mutex::new(SelfWrites::default()),
             links: Mutex::new(Arc::default()),
+            trashed: Mutex::new(TrashRecords::default()),
             search_gen: AtomicU64::new(0),
             open_lock: Mutex::new(()),
         }
@@ -155,6 +159,12 @@ impl VaultState {
         }
     }
 
+    /// The entries this vault's deletes put in the trash (lock it briefly; never
+    /// across file I/O).
+    pub fn trashed(&self) -> MutexGuard<'_, TrashRecords> {
+        lock(&self.trashed)
+    }
+
     /// The open vault folder, if any.
     pub fn root_path(&self) -> Option<PathBuf> {
         let root = self.root.read().unwrap_or_else(PoisonError::into_inner);
@@ -162,8 +172,8 @@ impl VaultState {
     }
 
     /// Makes `root` the active vault (`None`: no vault) under `epoch`: clears the
-    /// registry and the links, cancels running searches and hands back the previous
-    /// watcher for the caller to drop.
+    /// registry, the links and the trash records, cancels running searches and
+    /// hands back the previous watcher for the caller to drop.
     fn activate(&self, root: Option<Root>, epoch: u64) -> Option<watcher::VaultWatcher> {
         let mut slot = lock(&self.watcher);
         {
@@ -173,6 +183,7 @@ impl VaultState {
         }
         self.registry().clear();
         *lock(&self.links) = Arc::default();
+        self.trashed().clear();
         self.search_gen.fetch_add(1, Ordering::SeqCst);
         slot.take()
     }

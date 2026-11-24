@@ -171,8 +171,18 @@ export const pathRename = (from: VaultPath, to: VaultPath, at?: number) => scope
  */
 export const pathCopy = (from: VaultPath, to: VaultPath, at?: number) => scoped<void>("path_copy", { from, to }, at);
 
-/** Moves a file/folder to the OS trash; rejects with "trash_failed" if unsupported. */
-export const pathTrash = (path: VaultPath, at?: number) => scoped<void>("path_trash", { path }, at);
+/**
+ * Moves a file/folder to the OS trash; rejects with "trash_failed" if unsupported. Resolves to
+ * the ticket `pathRestore` brings it back with (TREE-21).
+ */
+export const pathTrash = (path: VaultPath, at?: number) => scoped<number>("path_trash", { path }, at);
+
+/**
+ * Brings the file/folder of `ticket` back from the OS trash to the path it had. Rejects with
+ * "not_found" when it is no longer in the trash, and with "exists" when its path is taken:
+ * nothing is ever replaced.
+ */
+export const pathRestore = (ticket: number, at?: number) => scoped<void>("path_restore", { ticket }, at);
 
 /** Permanently deletes a file/folder (only after explicit user confirmation). */
 export const pathDelete = (path: VaultPath, at?: number) => scoped<void>("path_delete", { path }, at);

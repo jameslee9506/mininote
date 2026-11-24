@@ -7,6 +7,7 @@ mod fs_ops;
 mod headless;
 mod search;
 mod store;
+mod trashcan;
 mod vault;
 mod watcher;
 mod windows;
@@ -106,6 +107,7 @@ pub fn run() {
             fs_ops::path_copy,
             fs_ops::path_rename,
             fs_ops::path_trash,
+            fs_ops::path_restore,
             fs_ops::path_delete,
             fs_ops::path_exists,
             fs_ops::path_reveal,

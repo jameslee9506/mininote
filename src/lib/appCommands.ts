@@ -16,7 +16,9 @@ import { fresh } from "./state/newNote.svelte";
 import { settings } from "./state/settings.svelte";
 import { ui } from "./state/ui.svelte";
 import { vault } from "./state/vault.svelte";
+import type { StepKind } from "./state/fileSteps";
 import type { VaultPath } from "./types";
+import { matchShortcut } from "./utils/keys";
 import { dirname } from "./utils/path";
 import { isMac } from "./utils/platform";
 
@@ -280,7 +282,8 @@ export function discardNewNote(title?: string): boolean {
   discardingNewNote = draft;
   void safe(async () => {
     try {
-      if ((await vault.remove(path, eligible)) && fresh.note === draft) fresh.note = null;
+      // Never kept, so no undo brings it back (TREE-21).
+      if ((await vault.remove(path, { guard: eligible, record: false })) && fresh.note === draft) fresh.note = null;
     } finally {
       if (discardingNewNote === draft) discardingNewNote = null;
     }
@@ -311,6 +314,25 @@ export function leaveNewNote(): void {
 export async function newFolder(dir?: VaultPath): Promise<void> {
   showFilesPanel();
   await vault.createFolder(dir);
+}
+
+// ── Undo and redo of a file operation (TREE-21) ────────────────────────────
+
+/**
+ * The system's undo or redo key, as a step of the file operations: Mod+Z, Mod+Shift+Z, and
+ * Ctrl+Y where that is redo. The keys are the text's wherever text is edited (and reserved,
+ * SET-06), so they are no command of the registry, which would take them everywhere: the tree
+ * asks while it has the keyboard, and the shell while nothing is shown.
+ */
+export function fileStepKey(e: KeyboardEvent): StepKind | null {
+  if (matchShortcut(e, "Mod-z")) return "undo";
+  if (matchShortcut(e, "Mod-Shift-z") || (!isMac && matchShortcut(e, "Mod-y"))) return "redo";
+  return null;
+}
+
+/** Takes back the last file operation, or does again the one taken back last. */
+export function runFileStep(kind: StepKind): void {
+  void safe(() => (kind === "undo" ? vault.undo() : vault.redo()))();
 }
 
 const MAX_QUERY_CHARS = 200;

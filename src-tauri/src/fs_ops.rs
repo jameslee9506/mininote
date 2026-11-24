@@ -1,6 +1,6 @@
 //! Vault file operations: listing, reading, atomic writes, create, copy, rename,
-//! trash, delete, reveal (ARCHITECTURE §6.2–6.3), plus the self-write registry the
-//! watcher consults (SAVE-05).
+//! trash and restore, delete, reveal (ARCHITECTURE §6.2–6.3), plus the self-write
+//! registry the watcher consults (SAVE-05).
 //!
 //! A link (a symlink) that leads to a regular file is a file of the vault: listed,
 //! read, searched and written as that file (TREE-18). A link that leads to a
@@ -21,6 +21,7 @@ use tauri::{AppHandle, Manager, WebviewWindow};
 use unicode_normalization::UnicodeNormalization;
 
 use crate::error::{AppError, AppResult, ErrorKind};
+use crate::trashcan::{self, RestoreError, Trashed};
 use crate::vault::{self, blocking, VaultState};
 
 /// Notes larger than this are refused by `note_read` (SAVE-11).
@@ -1850,35 +1851,81 @@ fn case_rename_temp(from: &Path) -> io::Result<PathBuf> {
 // ---------------------------------------------------------------- trash, delete, exists, reveal
 
 /// `path_trash` (scoped): moves to the OS trash; `trash_failed` when unsupported.
+/// Returns the ticket `path_restore` brings the entry back with (TREE-21).
 #[tauri::command]
-pub async fn path_trash(window: WebviewWindow, epoch: u64, path: String) -> AppResult<()> {
+pub async fn path_trash(window: WebviewWindow, epoch: u64, path: String) -> AppResult<u64> {
     blocking(&window, move |state| {
         let root = state.check(epoch)?;
-        trash_entry(&root, &path)
+        let trashed = trash_entry(&root, &path)?;
+        Ok(state.trashed().insert(path, trashed))
     })
     .await
 }
 
 /// Moves the entry `rel` to the OS trash (`path_trash`): a link itself, never its
 /// file.
-pub fn trash_entry(root: &Path, rel: &str) -> AppResult<()> {
+pub fn trash_entry(root: &Path, rel: &str) -> AppResult<Trashed> {
     if rel.is_empty() {
         return Err(invalid("the vault folder cannot be deleted"));
     }
     let abs = vault::resolve(root, rel)?;
     lstat(&abs, rel)?;
-    #[allow(unused_mut)]
-    let mut trash = trash::TrashContext::default();
-    #[cfg(target_os = "macos")]
-    {
-        // The default method drives Finder through AppleScript and can raise
-        // an Automation permission prompt (TREE-08).
-        use trash::macos::{DeleteMethod, TrashContextExtMacos};
-        trash.set_delete_method(DeleteMethod::NsFileManager);
+    trashcan::put(&abs).map_err(|e| AppError::new(ErrorKind::TrashFailed, format!("{rel}: {e}")))
+}
+
+/// `path_restore` (scoped): brings the entry of `ticket` back from the trash to
+/// the path it had (TREE-21). `not_found` when it is no longer in the trash,
+/// `exists` when something has taken its path: nothing is ever replaced.
+#[tauri::command]
+pub async fn path_restore(window: WebviewWindow, epoch: u64, ticket: u64) -> AppResult<()> {
+    blocking(&window, move |state| {
+        let root = state.check(epoch)?;
+        let (rel, trashed) = state
+            .trashed()
+            .get(ticket)
+            .ok_or_else(|| not_found("the trashed entry"))?;
+        restore_entry(state, &root, &rel, &trashed)?;
+        state.trashed().remove(ticket);
+        Ok(())
+    })
+    .await
+}
+
+/// Brings `trashed`, the entry that was at `rel`, back to that path
+/// (`path_restore`), with the folders it was in when they are gone too.
+fn restore_entry(state: &VaultState, root: &Path, rel: &str, trashed: &Trashed) -> AppResult<()> {
+    let abs = vault::resolve(root, rel)?;
+    // A ticket names an entry of the vault it was given out in.
+    if abs != trashed.original {
+        return Err(not_found(rel));
     }
-    trash
-        .delete(&abs)
-        .map_err(|e| AppError::new(ErrorKind::TrashFailed, format!("{rel}: {e}")))
+    let free = || {
+        fs::symlink_metadata(&abs).is_err_and(|e| {
+            matches!(
+                e.kind(),
+                io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+            )
+        })
+    };
+    let taken = || AppError::new(ErrorKind::Exists, format!("already exists: {rel}"));
+    if !free() {
+        return Err(taken());
+    }
+    ensure_parent_dirs(root, &abs)?;
+    trashcan::take_back(trashed, &abs, &free).map_err(|e| match e {
+        RestoreError::Gone => not_found(rel),
+        RestoreError::Taken => taken(),
+        RestoreError::Other(message) => {
+            AppError::new(ErrorKind::Io, format!("restore {rel}: {message}"))
+        }
+    })?;
+    if let Some(dir) = abs.parent() {
+        sync_dir(dir);
+    }
+    // An older record of this path (the source of a rename) is not about the
+    // entry that is there again.
+    state.registry().remove(&abs);
+    Ok(())
 }
 
 /// `path_delete` (scoped): permanent, recursive; only after confirmation.

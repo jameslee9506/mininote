@@ -30,6 +30,11 @@ dunce = "1"
 log = "0.4"
 percent-encoding = "2"
 
+# The trash is asked where a deleted entry went, so that it can be brought back (TREE-21).
+# This is the crate, version and features the `trash` crate already brings in.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSError", "NSFileManager", "NSString", "NSURL"] }
+
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-single-instance = "2.5"
 tauri-plugin-process = "2.4"

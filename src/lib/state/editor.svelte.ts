@@ -598,12 +598,11 @@ class EditorStore {
     });
 
   /**
-   * A file/folder is gone (in-app delete): drop its controllers without saving,
-   * show the previous history entry (or nothing) if it was open, prune history,
-   * recent list and cache. With `reveal` false, the entry shown is not revealed in the tree.
+   * A file/folder is gone (in-app delete): drop its controllers without saving, prune
+   * history, recent list and cache. If it was open, nothing is shown in its place
+   * (TREE-08): the main area is blank, and Back leads to the file shown before it.
    */
-  onPathRemoved = (path: VaultPath, opts?: { reveal?: boolean }): void =>
-    untrack(() => this.#forget((p) => isSameOrAncestor(path, p), opts?.reveal));
+  onPathRemoved = (path: VaultPath): void => untrack(() => this.#forget((p) => isSameOrAncestor(path, p)));
 
   /**
    * A note with live state changed on disk (watcher, focus re-check, or a removal
@@ -1233,27 +1232,11 @@ class EditorStore {
     this.#syncHistory();
   }
 
-  #openEntry(e: HistoryEntry, focus?: OpenOptions["focus"], reveal?: boolean): Promise<OpenResult> {
+  #openEntry(e: HistoryEntry): Promise<OpenResult> {
     const listed = vault.node(e.path) !== undefined;
-    if (!listed && e.virtual) return this.#openVirtual(e.path, { history: false, focus });
+    if (!listed && e.virtual) return this.#openVirtual(e.path, { history: false });
     if (!listed && !vault.truncated) return Promise.resolve("failed");
-    return this.#open(e.path, { history: false, focus, reveal });
-  }
-
-  /**
-   * After the open file was removed: the previous history entry, else nothing (TREE-08, SAVE-07).
-   * It takes keyboard focus only as the editor had it: a delete from the tree keeps the tree's.
-   * With `reveal` false the tree keeps its selection too (a new note left by a click there, TREE-04).
-   */
-  async #fallback(focus: OpenOptions["focus"], reveal?: boolean): Promise<void> {
-    for (let guard = 0; guard < HISTORY_LIMIT; guard++) {
-      const entry = this.#history.current;
-      if (!entry) break;
-      const r = await this.#openEntry(entry, focus, reveal);
-      if (r !== "failed") break;
-      this.#history.remove((e) => e === entry);
-    }
-    this.#syncHistory();
+    return this.#open(e.path, { history: false });
   }
 
   #syncHistory(): void {
@@ -1261,12 +1244,13 @@ class EditorStore {
     this.canForward = this.#history.canForward;
   }
 
-  /** Drops every controller whose path matches, plus history and session entries. */
-  #forget(match: (p: VaultPath) => boolean, reveal?: boolean): void {
+  /**
+   * Drops every controller whose path matches, plus history and session entries. When the
+   * shown file is one of them, nothing takes its place (TREE-08, SAVE-07): the main area is
+   * blank, an open under way is cut short, and the keyboard the file had goes to the tree.
+   */
+  #forget(match: (p: VaultPath) => boolean): void {
     let wasShown = this.path !== null && match(this.path);
-    // Read before anything is disposed: dropping the shown note empties the view (and its find panel).
-    const active = document.activeElement;
-    const focus: OpenOptions["focus"] = this.#view && active !== null && this.#view.dom.contains(active) ? "editor" : "none";
     for (const n of [...this.#notes.values()]) {
       if (!match(n.path)) continue;
       if (n === this.#current) wasShown = true;
@@ -1279,8 +1263,9 @@ class EditorStore {
     this.#syncHistory();
     if (wasShown) {
       ++this.#openSeq;
+      this.loading = false;
       this.#showNothing();
-      void this.#fallback(focus, reveal);
+      ui.restInTree();
     }
   }
 
