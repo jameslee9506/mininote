@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { EditorSelection, EditorState, type Extension, type StateCommand } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
-import { deleteCharBackward, history, undo } from "@codemirror/commands";
+import { deleteCharBackward, deleteCharForward, deleteGroupBackward, history, undo } from "@codemirror/commands";
 import { commonmarkLanguage, deleteMarkupBackward, markdown } from "@codemirror/lang-markdown";
 import { indentUnit } from "@codemirror/language";
 import { GFM } from "@lezer/markdown";
@@ -19,7 +19,7 @@ import {
   listLinePrefix,
   outdentListOrLines,
   outdentWhitespace,
-  renumberAfterDelete,
+  renumberLists,
   setHeading,
   toggleBold,
   toggleItalic,
@@ -217,7 +217,7 @@ describe("Enter in lists", () => {
   });
 });
 
-describe("deleting ordered items", () => {
+describe("numbering ordered lists", () => {
   const enter: StateCommand = (target) => continueMarkup(target as unknown as EditorView);
   /** Deletes the selection, as a key or a cut does. */
   const remove: StateCommand = ({ state, dispatch }) => {
@@ -226,7 +226,27 @@ describe("deleting ordered items", () => {
   };
   /** Backspace as the editor binds it: the markup first, then the character. */
   const backspace: StateCommand = (target) => deleteMarkupBackward(target) || deleteCharBackward(target as unknown as EditorView);
-  const del = (marked: string, cmd: StateCommand = remove) => run(cmd, marked, renumberAfterDelete);
+  const forward: StateCommand = (target) => deleteCharForward(target as unknown as EditorView);
+  const wordBack: StateCommand = (target) => deleteGroupBackward(target as unknown as EditorView);
+  /** Puts `text` in place of the selection, as typing (the default), a paste or a command does. */
+  const put =
+    (text: string, userEvent = "input.type"): StateCommand =>
+    ({ state, dispatch }) => {
+      dispatch(state.update(state.replaceSelection(text), { userEvent }));
+      return true;
+    };
+  /** Runs the commands one after another, with the numbers kept. */
+  const edit = (marked: string, ...cmds: StateCommand[]): string | null => {
+    const steps: StateCommand = ({ state, dispatch }) => {
+      let next = state;
+      for (const cmd of cmds) cmd({ state: next, dispatch: (tr) => (next = tr.state) });
+      dispatch(next.update({}));
+      return true;
+    };
+    return run(steps, marked, renumberLists);
+  };
+  const del = (marked: string, cmd: StateCommand = remove) => edit(marked, cmd);
+  const times = (cmd: StateCommand, count: number): StateCommand[] => Array.from({ length: count }, () => cmd);
 
   it("numbers the items after a removed one, as far as they counted up", () => {
     expect(del("1. a\n|2. b\n|3. c\n4. d")).toBe("1. a\n|2. c\n3. d");
@@ -236,7 +256,10 @@ describe("deleting ordered items", () => {
     expect(del("1. a\n|2. b\n|3. c\n7. d")).toBe("1. a\n|2. c\n7. d");
     expect(del("1. a\n|1. b\n|1. c")).toBe("1. a\n|1. c");
     // Lists that a deletion only joins keep their numbers.
-    expect(del("1. a\n\n|b\n\n|1. c")).toBe("1. a\n\n|1. c");
+    expect(del("1. a\n2. b\n\n|c\n\n|1. d\n2. e")).toBe("1. a\n2. b\n\n|1. d\n2. e");
+    // A number that never counted on is no part of the list's count: a date stays a date.
+    expect(del("1. a\n|2. b\n|2025. 11. 24.")).toBe("1. a\n|2025. 11. 24.");
+    expect(del("x\n2025. 11. 24.\n|1. a\n|2. b")).toBe("x\n2025. 11. 24.\n|1. b");
   });
 
   it("takes Backspace through the marker, and a line joined to the one above", () => {
@@ -245,6 +268,8 @@ describe("deleting ordered items", () => {
     // Enter in front of that marker gives the item back, and the numbers with it.
     expect(run(enter, "1. a|2. b\n2. c")).toBe("1. a\n|2. b\n3. c");
     expect(run(enter, "1. a|2. b\n3. c")).toBe("1. a\n|2. b\n3. c");
+    expect(edit("# H\n|1. a\n2. b", backspace)).toBe("# H|1. a\n1. b");
+    expect(edit("# H\n|1. a\n2. b", backspace, put("\n", "input"))).toBe("# H\n|1. a\n2. b");
   });
 
   it("keeps the number a list started with", () => {
@@ -254,14 +279,46 @@ describe("deleting ordered items", () => {
     expect(del("|0. a\n|1. b\n2. c")).toBe("|1. b\n2. c");
     // The first item's text stays as a line of text: only "1." starts a list right below it.
     expect(del("1. |a\n2. b\n3. c", backspace)).toBe("|a\n1. b\n2. c");
-    expect(del("5. |a\n6. b", backspace)).toBe("|a\n6. b");
-    // A first item joined to the line above still has its marker, for Enter to give it back.
-    expect(del("# H\n|1. a\n2. b", backspace)).toBe("# H|1. a\n2. b");
+    expect(del("5. |a\n6. b", backspace)).toBe("|a\n5. b");
   });
 
-  it("leaves a number that is being typed", () => {
-    expect(del("1|. a\n2. b", backspace)).toBe("|. a\n2. b");
-    expect(del("10. a\n1|1. b\n12. c", backspace)).toBe("10. a\n|1. b\n12. c");
+  it("counts an item out however many edits remove it", () => {
+    // Word by word (Alt-Backspace): the marker goes in two parts.
+    expect(edit("# H\n1. aa|\n2. b\n3. c", ...times(wordBack, 3))).toBe("# H\n|\n1. b\n2. c");
+    // Forward, from the line above and from the marker's first digit.
+    expect(edit("# H|\n1. a\n2. b", ...times(forward, 5))).toBe("# H|\n1. b");
+    expect(edit("1. a\n|2. b\n3. c", forward)).toBe("1. a\n|. b\n2. c");
+    expect(edit("1. a\n|2. b\n3. c", ...times(forward, 5))).toBe("1. a\n|2. c");
+    expect(edit("1. a\n\n|2. b\n\n3. c", ...times(forward, 6))).toBe("1. a\n\n|2. c");
+  });
+
+  it("follows a list that is text for a while", () => {
+    // Below a line of text, a list with an empty first item is text, and so is one in a bullet or a quote.
+    expect(edit("p\n1. a|\n2. b\n3. c", ...times(backspace, 2))).toBe("p\n1.|\n2. b\n3. c");
+    expect(edit("p\n1. a|\n2. b\n3. c", ...times(backspace, 5))).toBe("p|\n1. b\n2. c");
+    expect(edit("- p\n  1. a|\n  2. b", ...times(backspace, 4))).toBe("- p\n  |\n  1. b");
+    expect(edit("> p\n> 1. a|\n> 2. b", ...times(backspace, 4))).toBe("> p\n> |\n> 1. b");
+    // Text that never was a list takes no number, unless that makes it one.
+    expect(del("p\n|3. a\n|4. b")).toBe("p\n|4. b");
+    expect(del("p\n|1. \n|2. b")).toBe("p\n|1. b");
+  });
+
+  it("lets the items below follow a number that is typed", () => {
+    expect(edit("|2|. a\n3. b\n4. c", put("1"))).toBe("1|. a\n2. b\n3. c");
+    expect(edit("9|. a\n10. b", backspace)).toBe("|. a\n9. b");
+    expect(del("10. a\n1|1. b\n12. c", backspace)).toBe("10. a\n|1. b\n2. c");
+    // An item that comes back takes its number back.
+    expect(edit("1|. a\n2. b", backspace)).toBe("|. a\n1. b");
+    expect(edit("1|. a\n2. b", backspace, put("1"))).toBe("1|. a\n2. b");
+    expect(edit("# H\n|\n1. a\n2. b", put("1"), put("."))).toBe("# H\n1.|\n2. a\n3. b");
+    expect(edit("# H\n|\n1. a\n2. b", put("1"), put("."), put("x"))).toBe("# H\n1.x|\n1. a\n2. b");
+  });
+
+  it("counts on from what a paste puts in with a number that is taken", () => {
+    expect(edit("|1. a\n2. b", put("1. x\n2. y\n", "input.paste"))).toBe("1. x\n2. y\n|3. a\n4. b");
+    expect(edit("|1. a\n2. b", put("2025. 11. 24.\n", "input.paste"))).toBe("2025. 11. 24.\n|1. a\n2. b");
+    expect(edit("|1. a\n1. b", put("1. x\n", "input.paste"))).toBe("1. x\n|1. a\n1. b");
+    expect(edit("1. a\n|2. b\n|3. c", put("x\n", "input.paste"))).toBe("1. a\nx\n|2. c");
   });
 
   it("keeps the numbers where a narrower one would change what a line belongs to", () => {
@@ -270,12 +327,16 @@ describe("deleting ordered items", () => {
     expect(del("8. a\n|9. b\n|10. c\n    d")).toBe("8. a\n|9. c\n    d");
   });
 
-  it("acts on deletions alone, in their own undo step", () => {
-    const typed: StateCommand = ({ state, dispatch }) => {
-      dispatch(state.update(state.replaceSelection(""), { userEvent: "input" }));
-      return true;
-    };
-    expect(del("1. a\n|2. b\n|3. c", typed)).toBe("1. a\n|3. c");
+  it("reads a long list to its end", () => {
+    const items = Array.from({ length: 120 }, (_, i) => `${i + 1}. ${"text ".repeat(8)}`);
+    const left = del(`|${items[0]}\n|${items.slice(1).join("\n")}`)!;
+    expect(left.slice(left.lastIndexOf("\n") + 1, left.lastIndexOf("\n") + 6)).toBe("119. ");
+  });
+
+  it("leaves typed text alone, and numbers in the edit's own undo step", () => {
+    // Hangul reaches the editor as plain typing on WKWebView: nothing may be added to it.
+    expect(edit("1. a\n|2. b\n|3. c", put("가"))).toBe("1. a\n가|3. c");
+    expect(edit("1. a\n|2. b\n|3. c", put("x", "input.type.compose"))).toBe("1. a\nx|3. c");
     // Shift-Tab numbers what it moves by itself.
     expect(del("1. a\n\t1. b|\n\t2. c\n2. d", outdentListOrLines)).toBe("1. a\n2. b|\n\t1. c\n3. d");
     const undone: StateCommand = ({ state, dispatch }) => {
@@ -283,7 +344,7 @@ describe("deleting ordered items", () => {
       remove({ state, dispatch: (tr) => (next = tr.state) });
       return undo({ state: next, dispatch });
     };
-    expect(run(undone, "1. a\n|2. b\n|3. c", [renumberAfterDelete, history()])).toBe("1. a\n|2. b\n|3. c");
+    expect(run(undone, "1. a\n|2. b\n|3. c", [renumberLists, history()])).toBe("1. a\n|2. b\n|3. c");
   });
 });
 

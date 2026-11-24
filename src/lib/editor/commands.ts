@@ -5,13 +5,14 @@
  */
 import { completionStatus } from "@codemirror/autocomplete";
 import { EditorSelection, EditorState, Prec, countColumn } from "@codemirror/state";
-import type { ChangeDesc, ChangeSet, ChangeSpec, Extension, Line, StateCommand, Transaction } from "@codemirror/state";
+import type { ChangeDesc, ChangeSet, ChangeSpec, Extension, Line, StateCommand, Text, Transaction } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import type { Command, KeyBinding } from "@codemirror/view";
 import { ensureSyntaxTree, forceParsing, syntaxTree, syntaxTreeAvailable } from "@codemirror/language";
 import { indentLess, insertTab } from "@codemirror/commands";
 import { insertNewlineContinueMarkupCommand } from "@codemirror/lang-markdown";
 import type { SyntaxNode, Tree } from "@lezer/common";
+import { GFM, parser as baseParser } from "@lezer/markdown";
 import type { MessageKey } from "../i18n";
 import { parseWikiInner } from "../markdown/resolve";
 import { matchShortcut } from "../utils/keys";
@@ -19,6 +20,7 @@ import { isComposing } from "../utils/platform";
 import type { EditorHost, LinkTarget } from "./host";
 import { linkUrl } from "./livePreview/links";
 import { autolinkHref } from "./livePreview/model";
+import { markdownExtensions } from "./syntax";
 
 /** An edit inside one line; offsets are relative to the line start. */
 export interface LineEdit {
@@ -41,6 +43,10 @@ const LITERAL_BLOCKS = new Set(["FencedCode", "CodeBlock", "HTMLBlock"]);
 const DELIMS = /^[*_~=]*$/;
 
 const PARSE_BUDGET_MS = 50;
+/** How much further to parse, at first, for the end of a block that is still open (`reachEnd`). */
+const PARSE_STEP = 4096;
+/** The longest stretch whose lists an edit numbers again: reading more than this twice would stall typing. */
+const OUTLINE_LIMIT = 1 << 18;
 const TAB_COLUMNS = 4;
 
 /** The syntax tree up to `upto`, parsing a little further when the parser lags (large notes). */
@@ -956,7 +962,7 @@ const continueItem: StateCommand = ({ state, dispatch }) => {
  * Enter in front of an existing list marker ("- a|- b"): break the line without adding a
  * second marker. A number that counts on from the item's own ("1. a|2. b") makes the next
  * item, so the items below count on from it: joining the two lines took them one down
- * (`renumberAfterDelete`), and this gives it back.
+ * (`renumberLists`), and this gives it back.
  */
 const splitBeforeMarker: StateCommand = ({ state, dispatch }) => {
   const sel = state.selection;
@@ -1042,245 +1048,363 @@ export const insertSoftBreak: StateCommand = ({ state, dispatch }) => {
   return true;
 };
 
-// ── Lists: deleting an item (EDIT-03) ────────────────────────────────────
+// ── Lists: numbers after an edit (EDIT-03) ───────────────────────────────
 
-/** Blocks that can hold a list: a search for list markers enters nothing else. */
+/** Blocks that can hold a list: a search for list items enters nothing else. */
 const LIST_HOLDERS = new Set(["Document", "Blockquote", "BulletList", "OrderedList", "ListItem"]);
+/** An ordered marker where a line's own text starts. */
+const ORDERED_START = /^\d{1,9}[.)](?:[ \t]|$)/;
+/** A line that starts an ordered item, behind quotes, outer markers and indentation. */
+const ORDERED_LINE = /^(?:[ \t>]|[-+*][ \t]|\d{1,9}[.)][ \t])*\d{1,9}[.)](?:[ \t]|$)/m;
+/** What a line holds in front of a list marker, and in one: an edit behind anything else leaves the line's markers alone. */
+const MARKUP_ONLY = /^[ \t>*+\-\d.)]*$/;
 
-/** The ListMark that starts at `pos`, or null. */
-function listMarkAt(tree: Tree, pos: number): SyntaxNode | null {
-  const node = tree.resolveInner(pos, 1);
-  return node.name === "ListMark" && node.from === pos ? node : null;
-}
+/** Every inline parser of the editor's Markdown (CommonMark, GFM, `markdownExtensions`). */
+const INLINE_PARSERS = [
+  "Escape",
+  "Entity",
+  "InlineCode",
+  "HTMLTag",
+  "Emphasis",
+  "HardBreak",
+  "Link",
+  "Image",
+  "LinkEnd",
+  "Strikethrough",
+  "Autolink",
+  "WikiLink",
+  "Highlight",
+];
 
-/** An ordered item that a deletion reaches. */
-interface ReachedItem {
-  item: SyntaxNode;
-  mark: SyntaxNode;
-  number: number;
-  /** The deletion took the whole marker. */
-  whole: boolean;
-}
+/**
+ * The dialect as the numbers read it: every ordered item ends a paragraph. In the editor's
+ * own reading only a "1." with text does that outside an ordered list, so a list right below
+ * a line of text is text itself while its first item is empty, or while a marker above it is
+ * half deleted, and a list again afterwards. Read this way it is a list all along, and the
+ * lists an edit leaves can be compared with the lists it found.
+ */
+const outlineParser = baseParser
+  .configure([
+    GFM,
+    ...markdownExtensions,
+    { parseBlock: [{ name: "OrderedBreak", endLeaf: (_cx, line) => ORDERED_START.test(line.text.slice(line.pos)) }] },
+  ])
+  // Blocks are all it is asked for: the text inside them is left unread.
+  .configure({ remove: INLINE_PARSERS });
 
-/** What a deletion removed right before an ordered item that stayed. */
-interface Removed {
-  /** The number of the removed item it followed. */
-  last: number;
-  /** The number its list started with, where it takes that number over; else null. */
-  first: number | null;
-  /** Its own marker ("3."), as it was. */
-  mark: string;
-}
-
-/** The ordered items that followed one a deletion removed, read in the state `mid` that the deletion leaves. */
-interface Followers {
-  /** By the start of their marker in `mid`. */
-  followed: Map<number, Removed>;
-  mid: EditorState;
+/** A stretch of a document as `outlineParser` reads it. The positions in `tree` count from `at`. */
+interface Outline {
   tree: Tree;
-  /** Where the lists of these items end in `mid`, at the latest. */
-  upto: number;
+  at: number;
+  text: string;
+}
+
+function outlineOf(doc: Text, from: number, to: number): Outline {
+  const text = doc.sliceString(from, to);
+  return { tree: outlineParser.parse(text), at: from, text };
+}
+
+/** Calls `f` for every ordered item of `outline`, in document order, with the start of its marker and its digits. */
+function eachOrderedItem(outline: Outline, f: (item: SyntaxNode, from: number, digits: string) => void): void {
+  outline.tree.iterate({
+    enter: (n) => {
+      if (n.name !== "ListItem") return LIST_HOLDERS.has(n.name);
+      const item = n.node;
+      const mark = item.parent?.name === "OrderedList" ? listMark(item) : null;
+      const digits = mark && /^\d+/.exec(outline.text.slice(mark.from, mark.to))?.[0];
+      if (mark && digits) f(item, outline.at + mark.from, digits);
+      return true;
+    },
+  });
+}
+
+/** The ListMark of an ordered item that starts at `pos`, or null. */
+function orderedMarkAt(tree: Tree, pos: number): SyntaxNode | null {
+  const node = tree.resolveInner(pos, 1);
+  return node.name === "ListMark" && node.from === pos && node.parent?.parent?.name === "OrderedList" ? node : null;
+}
+
+/** An ordered item of the document before the edit. */
+interface Was {
+  item: SyntaxNode;
+  /** Where its marker started. */
+  from: number;
+  number: number;
+  /** The item it is after the edit, or null when it is none any more. */
+  now: Numbered | null;
+}
+
+/** An ordered item of the document the edit leaves. */
+interface Numbered {
+  /** Where its marker starts. */
+  from: number;
+  digits: string;
+  /** Its list: where that one starts in the outline. */
+  list: number;
+  /** The item it was, or null for one the edit made. */
+  was: Was | null;
+  /** The edit changed its marker and left it one: the number is the user's. */
+  edited: boolean;
+  /** The number it gets. */
+  number: number;
 }
 
 /**
- * The ordered items that followed one `tr` removed, or null without any.
- *
- * An item is removed when the deletion takes its whole marker, or leaves the marker where
- * it no longer starts an item: its line was joined to the one above. A marker that lost a
- * part is not removed, since it is being typed: "12." cut down to "2.", or "1." down to "."
- * for another number. Nor is one whose line reads as before up to its end, whatever the
- * lines above it became.
- *
- * What followed takes over the number its list started with where every item before it
- * went with its marker. After an item that was only joined to the line above it does not:
- * that marker is there as text, and Enter in front of it gives the item back.
+ * True when `tr` can change the items of an ordered list, which nearly no edit does. It has
+ * to change which lines start an item: add or remove a line break, or change a line where
+ * nothing but markup stands before the change. And an ordered marker has to be there: on a
+ * line the edit changes, in what it removes, or on the line below, where a list it joins or
+ * uncovers begins.
  */
-function followersOfRemoved(tr: Transaction): Followers | null {
-  const state = tr.startState;
+function mayRenumber(tr: Transaction): boolean {
+  const before = tr.startState.doc;
+  const after = tr.newDoc;
+  let markup = false;
+  let ordered = false;
+  tr.changes.iterChanges((fromA, toA, fromB, toB) => {
+    const line = before.lineAt(fromA);
+    const first = after.lineAt(fromB);
+    const last = after.lineAt(toB);
+    markup ||= toA > line.to || last.number > first.number || MARKUP_ONLY.test(line.text.slice(0, fromA - line.from));
+    if (ordered) return;
+    let below = last;
+    while (below.number < after.lines && (below === last || below.length === 0)) below = after.line(below.number + 1);
+    ordered =
+      ORDERED_LINE.test(before.sliceString(line.from, before.lineAt(toA).to)) || ORDERED_LINE.test(after.sliceString(first.from, below.to));
+  });
+  return markup && ordered;
+}
+
+/** Start of the last top-level block that begins above the line of `pos`: nothing an edit at `pos` does changes where that block starts. */
+function reachStart(state: EditorState, pos: number): number {
+  const line = state.doc.lineAt(pos);
+  const block = treeUpTo(state, line.from).topNode.childBefore(line.from);
+  return block ? state.doc.lineAt(block.from).from : 0;
+}
+
+/**
+ * End of the blocks an edit that ends at `pos` can reach: the top-level block after its
+ * line, and the ordered lists that follow that one, which may be one list with it once the
+ * edit is made. A long note is parsed on until that block has ended (the parser closes the
+ * last block where it stops). Null when it does not get there in time, or the block is too
+ * long to read again at every edit.
+ */
+function reachEnd(state: EditorState, pos: number): number | null {
   const { doc } = state;
-  const { changes } = tr;
-  let end = -1;
-  changes.iterChangedRanges((fromA, toA) => {
-    if (toA > fromA) end = toA;
-  });
-  if (end < 0) return null;
-  // One line further: the marker of the item that follows a deleted line.
-  const before = treeUpTo(state, doc.line(Math.min(doc.lines, doc.lineAt(end).number + 1)).to);
+  const lineEnd = doc.lineAt(pos).to;
+  let end = Math.min(doc.length, lineEnd + 1);
+  for (let step = PARSE_STEP; ; step *= 2) {
+    const tree = treeUpTo(state, end);
+    if (tree.length < end) return null;
+    let block = tree.topNode.childAfter(lineEnd);
+    for (let next = block?.nextSibling; next?.name === "OrderedList"; next = next.nextSibling) block = next;
+    if (end === doc.length) return block ? doc.lineAt(block.to).to : end;
+    if (block?.nextSibling) return doc.lineAt(block.to).to;
+    if (end - lineEnd > OUTLINE_LIMIT) return null;
+    end = Math.min(doc.length, Math.max(end, block?.to ?? 0) + step);
+  }
+}
 
-  /** By the start of their marker. A range reaches the markers it meets, and those on the line it ends in. */
-  const reached = new Map<number, ReachedItem>();
-  changes.iterChangedRanges((fromA, toA) => {
-    if (toA === fromA) return;
-    before.iterate({
-      from: fromA,
-      to: doc.lineAt(toA).to,
-      enter: (node) => {
-        if (node.name !== "ListMark") return LIST_HOLDERS.has(node.name);
-        const mark = node.node;
-        const item = mark.parent;
-        const digits = markDigits(state, mark);
-        if (!item || item.parent?.name !== "OrderedList" || digits === null || mark.to <= fromA) return false;
-        const whole = fromA <= mark.from && mark.to <= toA;
-        const seen = reached.get(mark.from);
-        if (seen) seen.whole ||= whole;
-        else reached.set(mark.from, { item, mark, number: Number(digits), whole });
-        return false;
-      },
-    });
-  });
-  if (reached.size === 0) return null;
-
+/**
+ * The numbers of the ordered lists that `tr` changes (EDIT-03), as changes to the document
+ * it leaves, or null when no number changes.
+ *
+ * Nothing here asks what kind of edit it was. The ordered items around the edit are read
+ * before and after it (`outlineParser`), and an item that is in both is the same item when
+ * its marker was not touched. From that alone:
+ * - an item whose marker is gone, or is no marker any more, is removed, however many edits
+ *   it took. What followed it takes its place: it counts on from the item now before it, or
+ *   takes the number of the first item removed, as the first of a list does;
+ * - an item the edit made keeps the number it came with, and so does a marker the edit
+ *   changed and left a marker. An item below one of those that has its number, or that
+ *   counted on from the number it had, counts on from it;
+ * - the items after a renumbered one go on counting from there, as far as they counted up
+ *   before: "1. 1. 1." stays as it is, and so does a number that never was part of a count.
+ *
+ * A number changes only where a list item is: one that was an item before the edit, or is
+ * one once the numbers are in (a "2." right below a line of text is text, a "1." an item).
+ * And the numbers never change what a line belongs to: where a number of another width
+ * would, they stay as they were.
+ */
+function numbersAfter(tr: Transaction): ChangeSet | null {
+  if (!mayRenumber(tr)) return null;
+  const state = tr.startState;
   const mid = tr.state;
-  let upto = 0;
-  for (const { item } of reached.values()) upto = Math.max(upto, topBlock(item).to);
-  upto = changes.mapPos(upto);
-  const tree = treeUpTo(mid, upto);
-  /** The removed items, by the start of their marker. */
-  const removed = new Map<number, ReachedItem>();
-  for (const [at, it] of reached) {
-    if (!it.whole) {
-      const pos = changes.mapPos(at, 1);
-      const line = mid.doc.lineAt(pos);
-      const text = doc.sliceString(at, it.mark.to);
-      if (mid.doc.sliceString(pos, Math.min(line.to, pos + text.length)) !== text) continue;
-      if (mid.doc.sliceString(line.from, pos) === doc.sliceString(doc.lineAt(at).from, at) || listMarkAt(tree, pos)) continue;
+  const { changes } = tr;
+  const ranges: { from: number; to: number }[] = [];
+  let last = 0;
+  changes.iterChanges((fromA, toA, _fromB, toB) => {
+    ranges.push({ from: fromA, to: toA });
+    last = toB;
+  });
+  const start = reachStart(state, ranges[0].from);
+  const endBefore = reachEnd(state, ranges[ranges.length - 1].to);
+  const endAfter = reachEnd(mid, last);
+  if (endBefore === null || endAfter === null) return null;
+  // Behind the last change the two documents are the same text, moved by `grown`.
+  const grown = mid.doc.length - state.doc.length;
+  const end = Math.max(endBefore, endAfter - grown);
+  if (end - start > OUTLINE_LIMIT) return null;
+  const before = outlineOf(state.doc, start, end);
+  const after = outlineOf(mid.doc, start, end + grown);
+  if (!ORDERED_LINE.test(before.text) || !ORDERED_LINE.test(after.text)) return null;
+
+  /** The items before the edit, by where they start in `before`. */
+  const olds = new Map<number, Was>();
+  /** By where their marker starts after the edit: the items whose marker the edit did not touch, and those it changed. */
+  const untouched = new Map<number, Was>();
+  const changed = new Map<number, Was>();
+  eachOrderedItem(before, (item, from, digits) => {
+    const was: Was = { item, from, number: Number(digits), now: null };
+    olds.set(item.from, was);
+    const to = from + digits.length + 1;
+    let touched = false;
+    let within = true;
+    for (const r of ranges) {
+      // What is put right in front of a marker, or right behind it, is no part of it.
+      const hit = r.to > r.from ? r.from < to && r.to > from : r.from > from && r.from < to;
+      if (!hit) continue;
+      touched = true;
+      if (r.from < from || r.to > to) within = false;
     }
-    removed.set(at, it);
+    if (!touched) untouched.set(changes.mapPos(from, 1), was);
+    else if (within) changed.set(changes.mapPos(from, -1), was);
+  });
+
+  const lists = new Map<number, Numbered[]>();
+  eachOrderedItem(after, (item, from, digits) => {
+    const list = item.parent!.from;
+    const numbered: Numbered = { from, digits, list, was: null, edited: false, number: Number(digits) };
+    const was = untouched.get(from);
+    if (was && !was.now) {
+      numbered.was = was;
+      was.now = numbered;
+    }
+    const items = lists.get(list);
+    if (items) items.push(numbered);
+    else lists.set(list, [numbered]);
+  });
+  for (const items of lists.values()) {
+    for (const numbered of items) {
+      const was = numbered.was ? null : changed.get(numbered.from);
+      if (!was || was.now) continue;
+      numbered.was = was;
+      numbered.edited = true;
+      was.now = numbered;
+    }
   }
 
-  const followed = new Map<number, Removed>();
-  const removedItem = (item: SyntaxNode | null): ReachedItem | null => {
-    const mark = item && listMark(item);
-    return (mark && removed.get(mark.from)) ?? null;
+  const wasBefore = (item: SyntaxNode): Was | null => {
+    const prev = previousItem(item);
+    return (prev && olds.get(prev.from)) ?? null;
   };
-  for (const last of removed.values()) {
-    const next = nextItem(last.item);
-    const nextMark = next && listMark(next);
-    if (!nextMark || markDigits(state, nextMark) === null || removed.has(nextMark.from)) continue;
-    // The run of removed items that ends with this one, and the item that stayed before it.
-    let first = last;
-    let kept = previousItem(first.item);
-    for (let run = removedItem(kept); run; run = removedItem(kept)) {
-      first = run;
-      kept = previousItem(first.item);
-    }
-    followed.set(changes.mapPos(nextMark.from, 1), {
-      last: last.number,
-      first: kept || !first.whole ? null : first.number,
-      mark: state.sliceDoc(nextMark.from, nextMark.to),
-    });
-  }
-  return followed.size > 0 ? { followed, mid, tree, upto } : null;
-}
+  /** An item of a list that does not count: its neighbour has its number ("1. 1. 1."). */
+  const repeats = (was: Was): boolean => {
+    const next = nextItem(was.item);
+    return wasBefore(was.item)?.number === was.number || (next ? olds.get(next.from)?.number === was.number : false);
+  };
 
-/**
- * The numbers of the ordered items that followed one a deletion removed (EDIT-03), as
- * changes to the document `tr` leaves, or null when no number changes.
- *
- * The lists are read from the document as the deletion leaves it (as in `renumberShifted`):
- * - what followed a removed item counts on from the item now before it. With none before
- *   it, it takes over the number its list started with, or keeps its own where the
- *   deletion split the list, and where it is "1.";
- * - the items after it go on counting from there, as far as they counted up before:
- *   "1. 1. 1." stays as it is.
- *
- * Where a first item leaves its text as a paragraph right above the next item, that item
- * is text too: only "1." starts a list there. It gets its number first, in a state that is
- * never dispatched, and the list is numbered from that state when it is a list again.
- *
- * The numbers never change what a line belongs to: where a number of another width would
- * (`keepsBlocks`), they stay as they were.
- */
-function numbersAfterDelete(tr: Transaction): ChangeSet | null {
-  const found = followersOfRemoved(tr);
-  if (!found) return null;
-  const { followed, mid, upto } = found;
-
-  const restart: ChangeSpec[] = [];
-  /** By marker: the number an item had before `restart` gave it the one its list started with. */
-  const had = new Map<number, number>();
-  for (const [pos, { last, first, mark }] of followed) {
-    const digits = mark.slice(0, -1);
-    if (listMarkAt(found.tree, pos) || first === null || Number(digits) !== last + 1) continue;
-    const insert = String(first);
-    // Only where the marker reads as it did, and in the same width: the lines of the item stay under it.
-    if (mid.doc.sliceString(pos, pos + mark.length) !== mark || insert.length !== digits.length) continue;
-    restart.push({ from: pos, to: pos + digits.length, insert });
-    had.set(pos, Number(digits));
-  }
-  let base = mid;
-  let tree = found.tree;
-  let started: ChangeSet | null = null;
-  if (restart.length > 0) {
-    const changes = mid.changes(restart);
-    const next = mid.update({ changes }).state;
-    const nextTree = treeUpTo(next, upto);
-    if ([...had.keys()].every((pos) => listMarkAt(nextTree, pos))) {
-      base = next;
-      tree = nextTree;
-      started = changes;
-    } else {
-      had.clear();
-    }
-  }
-
-  const lists = new Map<number, SyntaxNode>();
-  let from = base.doc.length;
-  let to = 0;
-  for (const pos of followed.keys()) {
-    // What is no item any more has no number to keep.
-    const list = listMarkAt(tree, pos)?.parent?.parent;
-    if (!list || list.name !== "OrderedList") continue;
-    lists.set(list.from, list);
-    const top = topBlock(list);
-    from = Math.min(from, top.from);
-    to = Math.max(to, top.to);
-  }
-
-  const numbers: ChangeSpec[] = [];
-  let resized = false;
-  for (const list of lists.values()) {
-    /** The number the item before will have (null before the first one). */
-    let prev: number | null = null;
-    /** The number an item must have had to go on counting, or null once the count has stopped. */
+  const renumbered: Numbered[] = [];
+  for (const items of lists.values()) {
+    let prev: Numbered | null = null;
+    /** The number an item must have had to count on from the item before it, or null when none does. */
     let expect: number | null = null;
-    for (let item = list.firstChild; item; item = item.nextSibling) {
-      // Lines of a list inside a quote put QuoteMark nodes between the items.
-      const mark = item.name === "ListItem" ? listMark(item) : null;
-      const digits = mark && markDigits(base, mark);
-      if (!mark || !digits) continue;
-      const shown = Number(digits);
-      const was = had.get(mark.from) ?? shown;
-      const gone = followed.get(mark.from);
-      if (gone) expect = gone.last + 1;
-      let now = shown;
-      // A list that starts with "1." keeps it: right below a line of text, no other number starts one.
-      if (was === expect) now = prev !== null ? prev + 1 : shown === 1 ? 1 : (gone?.first ?? shown);
-      expect = now === was ? null : was + 1;
-      if (now !== shown) {
-        const insert = String(now);
-        numbers.push({ from: mark.from, to: mark.from + digits.length, insert });
-        if (insert.length !== digits.length) resized = true;
+    for (const it of items) {
+      const shown = Number(it.digits);
+      const follows: number | null = expect;
+      expect = null;
+      if (!it.was) {
+        // An item that comes back takes its number back: the one that had it meanwhile counts on
+        // from it, or from the last of the items that came with it.
+        expect = prev && !prev.was && follows !== null ? follows : shown;
+      } else if (it.edited) {
+        if (shown !== it.was.number) expect = it.was.number + 1;
+      } else {
+        const gone = wasBefore(it.was.item);
+        if (gone && !gone.now && !(prev && !prev.was)) {
+          if (shown === gone.number + 1) {
+            // The removed items it counted on from, back to the first of them, and the item that stayed before those.
+            let first = gone;
+            let kept: Was | null = null;
+            for (let w = wasBefore(first.item); w; w = wasBefore(first.item)) {
+              if (w.now) kept = w;
+              if (w.now || first.number !== w.number + 1) break;
+              first = w;
+            }
+            if (prev && kept && prev.was === kept && first.number === kept.number + 1) it.number = prev.number + 1;
+            // A "1." that starts a list keeps it: right below a line of text, no other number starts one.
+            else if (prev || shown !== 1) it.number = first.number;
+          }
+        } else if (prev && follows === shown && (prev.was || !repeats(it.was))) {
+          it.number = prev.number + 1;
+        }
+        if (it.number !== shown) {
+          expect = shown + 1;
+          renumbered.push(it);
+        }
       }
-      prev = now;
+      prev = it;
     }
   }
-  if (numbers.length === 0) return started;
+  if (renumbered.length === 0) return null;
 
-  const counted = base.changes(numbers);
-  if (resized && !keepsBlocks(base, tree, counted, from, to)) return null;
-  return started ? started.compose(counted) : counted;
+  const numbers = (items: readonly Numbered[]): ChangeSet =>
+    mid.changes(items.map((it) => ({ from: it.from, to: it.from + it.digits.length, insert: String(it.number) })));
+  let counted = numbers(renumbered);
+
+  // Text that looks like an item is no list item: it takes a number only when that makes it one.
+  const real = treeUpTo(state, end);
+  const unsure = renumbered.filter((it) => !orderedMarkAt(real, it.was!.from));
+  if (unsure.length > 0) {
+    const tree = treeUpTo(mid.update({ changes: counted }).state, counted.mapPos(end + grown));
+    const refused = new Set(unsure.filter((it) => !orderedMarkAt(tree, counted.mapPos(it.from, -1))).map((it) => it.list));
+    if (refused.size > 0) {
+      const kept = renumbered.filter((it) => !refused.has(it.list));
+      if (kept.length === 0) return null;
+      renumbered.length = 0;
+      renumbered.push(...kept);
+      counted = numbers(renumbered);
+    }
+  }
+
+  if (renumbered.some((it) => String(it.number).length !== it.digits.length)) {
+    const moved = movedBy(counted);
+    const next = outlineOf(mid.update({ changes: counted }).state.doc, start, moved(end + grown));
+    const same =
+      shapeOf(after.tree, 0, after.text.length, (pos) => moved(pos + start) - start) ===
+      shapeOf(next.tree, 0, next.text.length, null);
+    if (!same) return null;
+  }
+  return counted;
 }
 
 /**
- * Deleting an ordered item numbers the items that followed it (EDIT-03), whatever deleted
- * it: Backspace, Delete, a cut, a line or a selection. They all dispatch a "delete" user
- * event, and the numbers join that transaction, so one undo gives both back. Shift-Tab's
- * "delete.dedent" takes only indentation away and numbers what it moves by itself.
+ * True for the edits whose lists are numbered again (`numbersAfter`): deletions, and what
+ * commands, a paste or a drop put in. Not for what numbers by itself (Tab and Shift-Tab,
+ * `renumberShifted`), and of what is typed only for ASCII outside a composition. Nothing
+ * may add changes to an IME composition, and WKWebView composes Hangul without saying so,
+ * as plain insertions of Hangul. A marker is ASCII: typing one is how an item comes back
+ * or gets another number.
  */
-export const renumberAfterDelete: Extension = EditorState.transactionFilter.of((tr) => {
-  if (!tr.docChanged || !tr.isUserEvent("delete") || tr.isUserEvent("delete.dedent")) return tr;
-  const numbers = numbersAfterDelete(tr);
+function numbersLists(tr: Transaction): boolean {
+  if (tr.isUserEvent("delete")) return !tr.isUserEvent("delete.dedent");
+  if (!tr.isUserEvent("input") || tr.isUserEvent("input.indent")) return false;
+  if (!tr.isUserEvent("input.type")) return true;
+  if (tr.isUserEvent("input.type.compose")) return false;
+  let ascii = true;
+  tr.changes.iterChanges((_fromA, _toA, _fromB, _toB, inserted) => {
+    if (!/^[\x20-\x7e]+$/.test(inserted.toString())) ascii = false;
+  });
+  return ascii;
+}
+
+/**
+ * Keeps the numbers of an ordered list with its items (EDIT-03). The numbers join the
+ * transaction that changed the list, so one undo gives both back.
+ */
+export const renumberLists: Extension = EditorState.transactionFilter.of((tr) => {
+  if (!tr.docChanged || !numbersLists(tr)) return tr;
+  const numbers = numbersAfter(tr);
   return numbers ? [tr, { changes: numbers, sequential: true }] : tr;
 });
 

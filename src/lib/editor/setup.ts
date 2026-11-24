@@ -27,7 +27,7 @@ import type { EditorHost } from "./host";
 import { External, invalidateResolutions, refreshEffect } from "./shared";
 import { markdownExtensions } from "./syntax";
 import { arrowTyping } from "./arrows";
-import { editingKeymap, editorShortcuts, listTabKeymap, markupEnterKeymap, renumberAfterDelete } from "./commands";
+import { editingKeymap, editorShortcuts, listTabKeymap, markupEnterKeymap, renumberLists } from "./commands";
 import { completionBindings, wikiCompletion } from "./complete";
 import { fenceTyping } from "./fences";
 import { imeKeys } from "./ime";
@@ -274,7 +274,7 @@ const staticExtensions: Extension = [
   arrowTyping,
   fenceTyping,
   markdownSupport,
-  renumberAfterDelete,
+  renumberLists,
   closeBracketsConfig,
   closeBrackets(),
   history(),
