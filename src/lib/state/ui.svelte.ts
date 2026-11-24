@@ -66,7 +66,7 @@ class UiStore {
   /** How the latest title request wants the text: all selected (F2) or the caret at the end (↑ from the body). */
   titleFocusSelect = $state(true);
   treeFocusTick = $state(0);
-  /** A softer request than `treeFocusTick`: the tree takes the keyboard only if it is on screen and nothing else has it. */
+  /** A softer request than `treeFocusTick`: only a tree that is on screen takes the keyboard, and not from a field of the sidebar or an overlay. */
   treeRestTick = $state(0);
 
   /** The sidebar shows search results instead of the tree. */
