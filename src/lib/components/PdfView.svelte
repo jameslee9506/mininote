@@ -4,6 +4,7 @@
   // left and a find bar at the top right. PDF.js draws the pages into `.pdfViewer`; the pdf
   // store drives it, and the toolbar in the main strip (PdfToolbar) asks the same store.
   import { untrack } from "svelte";
+  import type { Attachment } from "svelte/attachments";
   import Icon from "./Icon.svelte";
   import PdfOutline from "./PdfOutline.svelte";
   import PdfThumbnails from "./PdfThumbnails.svelte";
@@ -15,7 +16,7 @@
   import { basename, nfc } from "../utils/path";
   import { isComposing } from "../utils/platform";
 
-  let { path }: { path: VaultPath } = $props();
+  let { path, trackScroll }: { path: VaultPath; trackScroll: Attachment<HTMLElement> } = $props();
 
   const name = $derived(nfc(basename(path)));
 
@@ -162,7 +163,7 @@
 
   <div class="stage">
     <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (a scrolling region takes the keyboard, so that its keys scroll it) -->
-    <div class="pages" role="region" aria-label={name} tabindex="0" bind:this={container} onkeydown={onPagesKeydown}>
+    <div class="pages" role="region" aria-label={name} tabindex="0" bind:this={container} {@attach trackScroll} onkeydown={onPagesKeydown}>
       <div class="pdfViewer"></div>
     </div>
 

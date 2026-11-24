@@ -23,6 +23,16 @@
   /** The document scroll container (ARCHITECTURE §9): title + editor/reader scroll together. */
   let docScrollEl: HTMLElement | null = $state(null);
   let editorSlotEl: HTMLElement | null = $state(null);
+  let scrolled = $state(false);
+
+  function trackScroll(scroller: HTMLElement) {
+    const update = () => {
+      scrolled = scroller.scrollTop > 0;
+    };
+    update();
+    scroller.addEventListener("scroll", update);
+    return () => scroller.removeEventListener("scroll", update);
+  }
 
   const isNote = $derived(editor.path !== null && editor.kind === "note");
   /** A code file: the editor view shows it too, read-only (TREE-17). */
@@ -129,7 +139,7 @@
 </script>
 
 <div class="main">
-  <header class="strip" class:inset={reserveTrafficLights} data-tauri-drag-region={isMac ? "deep" : undefined}>
+  <header class="strip" class:scrolled class:inset={reserveTrafficLights} data-tauri-drag-region={isMac ? "deep" : undefined}>
     <!-- Always here: the sidebar header holds only its four icons (NAV-04), so the mouse hides it from this strip too. -->
     <button type="button" class="icon-btn" aria-label={t("ariaToggleSidebar")} onclick={() => ui.toggleSidebar()}>
       <Icon name="sidebar" />
@@ -186,11 +196,18 @@
   {#if pdfPath !== null}
     <!-- One view per document: each PDF gets a viewer of its own. -->
     {#key pdfPath}
-      <PdfView path={pdfPath} />
+      <PdfView path={pdfPath} {trackScroll} />
     {/key}
   {/if}
   <!-- Stays mounted under a PDF, hidden: the single EditorView lives in it. -->
-  <div class="doc-scroll" class:hidden={pdfPath !== null} role="presentation" bind:this={docScrollEl} onmousedown={onDocMouseDown}>
+  <div
+    class="doc-scroll"
+    class:hidden={pdfPath !== null}
+    role="presentation"
+    bind:this={docScrollEl}
+    {@attach pdfPath === null ? trackScroll : undefined}
+    onmousedown={onDocMouseDown}
+  >
     <div class="doc-column" class:code={isCode}>
       {#if settings.values.inlineTitle}
         <InlineTitle />
@@ -230,6 +247,10 @@
     gap: 2px;
     height: var(--header-h);
     padding: 0 8px;
+  }
+
+  .strip.scrolled {
+    box-shadow: inset 0 -1px var(--c-border);
   }
 
   /* Room for the macOS traffic lights while the sidebar (their usual home) is hidden. */
