@@ -344,11 +344,11 @@
 {/snippet}
 
 {#snippet toggle(id: string, label: string, checked: boolean, set: (on: boolean) => void)}
-  <label class="row">
+  <div class="row">
     <span class="label" id="{uid}-{id}">{label}</span>
     <button type="button" class="switch" role="switch" aria-checked={checked} aria-labelledby="{uid}-{id}" onclick={() => set(!checked)}
     ></button>
-  </label>
+  </div>
 {/snippet}
 
 {#snippet choice(label: string, value: string | number, options: Option[], set: (value: string) => void)}
