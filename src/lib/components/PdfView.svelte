@@ -22,6 +22,8 @@
 
   /** The element that scrolls the pages. PDF.js requires it to be absolutely positioned. */
   let container: HTMLDivElement | undefined = $state();
+  /** What the panel shows: the thumbnails or the outline. */
+  let panelBody: HTMLDivElement | undefined = $state();
   let findInput: HTMLInputElement | undefined = $state();
   let passwordInput: HTMLInputElement | undefined = $state();
   let password = $state("");
@@ -57,7 +59,15 @@
     if (input && (active === null || active === document.body || active === input)) input.focus();
   });
 
-  /** A press never takes the keyboard from where it is: the pages, or the find field. */
+  // The press that changes the tab or closes the panel leaves the keyboard where it is. When that
+  // is the list about to go, the pages take it first: removed, the list would leave it nowhere.
+  $effect.pre(() => {
+    void showOutline;
+    void pdf.panelOpen;
+    if (untrack(() => panelBody)?.contains(document.activeElement)) pdf.focus();
+  });
+
+  /** A press never takes the keyboard from where it is: the pages, the thumbnails or the find field. */
   const keepFocus = (e: MouseEvent): void => e.preventDefault();
 
   // ── Keys ─────────────────────────────────────────────────────
@@ -151,7 +161,7 @@
           </button>
         </div>
       {/if}
-      <div class="panel-body">
+      <div class="panel-body" bind:this={panelBody}>
         {#if showOutline}
           <PdfOutline />
         {:else}

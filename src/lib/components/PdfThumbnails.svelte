@@ -1,12 +1,15 @@
 <script lang="ts">
   // The page thumbnails of the PDF panel (TREE-20, DESIGN §7): one small sheet per page with its
-  // number under it, the current page marked. A click shows that page.
+  // number under it, the current page marked. A click shows that page and gives the list the
+  // keyboard, where the arrow keys show the previous and the next page, as in Chrome.
   //
   // Only the sheets in or near view are drawn, one at a time, and a long document keeps a
   // limited number of drawings: the sheets are plain elements, and their canvases come and go
   // outside of Svelte's state.
   import { t } from "../i18n";
   import { pdf } from "../state/pdf.svelte";
+  import { matchShortcut } from "../utils/keys";
+  import { isComposing } from "../utils/platform";
 
   /** Drawings kept at once; beyond it, those farthest from the current page go first. */
   const MAX_DRAWN = 120;
@@ -17,8 +20,24 @@
 
   const numbers = $derived(Array.from({ length: pdf.pages }, (_, i) => i + 1));
 
-  /** A click never takes the keyboard from the pages. */
-  const keepFocus = (e: MouseEvent): void => e.preventDefault();
+  /**
+   * A press gives the keyboard to the list, never to the sheet's button: Chromium would focus
+   * the button and WebKit would not, and the list's keys must work in both.
+   */
+  const takeFocus = (e: MouseEvent): void => {
+    e.preventDefault();
+    root?.focus({ preventScroll: true });
+  };
+
+  /** ↑ and ← show the previous page, ↓ and → the next; the other keys scroll the list. */
+  function onkeydown(e: KeyboardEvent): void {
+    if (e.defaultPrevented || isComposing(e)) return;
+    const back = matchShortcut(e, "ArrowUp") || matchShortcut(e, "ArrowLeft");
+    if (!back && !matchShortcut(e, "ArrowDown") && !matchShortcut(e, "ArrowRight")) return;
+    e.preventDefault();
+    if (back) pdf.previousPage();
+    else pdf.nextPage();
+  }
 
   // Drawing. Runs again for another set of pages and after a turn, which changes every sheet.
   $effect(() => {
@@ -119,7 +138,8 @@
   });
 </script>
 
-<div class="thumbs" bind:this={root} style:--aspect={pdf.aspect}>
+<!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (the list takes the keyboard, so that its arrow keys turn the pages) -->
+<div class="thumbs" role="region" aria-label={t("ariaPdfThumbnails")} tabindex="0" bind:this={root} style:--aspect={pdf.aspect} {onkeydown}>
   {#each numbers as page (page)}
     <button
       type="button"
@@ -127,7 +147,7 @@
       tabindex="-1"
       data-page={page}
       aria-label={t("ariaPdfPageNumber", { page })}
-      onmousedown={keepFocus}
+      onmousedown={takeFocus}
       onclick={() => pdf.goToPage(page)}
     >
       <span class="sheet"></span>
@@ -143,6 +163,11 @@
     overflow-x: hidden;
     overflow-y: auto;
     padding: 12px 0;
+  }
+
+  /* As on the pages: the marked sheet shows where the keyboard goes, and a ring would frame the list at every key. */
+  .thumbs:focus-visible {
+    outline: none;
   }
 
   .thumb {
