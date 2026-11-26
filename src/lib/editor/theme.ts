@@ -37,6 +37,8 @@ export const highlightRetags: MarkdownConfig = {
 
 const FAINT = "var(--c-text-faint)";
 const MUTED = "var(--c-text-muted)";
+/** The class of ==highlight== text. A fixed one, so that a find match can take its gray away. */
+const MARK = "cm-mn-mark";
 
 /** Rules both modes share. Order matters: later rules win on spans that carry several tags. */
 const common = [
@@ -49,7 +51,7 @@ const common = [
   { tag: tags.strong, fontWeight: "var(--fw-strong)" },
   { tag: tags.emphasis, fontStyle: "italic" },
   { tag: tags.strikethrough, textDecorationLine: "line-through", color: MUTED },
-  { tag: highlightTag, backgroundColor: "var(--c-bg-mark)" },
+  { tag: highlightTag, class: MARK },
 ];
 
 /** Live preview: never colors what live preview hides or draws (bullets, fences, links, rules). */
@@ -105,10 +107,18 @@ export const editorTheme = EditorView.theme({
   ".cm-selectionBackground": { background: "var(--c-selection)" },
   "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground": { background: "var(--c-selection)" },
 
-  ".cm-searchMatch": { backgroundColor: "var(--c-bg-mark)", borderRadius: "2px" },
-  ".cm-searchMatch.cm-searchMatch-selected": {
-    backgroundColor: "var(--c-bg-mark)",
-    outline: "1px solid var(--c-text-faint)",
+  [`.${MARK}`]: { backgroundColor: "var(--c-bg-mark)" },
+
+  // Find matches (DESIGN §4): a highlighter's yellow, and its orange for the match shown.
+  ".cm-searchMatch": {
+    backgroundColor: "var(--c-find)",
+    borderRadius: "2px",
+    color: "var(--c-text-strong)",
+  },
+  ".cm-searchMatch.cm-searchMatch-selected": { backgroundColor: "var(--c-find-current)" },
+  // The match is the outer element (the search runs at Prec.low): a gray inside it would cover its fill.
+  [`.cm-searchMatch .${MARK}, .cm-searchMatch .cm-highlight, .cm-searchMatch .cm-inline-code`]: {
+    backgroundColor: "transparent",
   },
 
   // The find panel floats at the top right; its container takes no space (no reflow on open).

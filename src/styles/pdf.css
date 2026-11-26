@@ -165,7 +165,8 @@
   cursor: default;
 }
 
-/* Find matches: every one marked, the current one darker (as the editor's, in the page's grays). */
+/* Find matches: every one in yellow, the current one in orange (as the editor's). The fill lies
+ * over the page's ink, so it stays thin enough to read through. */
 .textLayer .highlight {
   margin: -1px;
   padding: 1px;

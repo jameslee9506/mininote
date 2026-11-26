@@ -1,9 +1,10 @@
 /*
  * Shared design tokens for the desktop interface.
  * Monotone: every color is a gray, except the syntax colors of the code view
- * (--c-syn-*), the folders of the "color" icon set (--c-icon-folder-tint) and the
- * reason a name was refused, under the inline title (--c-error).
- * The --c-pdf-* grays are drawn on a PDF's pages and have one value: a page is
+ * (--c-syn-*), the folders of the "color" icon set (--c-icon-folder-tint), the
+ * reason a name was refused, under the inline title (--c-error), and the find
+ * matches of a document (--c-find*, --c-pdf-match*).
+ * The --c-pdf-* colors are drawn on a PDF's pages and have one value: a page is
  * paper in either theme (DESIGN §7).
  * Components must use these variables only.
  * --fs-content, --content-max, --sidebar-width, --font-content, --font-heading,
@@ -33,6 +34,8 @@
   --c-icon-folder-tint: #7fa3d1; /* a solid folder in the "color" icons: a hue the user chooses */
   --c-error: #d0342c;           /* why a name was refused, under the inline title: the one red */
   --c-selection: rgba(0, 0, 0, 0.1);
+  --c-find: rgba(255, 225, 0, 0.65);          /* every find match: a highlighter's yellow */
+  --c-find-current: rgba(255, 125, 0, 0.65);  /* the match shown: its orange */
   --c-caret: #111111;
   --c-focus: rgba(0, 0, 0, 0.3);
   --c-scrollbar: rgba(0, 0, 0, 0.14);
@@ -58,11 +61,12 @@
   --c-syn-invalid: #ff0000;
 
   /* ── Color: PDF pages (pdf.css) ───────────────────────────────
-   * What is drawn on a page. One value for both themes: the page stays white (DESIGN §7). */
+   * What is drawn on a page. One value for both themes: the page stays white (DESIGN §7).
+   * A find match lies over the page's ink, so its fill is thinner than the editor's. */
   --c-pdf-page: #ffffff;
   --c-pdf-selection: rgba(0, 0, 0, 0.18);
-  --c-pdf-match: rgba(0, 0, 0, 0.14);          /* every find match */
-  --c-pdf-match-current: rgba(0, 0, 0, 0.38);  /* the match shown */
+  --c-pdf-match: rgba(255, 225, 0, 0.45);          /* every find match */
+  --c-pdf-match-current: rgba(255, 125, 0, 0.5);   /* the match shown */
   --c-pdf-link-hover: rgba(0, 0, 0, 0.08);
   --c-pdf-note: #f4f4f4;                       /* a note annotation's text box */
   --c-pdf-note-text: #2b2b2b;
@@ -194,6 +198,8 @@
   --c-icon-folder-tint: #5f86b8;
   --c-error: #f2776d;
   --c-selection: rgba(255, 255, 255, 0.13);
+  --c-find: rgba(255, 225, 0, 0.3);
+  --c-find-current: rgba(255, 125, 0, 0.48);
   --c-caret: #f0f0f0;
   --c-focus: rgba(255, 255, 255, 0.32);
   --c-scrollbar: rgba(255, 255, 255, 0.14);
@@ -237,6 +243,8 @@
     --c-icon-folder-tint: #5f86b8;
     --c-error: #f2776d;
     --c-selection: rgba(255, 255, 255, 0.13);
+    --c-find: rgba(255, 225, 0, 0.3);
+    --c-find-current: rgba(255, 125, 0, 0.48);
     --c-caret: #f0f0f0;
     --c-focus: rgba(255, 255, 255, 0.32);
     --c-scrollbar: rgba(255, 255, 255, 0.14);
