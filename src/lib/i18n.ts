@@ -144,6 +144,7 @@ const en = {
   ariaClearSearch: "Clear search",
   ariaNewNote: "New note",
   ariaNewFolder: "New folder",
+  ariaRecent: "Recently modified",
   ariaToggleSidebar: "Toggle sidebar",
   ariaSettings: "Settings",
   ariaBack: "Back",

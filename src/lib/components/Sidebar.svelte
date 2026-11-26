@@ -41,21 +41,15 @@
 
 <script lang="ts">
   // The sidebar (DESIGN §4, NAV-04): a header that doubles as the macOS window drag
-  // region (new note, new folder, collapse all), the search field over the file tree
-  // (the results take the tree's place while a query is typed), and a footer with
-  // the vault menu (VAULT-05) and the settings gear.
+  // region (the recent list's toggle, collapse all), the search field over the file tree
+  // or, while the toggle is on, the notes changed last (NAV-10; the results take that
+  // list's place while a query is typed), and a footer with the vault menu (VAULT-05)
+  // and the settings gear.
   import Icon from "./Icon.svelte";
   import FileTree from "./FileTree.svelte";
+  import RecentList from "./RecentList.svelte";
   import SearchPanel from "./SearchPanel.svelte";
-  import {
-    forgetVault,
-    leaveNewNote,
-    newFolder,
-    newNote,
-    newWindow,
-    openFolderDialog,
-    openVault,
-  } from "../appCommands";
+  import { forgetVault, leaveNewNote, newWindow, openFolderDialog, openVault } from "../appCommands";
   import { fresh } from "../state/newNote.svelte";
   import { vault } from "../state/vault.svelte";
   import { ui, type MenuEntry } from "../state/ui.svelte";
@@ -64,7 +58,6 @@
   import { key, nfc } from "../utils/path";
 
   const vaultName = $derived(vault.info ? vault.info.name || vault.info.root : "");
-  let newNoteButton: HTMLButtonElement | undefined = $state();
 
   function safely(p: Promise<unknown>): void {
     p.catch((err) => {
@@ -139,7 +132,7 @@
     if (active instanceof HTMLElement && active !== document.body && !e.currentTarget.contains(active)) active.blur();
   }
 
-  /** What is pressed stands for the new note that has nothing typed in it: its tree row, or a search result in it. */
+  /** What is pressed stands for the new note that has nothing typed in it: its row in the tree or the recent list, or a search result in it. */
   function onBlankNote(target: EventTarget | null): boolean {
     const row = target instanceof Element ? target.closest<HTMLElement>("[data-path]") : null;
     return row !== null && fresh.holds(row.dataset.path);
@@ -147,13 +140,12 @@
 
   /**
    * A click or a right-click in the sidebar leaves the new note that has nothing typed in it,
-   * and that note is deleted (TREE-04). Not on what stands for the note itself, and not on the
-   * new-note button, which keeps it as the new note. It runs after what was clicked has acted,
-   * so a new folder still starts beside the note, and a press that is no click (a drag of the
-   * window or of a row, the scrollbar) deletes nothing.
+   * and that note is deleted (TREE-04). Not on what stands for the note itself. It runs after
+   * what was clicked has acted, so the file a row opens is shown first, and a press that is no
+   * click (a drag of the window or of a row, the scrollbar) deletes nothing.
    */
   function leaveBlankNote(e: MouseEvent): void {
-    if (onBlankNote(e.target) || (e.target instanceof Node && newNoteButton?.contains(e.target))) return;
+    if (onBlankNote(e.target)) return;
     leaveNewNote();
   }
 </script>
@@ -163,21 +155,13 @@
   <!-- Buttons are direct children: Tauri drags only on the region element itself. -->
   <header class="header" class:mac={isMac} data-tauri-drag-region={isMac ? "" : undefined}>
     <button
-      bind:this={newNoteButton}
       type="button"
       class="icon-btn first"
-      aria-label={t("ariaNewNote")}
-      onclick={() => safely(newNote())}
+      aria-label={t("ariaRecent")}
+      aria-pressed={ui.recentShown}
+      onclick={ui.toggleRecent}
     >
-      <Icon name="note-plus" />
-    </button>
-    <button
-      type="button"
-      class="icon-btn"
-      aria-label={t("ariaNewFolder")}
-      onclick={() => safely(newFolder(vault.activeDir()))}
-    >
-      <Icon name="folder-plus" />
+      <Icon name="clock" />
     </button>
     <button type="button" class="icon-btn" aria-label={t("collapseAll")} onclick={() => vault.collapseAll()}>
       <Icon name="collapse" />
@@ -187,7 +171,11 @@
   <div class="body">
     <SearchPanel />
     {#if !ui.searching}
-      <FileTree />
+      {#if ui.recentShown}
+        <RecentList />
+      {:else}
+        <FileTree />
+      {/if}
     {/if}
   </div>
 
@@ -238,6 +226,11 @@
     flex: 0 1 28px;
     width: auto;
     min-width: 22px;
+  }
+
+  /* The toggle while the recent list shows: as dark as an icon under the pointer. */
+  .header .icon-btn[aria-pressed="true"] {
+    color: var(--c-text);
   }
 
   .body {

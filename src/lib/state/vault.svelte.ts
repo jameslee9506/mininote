@@ -35,6 +35,7 @@ import { copyName, fileKindOf, pastedImageName, titleOf, uniqueName, validateNam
 import { within } from "./autosave";
 import { editor, SWITCH_FLUSH_MS } from "./editor.svelte";
 import { StepHistory, type FileStep, type StepKind } from "./fileSteps";
+import { recentNotes, unlisted, withSave, type SavedTimes } from "./recent";
 import { settings } from "./settings.svelte";
 import { noteTargetPath } from "./targets";
 import { ui } from "./ui.svelte";
@@ -50,6 +51,8 @@ const LARGE_VAULT_ENTRIES = 20_000;
 const RESTORE_WAIT_MS = 500;
 /** Name attempts before giving up on "exists" races. */
 const NAME_ATTEMPTS = 20;
+/** How many notes the sidebar's recent list shows (NAV-10). */
+const RECENT_LIMIT = 50;
 
 type Timer = ReturnType<typeof setTimeout>;
 
@@ -101,6 +104,13 @@ class VaultStore {
   );
   /** The file behind each listed image that is a link on disk (TREE-18): its absolute path. */
   #realPaths = $derived(new Map(Object.entries(this.listing.realPaths)));
+  /**
+   * The modification time each save of this window left since the listing was taken (NAV-10).
+   * A save never re-lists, so the listing learns of it only at its next refresh.
+   */
+  #savedTimes = $state.raw<SavedTimes>(new Map());
+  /** The notes changed last, the newest first: the sidebar's recent list (NAV-10). */
+  recent = $derived(recentNotes(this.notes, this.#savedTimes, RECENT_LIMIT));
 
   /** Expanded folder paths (persisted per vault in the session). */
   expanded = new SvelteSet<VaultPath>();
@@ -142,6 +152,8 @@ class VaultStore {
   #steps = new StepHistory<FileStep>();
   /** Undo and redo run one at a time, in the order they were asked for. */
   #stepping: Promise<void> = Promise.resolve();
+  /** The recent lists on screen: while there is one, a note another program wrote re-lists (NAV-10). */
+  #recentWatchers = 0;
 
   /**
    * Opens `root` as this window's vault: vaultOpen → vaultList → restore session
@@ -438,6 +450,31 @@ class VaultStore {
   /** Re-points expanded folders, the selection and an inline rename after `from` moved to `to`. */
   remapTreeState = (from: VaultPath, to: VaultPath): void => untrack(() => this.#remapTreeState(from, to));
 
+  /**
+   * A save of this window left the note `path` with the modification time `mtime` (its write
+   * result's): the recent list has it at once, with no listing (NAV-10).
+   */
+  noteSaved = (path: VaultPath, mtime: number): void =>
+    untrack(() => {
+      this.#savedTimes = withSave(this.#savedTimes, path, mtime);
+    });
+
+  /**
+   * The recent list is on screen from now until the returned function is called (NAV-10).
+   * Meanwhile a note that another program wrote re-lists the vault, which is how its new time
+   * is learned. What was written before is learned from the listing asked for here.
+   */
+  watchRecent = (): (() => void) =>
+    untrack(() => {
+      this.#recentWatchers++;
+      if (this.info) void this.#requestRefresh();
+      let watching = true;
+      return () => {
+        if (watching) this.#recentWatchers--;
+        watching = false;
+      };
+    });
+
   // ── Open / close ─────────────────────────────────────────────────────────
 
   #serial<T>(fn: () => Promise<T>): Promise<T> {
@@ -562,6 +599,7 @@ class VaultStore {
     this.#pendingReveal = null;
     this.#lostSelection = null;
     this.#steps.clear();
+    this.#savedTimes = new Map();
   }
 
   /** Installs the vault:changed and window focus listeners once for the app's lifetime. */
@@ -606,6 +644,7 @@ class VaultStore {
     if (this.info !== info) return false;
     this.#lastListMs = performance.now() - started;
     this.listing = res;
+    this.#savedTimes = unlisted(this.#savedTimes, this.nodes);
     if (res.truncated && !this.#truncationNoticed) {
       // VAULT-01: silently missing notes would look like data loss.
       this.#truncationNoticed = true;
@@ -668,9 +707,11 @@ class VaultStore {
         for (const lp of liveAt(c.path)) if (!isSameOrAncestor(c.path, lp)) respelled.add(lp);
       switch (c.kind) {
         case "modify":
-          // Content changes never re-list, except images: TREE-15 reloads them by mtime.
+          // Content changes never re-list, with two exceptions. An image does: TREE-15 reloads it
+          // by its mtime. And a note does while the recent list shows the notes' times (NAV-10).
           if (isTextPath(c.path)) {
             if (liveAt(c.path).length > 0) changed.add(c.path);
+            if (this.#recentWatchers > 0 && fileKindOf(c.path) === "note") structural = true;
           } else if (fileKindOf(c.path) === "image") structural = true;
           break;
         case "create":

@@ -197,13 +197,13 @@ function clearOverlays(): void {
   ui.hideMenu();
 }
 
-/** The sidebar with its file tree (a search in progress gives way to it). */
+/** The sidebar with its file tree (a search in progress and the recent list give way to it). */
 function showFilesPanel(): void {
   if (!settings.values.sidebarVisible) ui.toggleSidebar();
   ui.showFiles();
 }
 
-// ── New note and folder (shared by the commands, the sidebar header and the tree menus) ──
+// ── New note and folder (shared by the commands and the tree menus) ──
 
 let discardingNewNote: NewNoteSnapshot | null = null;
 /** The discard a click in the sidebar started (leaveNewNote): over once the note's name is free again. */

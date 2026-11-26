@@ -1432,6 +1432,7 @@ class EditorStore {
     const created = snap.baseline === null;
     n.baseline = result;
     n.lastSaved = snap.text;
+    vault.noteSaved(n.path, result.mtime);
     n.savedVersion = snap.version;
     n.failures = 0;
     n.toasted = false;

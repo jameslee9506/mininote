@@ -5,7 +5,8 @@
 
 <script lang="ts">
   // Full-text search (SRCH-01/02): the search field at the top of the sidebar, always shown,
-  // and results grouped by note that stand in for the file tree while a query is typed.
+  // and results grouped by note that stand in for the list under it, the file tree or the
+  // recent list (NAV-10), while a query is typed.
   // Hits are bold spans cut from the UTF-16 offsets — never {@html} (READ-04). An empty
   // result leaves the area blank (NAV-08): the input text turns faint instead, and
   // screen readers hear "No results".
@@ -180,10 +181,9 @@
     document.getElementById(`${uid}-${active}`)?.scrollIntoView({ block: "nearest" });
   }
 
-  /** Clears the field, which brings the tree back, and hands it the keyboard. */
+  /** Clears the field, which brings back the list under it, and hands that list the keyboard. */
   function leave(): void {
-    ui.showFiles();
-    ui.focusTree();
+    ui.focusList();
   }
 
   /** Keys in the input, or in the list after a click on its blank area or scrollbar. */
@@ -209,9 +209,9 @@
       case "ArrowUp":
         if (!plain) return;
         e.preventDefault();
-        // With nothing to search, ↓ steps from the field into the tree below it.
+        // With nothing to search, ↓ steps from the field into the list below it.
         if (!searching) {
-          if (e.key === "ArrowDown") ui.focusTree();
+          if (e.key === "ArrowDown") ui.focusList();
           return;
         }
         await move(e.key === "ArrowDown" ? 1 : -1);
@@ -305,7 +305,7 @@
       aria-activedescendant={activeId}
     />
     {#if ui.searchQuery !== ""}
-      <!-- mousedown is cancelled so the field keeps the focus; the tree takes it on purpose. -->
+      <!-- mousedown is cancelled so the field keeps the focus; the list under it takes it on purpose. -->
       <button
         type="button"
         class="icon-btn clear"
@@ -369,7 +369,7 @@
 </div>
 
 <style>
-  /* Just the field over the tree; with results, the whole column. */
+  /* Just the field over the list under it; with results, the whole column. */
   .panel {
     display: flex;
     flex: none;

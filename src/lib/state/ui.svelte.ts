@@ -57,8 +57,13 @@ class UiStore {
   menu = $state<MenuState | null>(null);
   confirmDialog = $state<ConfirmState | null>(null);
   toasts = $state<Toast[]>([]);
-  /** The sidebar's search field. While it holds a query, the results stand in for the file tree. */
+  /** The sidebar's search field. While it holds a query, the results stand in for the list under it. */
   searchQuery = $state("");
+  /**
+   * The sidebar lists the notes changed last where the file tree stands (NAV-10): the header's
+   * toggle. It lasts while the window does, and is not kept between runs.
+   */
+  recentShown = $state(false);
 
   /** Focus requests: components watch these counters and focus themselves when they change. */
   searchFocusTick = $state(0);
@@ -68,8 +73,9 @@ class UiStore {
   treeFocusTick = $state(0);
   /** A softer request than `treeFocusTick`: only a tree that is on screen takes the keyboard, and not from a field of the sidebar or an overlay. */
   treeRestTick = $state(0);
+  recentFocusTick = $state(0);
 
-  /** The sidebar shows search results instead of the tree. */
+  /** The sidebar shows search results instead of the file tree or the recent list. */
   get searching(): boolean {
     return this.searchQuery.trim() !== "";
   }
@@ -124,9 +130,19 @@ class UiStore {
     this.searchFocusTick++;
   };
 
-  /** Shows the file tree: the search field is cleared, so the results give way to it. */
+  /** Shows the file tree: the search field is cleared and the recent list closed, so both give way to it. */
   showFiles = (): void => {
     this.searchQuery = "";
+    this.recentShown = false;
+  };
+
+  /**
+   * The header's toggle (NAV-10): the notes changed last take the file tree's place, or give it
+   * back. The list that shows takes the keyboard, and a search in progress gives way to it.
+   */
+  toggleRecent = (): void => {
+    this.recentShown = !this.recentShown;
+    this.focusList();
   };
 
   toggleSidebar = (): void => {
@@ -146,6 +162,21 @@ class UiStore {
     if (!settings.values.sidebarVisible) settings.update({ sidebarVisible: true });
     this.showFiles();
     this.treeFocusTick++;
+  };
+
+  /**
+   * Gives the keyboard to the list under the search field, the file tree or the recent list
+   * (NAV-10), whichever the sidebar has there. The search field is cleared, so its results
+   * give way to that list.
+   */
+  focusList = (): void => {
+    if (!this.recentShown) {
+      this.focusTree();
+      return;
+    }
+    if (!settings.values.sidebarVisible) settings.update({ sidebarVisible: true });
+    this.searchQuery = "";
+    this.recentFocusTick++;
   };
 
   /**

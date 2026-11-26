@@ -3,7 +3,6 @@
     | "chevron-right"
     | "chevron-left"
     | "note-plus"
-    | "folder-plus"
     | "folder"
     | "folder-open"
     | "note"
@@ -37,7 +36,8 @@
     | "thumbnails"
     | "outline"
     | "arrow-up"
-    | "arrow-down";
+    | "arrow-down"
+    | "clock";
 </script>
 
 <script lang="ts">
@@ -68,9 +68,6 @@
     <path d="M9 2H4.5A1.5 1.5 0 0 0 3 3.5v9A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V6Z" />
     <path d="M9 2v4h4" />
     <path d="M8 8.25v3.5M6.25 10h3.5" />
-  {:else if name === "folder-plus"}
-    <path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.6l1.4 1.5h5A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5Z" />
-    <path d="M8 7v3.5M6.25 8.75h3.5" />
   {:else if name === "folder"}
     <path class="body" d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.6l1.4 1.5h5A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5Z" />
   {:else if name === "folder-open"}
@@ -180,6 +177,10 @@
     <path d="M8 13V3M4 7l4-4 4 4" />
   {:else if name === "arrow-down"}
     <path d="M8 3v10M4 9l4 4 4-4" />
+  {:else if name === "clock"}
+    <!-- A clock face: the notes changed last. -->
+    <circle cx="8" cy="8" r="5.75" />
+    <path d="M8 4.75V8l2.25 1.5" />
   {/if}
 </svg>
 
