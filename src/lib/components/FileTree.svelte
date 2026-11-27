@@ -393,7 +393,7 @@
     safely(editor.open(path, { focus: enter ? "editor" : "none" }));
   }
 
-  /** Enter (`enter`) / click: toggle a folder, open a file. */
+  /** Enter (`enter`) / click on the selected row: toggle a folder, open a file. */
   function activate(node: TreeNode, enter: boolean): void {
     if (node.kind === "dir") vault.toggle(node.path);
     else openFile(node.path, enter);
@@ -492,6 +492,9 @@
    * A click leaves the keyboard in the tree, never in the file it opens (TREE-11): the arrows,
    * and a copy or a paste, go on from the clicked row. The press moved it here already, the
    * tree being the focusable element under a row; the click makes sure of it.
+   *
+   * A folder opens or closes only on a click that finds it selected (TREE-03): the click that
+   * selects it leaves it as it is, so choosing a folder never hides or shows its rows.
    */
   function onclick(e: MouseEvent): void {
     const node = nodeAt(e.target);
@@ -499,7 +502,9 @@
     if (node && fresh.holds(node.path)) return;
     if (document.activeElement !== scroller) scroller?.focus({ preventScroll: true });
     if (!node) return;
+    const wasSelected = vault.selected === node.path;
     vault.selected = node.path;
+    if (node.kind === "dir" && !wasSelected) return;
     activate(node, false);
   }
 
